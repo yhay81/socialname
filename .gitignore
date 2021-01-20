@@ -18,6 +18,7 @@ src/
 # Output files, except requirements.txt
 *.txt
 !requirements.txt
+!requirements-dev.txt
 
 # Comma-Separated Values (CSV) Reports
 *.csv
@@ -30,3 +31,9 @@ tests/.excluded_sites
 
 # Vim swap files
 *.swp
+
+# Tox env
+.tox
+.mypy_cache
+.pytest_cache
+*.egg-info

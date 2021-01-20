@@ -1,0 +1,7 @@
+bandit
+black
+mypy
+prospector[with_pyroma,with_mypy,with_bandit]
+pyroma
+pytest
+tox

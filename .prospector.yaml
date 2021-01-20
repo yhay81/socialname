@@ -1,0 +1,19 @@
+output-format: pylint
+strictness: veryhigh
+doc-warnings: false
+test-warnings: true
+member-warnings: true
+autodetect: true
+max-line-length: 120
+
+pyroma:
+  run: true
+
+bandit:
+  run: true
+
+mypy:
+  run: true
+  options:
+    ignore-missing-imports: true
+    strict: true
