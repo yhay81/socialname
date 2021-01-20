@@ -1,4 +1,4 @@
-## List Of Supported Sites (298 Sites In Total!)
+## List Of Supported Sites (299 Sites In Total!)
 1. [2Dimensions](https://2Dimensions.com/)
 1. [3dnews](http://forum.3dnews.ru/)
 1. [7Cups](https://www.7cups.com/)
@@ -91,6 +91,7 @@
 1. [GuruShots](https://gurushots.com/)
 1. [HackTheBox](https://forum.hackthebox.eu/)
 1. [Hackaday](https://hackaday.io/)
+1. [HackerEarth](https://www.hackerearth.com/)
 1. [HackerNews](https://news.ycombinator.com/)
 1. [HackerOne](https://hackerone.com/)
 1. [HackerRank](https://hackerrank.com/)
