@@ -15,7 +15,7 @@ import re
 import sys
 import webbrowser
 from argparse import ArgumentParser, ArgumentTypeError, RawDescriptionHelpFormatter
-from concurrent.futures import Future
+from concurrent.futures import Future  # noqa
 from time import monotonic
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -40,7 +40,7 @@ class SherlockFuturesSession(FuturesSession):  # type: ignore
         *args: Any,
         hooks: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
-    ) -> Future[requests.Response]:  # noqa
+    ) -> "Future[requests.Response]":
         """Request URL.
 
         This extends the FuturesSession request method to calculate a response
@@ -65,7 +65,7 @@ class SherlockFuturesSession(FuturesSession):  # type: ignore
         hooks = {} if hooks is None else hooks
         start = monotonic()
 
-        def response_time(resp: requests.Response) -> None:
+        def response_time(resp: requests.Response, *_args: Any, **_kwargs: Any) -> None:
             """Response Time Hook.
 
             Keyword Arguments:
@@ -96,14 +96,14 @@ class SherlockFuturesSession(FuturesSession):  # type: ignore
             # No response hook was already defined, so install it ourselves.
             hooks["response"] = [response_time]
 
-        result: Future[requests.Response] = super(  # noqa
+        result: "Future[requests.Response]" = super(
             SherlockFuturesSession, self
         ).request(method, url, hooks=hooks, *args, **kwargs)
         return result
 
 
 def get_response(
-    request_future: Future[requests.Response],  # noqa
+    request_future: "Future[requests.Response]",
 ) -> Tuple[Optional[requests.Response], Optional[str], Optional[str]]:
 
     # Default for Response object if some failure occurs.

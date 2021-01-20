@@ -2,10 +2,10 @@
 
 This module contains various tests.
 """
-from tests.base import SherlockBaseTest
+from socialname.tests.base import SherlockBaseTest
 
 
-class SherlockDetectTests(SherlockBaseTest):  # noqa
+class SherlockDetectTests(SherlockBaseTest):
     def test_detect_true_via_message(self) -> None:
         """Test Username Does Exist (Via Message).
 
@@ -145,7 +145,7 @@ class SherlockDetectTests(SherlockBaseTest):  # noqa
         )
 
 
-class SherlockSiteCoverageTests(SherlockBaseTest):  # noqa
+class SherlockSiteCoverageTests(SherlockBaseTest):
     def test_coverage_false_via_response_url(self) -> None:
         """Test Username Does Not Exist Site Coverage (Via Response URL).
 
