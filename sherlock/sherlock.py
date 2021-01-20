@@ -28,6 +28,12 @@ from sites  import SitesInformation
 module_name = "Sherlock: Find Usernames Across Social Networks"
 __version__ = "0.14.0"
 
+try:
+    import cloudscraper
+    requests.session = cloudscraper.session
+    requests.Session = cloudscraper.Session
+except:
+    pass
 
 
 

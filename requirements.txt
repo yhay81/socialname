@@ -10,3 +10,4 @@ soupsieve>=1.9.2
 stem>=1.8.0 
 torrequest>=0.1.0
 psutil>=5.7.0
+cloudscraper>=1.2.48
