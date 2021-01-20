@@ -719,10 +719,12 @@ def main() -> None:  # noqa
     try:
         if args.local:
             sites = SitesInformation(
-                os.path.join(os.path.dirname(__file__), "resources/data.json")
+                data_file_path=os.path.join(
+                    os.path.dirname(__file__), "resources/data.json"
+                )
             )
         else:
-            sites = SitesInformation(args.json_file)
+            sites = SitesInformation(data_file_path=args.json_file)
     except Exception as error:
         print(f"ERROR:  {error}")
         sys.exit(1)

@@ -3,65 +3,46 @@
 This module supports storing information about web sites.
 This is the raw data that will be used to search for usernames.
 """
+import dataclasses
 import json
 from typing import Any, Dict, Iterator, List, Optional
 
 import requests
 
 
+@dataclasses.dataclass
 class SiteInformation:
-    def __init__(
-        self,
-        name: str,
-        url_home: str,
-        url_username_format: str,
-        username_claimed: str,
-        username_unclaimed: str,
-        information: Dict[str, Any],
-    ) -> None:
-        """Create Site Information Object.
+    """Site Information Object.
 
-        Contains information about a specific web site.
+    Contains information about a specific web site.
 
-        Keyword Arguments:
-        self                   -- This object.
-        name                   -- String which identifies site.
-        url_home               -- String containing URL for home of site.
-        url_username_format    -- String containing URL for Username format
-                                on site.
-                                NOTE:  The string should contain the
-                                token "{}" where the username should
-                                be substituted.  For example, a string
-                                of "https://somesite.com/users/{}"
-                                indicates that the individual
-                                usernames would show up under the
-                                "https://somesite.com/users/" area of
-                                the web site.
-        username_claimed        -- String containing username which is known
-                                to be claimed on web site.
-        username_unclaimed      -- String containing username which is known
-                                to be unclaimed on web site.
-        information             -- Dictionary containing all known information
-                                about web site.
-                                NOTE:  Custom information about how to
-                                actually detect the existence of the
-                                username will be included in this
-                                dictionary.  This information will
-                                be needed by the detection method,
-                                but it is only recorded in this
-                                object for future use.
+    Keyword Arguments:
+    name                 -- String which identifies site.
+    url_home             -- String containing URL for home of site.
+    url_username_format  -- String containing URL for Username format on site.
+                            NOTE:  The string should contain the token "{}"
+                            where the username should be substituted.
+                            For example, a string of "https://somesite.com/users/{}"
+                            indicates that the individual usernames would show up
+                            under the "https://somesite.com/users/" area of the web site.
+    username_claimed     -- String containing username which is known
+                            to be claimed on web site.
+    username_unclaimed   -- String containing username which is known
+                            to be unclaimed on web site.
+    information          -- Dictionary containing all known information
+                            about web site.
+                            NOTE:  Custom information about how to actually detect
+                            the existence of the username will be included in this dictionary.
+                            This information will be needed by the detection method,
+                            but it is only recorded in this object for future use.
+    """
 
-        Return Value:
-        Nothing.
-        """
-
-        self.name = name
-        self.url_home = url_home
-        self.url_username_format = url_username_format
-
-        self.username_claimed = username_claimed
-        self.username_unclaimed = username_unclaimed
-        self.information = information
+    name: str
+    url_home: str
+    url_username_format: str
+    username_claimed: str
+    username_unclaimed: str
+    information: Dict[str, Any]
 
     def __str__(self) -> str:
         """Convert Object To String.
@@ -76,41 +57,80 @@ class SiteInformation:
         return f"{self.name} ({self.url_home})"
 
 
+def fetch_site_data(data_file_path: str) -> Dict[str, Any]:
+    # Reference is to a URL.
+    try:
+        response = requests.get(url=data_file_path)
+    except Exception as error:
+        raise FileNotFoundError(
+            f"Problem while attempting to access "
+            f"data file URL '{data_file_path}':  {str(error)}"
+        )
+    if response.status_code == 200:
+        try:
+            result: Dict[str, Any] = response.json()
+            return result
+        except Exception as error:
+            raise ValueError(
+                f"Problem parsing json contents at "
+                f"'{data_file_path}':  {str(error)}."
+            )
+    raise FileNotFoundError(
+        f"Bad response while accessing data file URL '{data_file_path}'."
+    )
+
+
+def load_site_data(data_file_path: str) -> Dict[str, Any]:
+    # Reference is to a file.
+    try:
+        with open(data_file_path, "r", encoding="utf-8") as file:
+            try:
+                result: Dict[str, Any] = json.load(file)
+                return result
+            except Exception as error:
+                raise ValueError(
+                    f"Problem parsing json contents at "
+                    f"'{data_file_path}':  {str(error)}."
+                )
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Problem while attempting to access data file '{data_file_path}'."
+        )
+
+
+@dataclasses.dataclass
 class SitesInformation:
-    def __init__(self, data_file_path: Optional[str] = None) -> None:  # noqa
-        """Create Sites Information Object.
+    """Sites Information Object.
 
-        Contains information about all supported web sites.
+    Contains information about all supported web sites.
 
-        Keyword Arguments:
-        self                   -- This object.
-        data_file_path         -- String which indicates path to data file.
-                                The file name must end in ".json".
+    Keyword Arguments:
+    data_file_path   -- String which indicates path to data file.
+                        The file name must end in ".json".
 
-                                There are 3 possible formats:
-                                   * Absolute File Format
-                                    For example, "c:/stuff/data.json".
-                                  * Relative File Format
-                                    The current working directory is used
-                                    as the context.
-                                    For example, "data.json".
-                               * URL Format
-                                    For example,
-                                    "https://example.com/data.json", or
-                                    "http://example.com/data.json".
+                        There are 3 possible formats:
+                        * Absolute File Format
+                            For example, "c:/stuff/data.json".
+                        * Relative File Format
+                            The current working directory is used as the context.
+                            For example, "data.json".
+                        * URL Format
+                            For example,
+                            "https://example.com/data.json", or
+                            "http://example.com/data.json".
 
-                                    An exception will be thrown if the path
-                                    to the data file is not in the expected
-                                    format, or if there was any problem loading
-                                    the file.
+                            An exception will be thrown if the path to the data file is not
+                            in the expected format, or if there was any problem loading the file.
 
-                                    If this option is not specified, then a
-                                    default site list will be used.
+                            If this option is not specified, then a default site list will be used.
+    """
 
-        Return Value:
-        Nothing.
-        """
+    data_file_path: dataclasses.InitVar[str] = None
+    sites: Dict[str, SiteInformation] = dataclasses.field(
+        init=False, default_factory=dict
+    )
 
+    def __post_init__(self, data_file_path: Optional[str] = None) -> None:
         if data_file_path is None:
             # The default data file is the live data.json which is in the GitHub repo.
             # The reason why we are using this instead of the local one is so that
@@ -120,7 +140,6 @@ class SitesInformation:
                 "https://raw.githubusercontent.com"
                 "/sherlock-project/sherlock/master/sherlock/resources/data.json"
             )
-
         # Ensure that specified data file has correct extension.
         if not data_file_path.lower().endswith(".json"):
             raise FileNotFoundError(
@@ -131,64 +150,25 @@ class SitesInformation:
             data_file_path[:7].lower() == "http://"
             or data_file_path[:8].lower() == "https://"
         ):
-            # Reference is to a URL.
-            try:
-                response = requests.get(url=data_file_path)
-            except Exception as error:
-                raise FileNotFoundError(
-                    f"Problem while attempting to access "
-                    f"data file URL '{data_file_path}':  "
-                    f"{str(error)}"
-                )
-            if response.status_code == 200:
-                try:
-                    site_data = response.json()
-                except Exception as error:
-                    raise ValueError(
-                        f"Problem parsing json contents at "
-                        f"'{data_file_path}':  {str(error)}."
-                    )
-            else:
-                raise FileNotFoundError(
-                    f"Bad response while accessing "
-                    f"data file URL '{data_file_path}'."
-                )
+            site_data = fetch_site_data(data_file_path)
         else:
-            # Reference is to a file.
-            try:
-                with open(data_file_path, "r", encoding="utf-8") as file:
-                    try:
-                        site_data = json.load(file)
-                    except Exception as error:
-                        raise ValueError(
-                            f"Problem parsing json contents at "
-                            f"'{data_file_path}':  {str(error)}."
-                        )
-            except FileNotFoundError:
-                raise FileNotFoundError(
-                    f"Problem while attempting to access "
-                    f"data file '{data_file_path}'."
-                )
-
-        self.sites: Dict[str, SiteInformation] = {}
+            site_data = load_site_data(data_file_path)
 
         # Add all of site information from the json file to internal site list.
-        for site_name in site_data:
+        for name, data in site_data.items():
             try:
-
-                self.sites[site_name] = SiteInformation(
-                    site_name,
-                    site_data[site_name]["urlMain"],
-                    site_data[site_name]["url"],
-                    site_data[site_name]["username_claimed"],
-                    site_data[site_name]["username_unclaimed"],
-                    site_data[site_name],
+                self.sites[name] = SiteInformation(
+                    name=name,
+                    url_home=data["urlMain"],
+                    url_username_format=data["url"],
+                    username_claimed=data["username_claimed"],
+                    username_unclaimed=data["username_unclaimed"],
+                    information=data,
                 )
             except KeyError as error:
                 raise ValueError(
                     f"Problem parsing json contents at "
-                    f"'{data_file_path}':  "
-                    f"Missing attribute {str(error)}."
+                    f"'{data_file_path}':  Missing attribute {str(error)}."
                 )
 
     def site_name_list(self) -> List[str]:

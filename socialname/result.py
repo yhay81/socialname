@@ -2,6 +2,7 @@
 
 This module defines various objects for recording the results of queries.
 """
+import dataclasses
 from enum import Enum
 from typing import Optional
 
@@ -29,55 +30,39 @@ class QueryStatus(Enum):
         return str(self.value)
 
 
+@dataclasses.dataclass
 class QueryResult:
     """Query Result Object.
 
     Describes result of query about a given username.
+    Contains information about a specific method of detecting usernames on
+    a given type of web sites.
+
+    Keyword Arguments:
+    username             -- String indicating username that query result
+                            was about.
+    site_name            -- String which identifies site.
+    site_url_user        -- String containing URL for username on site.
+                            NOTE:   The site may or may not exist:  this
+                                    just indicates what the name would
+                                    be, if it existed.
+    status               -- Enumeration of type QueryStatus() indicating
+                            the status of the query.
+    query_time           -- Time (in seconds) required to perform query.
+                            Default of None.
+    context              -- String indicating any additional context
+                            about the query.  For example, if there was
+                            an error, this might indicate the type of
+                            error that occurred.
+                            Default of None.
     """
 
-    def __init__(
-        self,
-        username: str,
-        site_name: str,
-        site_url_user: str,
-        status: QueryStatus,
-        query_time: Optional[int] = None,
-        context: Optional[str] = None,
-    ) -> None:
-        """Create Query Result Object.
-
-        Contains information about a specific method of detecting usernames on
-        a given type of web sites.
-
-        Keyword Arguments:
-        self                 -- This object.
-        username             -- String indicating username that query result
-                                was about.
-        site_name            -- String which identifies site.
-        site_url_user        -- String containing URL for username on site.
-                                NOTE:   The site may or may not exist:  this
-                                        just indicates what the name would
-                                        be, if it existed.
-        status               -- Enumeration of type QueryStatus() indicating
-                                the status of the query.
-        query_time           -- Time (in seconds) required to perform query.
-                                Default of None.
-        context              -- String indicating any additional context
-                                about the query.  For example, if there was
-                                an error, this might indicate the type of
-                                error that occurred.
-                                Default of None.
-
-        Return Value:
-        Nothing.
-        """
-
-        self.username = username
-        self.site_name = site_name
-        self.site_url_user = site_url_user
-        self.status = status
-        self.query_time = query_time
-        self.context = context
+    username: str
+    site_name: str
+    site_url_user: str
+    status: QueryStatus
+    query_time: Optional[int] = None
+    context: Optional[str] = None
 
     def __str__(self) -> str:
         """Convert Object To String.
@@ -87,11 +72,9 @@ class QueryResult:
 
         Return Value:
         Nicely formatted string to get information about this object.
+        There is extra context information available about the results.
+        Append it to the normal response text.
         """
-        status = str(self.status)
-        if self.context is not None:
-            # There is extra context information available about the results.
-            # Append it to the normal response text.
-            status += f" ({self.context})"
-
-        return status
+        if self.context is None:
+            return str(self.status)
+        return f"{str(self.status)} ({self.context})"
