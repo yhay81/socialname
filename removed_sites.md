@@ -1069,17 +1069,3 @@ As of 2021-01-15, Ebay seems to be very laggy and take too long to return a resp
     "username_unclaimed": "noonewouldeverusethis7"
   },
 ```
-
-## Spletnik
-
-In 2020-11-12 it was analyzed that Spletnik returned false positive.
-
-```
- "spletnik": {	
-    "errorType": "status_code",	
-    "url": "https://spletnik.ru/user/{}",	
-    "urlMain": "https://spletnik.ru/",	
-    "username_claimed": "blue",	
-    "username_unclaimed": "noonewouldeverusethis7"	
-  },
-```
