@@ -1,4 +1,4 @@
-## List Of Supported Sites (300 Sites In Total!)
+## List Of Supported Sites (301 Sites In Total!)
 1. [2Dimensions](https://2Dimensions.com/)
 1. [3dnews](http://forum.3dnews.ru/)
 1. [7Cups](https://www.7cups.com/)
@@ -125,6 +125,7 @@
 1. [Medium](https://medium.com/)
 1. [Memrise](https://www.memrise.com/)
 1. [MixCloud](https://www.mixcloud.com/)
+1. [Minecraft Forums](https://minecraftforum.net)
 1. [Munzee](https://www.munzee.com/)
 1. [MyAnimeList](https://myanimelist.net/)
 1. [MyMiniFactory](https://www.myminifactory.com/)
