@@ -24,9 +24,9 @@ import requests
 from requests_futures.sessions import FuturesSession
 from torrequest import TorRequest
 
-from sherlock.notify import QueryNotify, QueryNotifyPrint
-from sherlock.result import QueryResult, QueryStatus
-from sherlock.sites import SitesInformation
+from socialname.notify import QueryNotify, QueryNotifyPrint
+from socialname.result import QueryResult, QueryStatus
+from socialname.sites import SitesInformation
 
 MODULE_NAME = "Sherlock: Find Usernames Across Social Networks"
 __version__ = "0.14.0"

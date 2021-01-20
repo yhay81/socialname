@@ -7,7 +7,7 @@ from typing import Optional
 
 from colorama import Fore, Style, init
 
-from sherlock.result import QueryResult, QueryStatus
+from socialname.result import QueryResult, QueryStatus
 
 
 class QueryNotify:

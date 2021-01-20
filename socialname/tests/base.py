@@ -8,10 +8,10 @@ import unittest
 import warnings
 from typing import Any, Dict, List
 
-from sherlock import sherlock
-from sherlock.notify import QueryNotify
-from sherlock.result import QueryStatus
-from sherlock.sites import SitesInformation
+from socialname import sherlock
+from socialname.notify import QueryNotify
+from socialname.result import QueryStatus
+from socialname.sites import SitesInformation
 
 
 class SherlockBaseTest(unittest.TestCase):
