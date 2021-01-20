@@ -774,7 +774,7 @@
     "username_unclaimed": "noonewouldeverusethis7"
   },
   "ICQ": {
-    "errorMsg": "Profile not found",
+    "errorMsg": "profileNotFound",
     "errorType": "message",
     "url": "https://icq.im/{}",
     "urlMain": "https://icq.com/",
@@ -834,6 +834,14 @@
     "urlMain": "https://jimdosite.com/",
     "username_claimed": "jenny",
     "username_unclaimed": "noonewouldeverusethis7"
+  },
+  "Jupyter Community Forum": {
+    "errorMsg": "Oops! That page doesn\u2019t exist or is private.",
+    "errorType": "message",
+    "url": "https://discourse.jupyter.org/u/{}/summary",
+    "urlMain": "https://discourse.jupyter.org",
+    "username_claimed": "choldgraf",
+    "username_unclaimed": "noonewouldeverusethis"
   },
   "Kaggle": {
     "errorType": "status_code",
@@ -1236,6 +1244,14 @@
     "username_claimed": "Blue",
     "username_unclaimed": "noonewouldeverusethis"
   },
+  "Python.org Discussions": {
+    "errorMsg": "Oops! That page doesn\u2019t exist or is private.",
+    "errorType": "message",
+    "url": "https://discuss.python.org/u/{}/summary",
+    "urlMain": "https://discuss.python.org",
+    "username_claimed": "python",
+    "username_unclaimed": "noonewouldeverusethis7"
+  },
   "Quizlet": {
     "errorMsg": "Page Unavailable",
     "errorType": "message",
@@ -1317,6 +1333,14 @@
     "url": "https://www.roblox.com/user.aspx?username={}",
     "urlMain": "https://www.roblox.com/",
     "username_claimed": "bluewolfekiller",
+    "username_unclaimed": "noonewouldeverusethis7"
+  },
+  "Ruby Forums": {
+    "errorMsg": "Oops! That page doesn\u2019t exist or is private.",
+    "errorType": "message",
+    "url": "https://ruby-forum.com/u/{}/summary",
+    "urlMain": "https://ruby-forums.com",
+    "username_claimed": "rishard",
     "username_unclaimed": "noonewouldeverusethis7"
   },
   "RubyGems": {
@@ -1538,6 +1562,13 @@
     "username_claimed": "blue",
     "username_unclaimed": "noonewouldeverusethis7"
   },
+  "Tidal": {
+    "errorType": "status_code",
+    "url": "https://tidal.com/{}",
+    "urlMain": "https://tidal.com/",
+    "username_claimed": "blue",
+    "username_unclaimed": "noonewouldeverusethis7"
+  },
   "TikTok": {
     "errorType": "status_code",
     "url": "https://tiktok.com/@{}",
@@ -1666,6 +1697,14 @@
     "url": "https://vsco.co/{}",
     "urlMain": "https://vsco.co/",
     "username_claimed": "blue",
+    "username_unclaimed": "noonewouldeverusethis7"
+  },
+  "Valorant Forums": {
+    "errorMsg": "The page you requested could not be found.",
+    "errorType": "message",
+    "url": "https://valorantforums.com/u/{}",
+    "urlMain": "https://valorantforums.com",
+    "username_claimed": "Wolves",
     "username_unclaimed": "noonewouldeverusethis7"
   },
   "Velomania": {
@@ -1895,6 +1934,13 @@
     "url": "https://www.couchsurfing.com/people/{}",
     "urlMain": "https://www.couchsurfing.com/",
     "username_claimed": "blue",
+    "username_unclaimed": "noonewouldeverusethis7"
+  },
+  "cplusplus": {
+    "errorType": "status_code",
+    "url": "https://cplusplus.com/user/{}",
+    "urlMain": "https://cplusplus.com",
+    "username_claimed": "mbozzi",
     "username_unclaimed": "noonewouldeverusethis7"
   },
   "d3RU": {
@@ -2257,18 +2303,11 @@
     "username_claimed": "Milan",
     "username_unclaimed": "noonewouldeverusethis7"
   },
-  "spletnik": {
-    "errorType": "status_code",
-    "url": "https://spletnik.ru/user/{}",
-    "urlMain": "https://spletnik.ru/",
-    "username_claimed": "blue",
-    "username_unclaimed": "noonewouldeverusethis7"
-  },
   "svidbook": {
     "errorType": "status_code",
     "url": "https://www.svidbook.ru/user/{}",
     "urlMain": "https://www.svidbook.ru/",
-    "username_claimed": "green",
+    "username_claimed": "Coldakflo",
     "username_unclaimed": "noonewouldeverusethis7"
   },
   "toster": {

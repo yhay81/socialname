@@ -238,8 +238,11 @@ def sherlock(username, site_data, query_notify,
                 # from where the user profile normally can be found.
                 url_probe = url_probe.format(username)
 
-            if (net_info["errorType"] == 'status_code' and
-                net_info.get("request_head_only", True) == True):
+            request_method_property = net_info.get('request_method', 'GET')
+
+            if request_method_property == 'POST':
+                request_method = session.post
+            elif request_method_property == 'HEAD':
                 # In most cases when we are detecting by status code,
                 # it is not necessary to get the entire body:  we can
                 # detect fine with just the HEAD response.
@@ -269,9 +272,17 @@ def sherlock(username, site_data, query_notify,
                                         timeout=timeout
                                         )
             else:
+                data = None
+                if request_method_property == 'POST':
+                    data = net_info.get('request_payload', None)
+
+                if data is not None:
+                    data = data.format(username)
+
                 future = request_method(url=url_probe, headers=headers,
                                         allow_redirects=allow_redirects,
-                                        timeout=timeout
+                                        timeout=timeout,
+                                        data=data
                                         )
 
             # Store future in data for access later
