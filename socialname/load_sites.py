@@ -4,7 +4,7 @@ This module supports storing information about web sites.
 This is the raw data that will be used to search for usernames.
 """
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import requests
 import cerberus

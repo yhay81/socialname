@@ -4,7 +4,7 @@ This module supports storing information about web sites.
 This is the raw data that will be used to search for usernames.
 """
 import dataclasses
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, List, Optional, Iterator
 import urllib.parse
 
 from socialname import load_sites
@@ -57,7 +57,6 @@ class SiteInformation:
         return f"{self.name} ({self.url_home})"
 
 
-@dataclasses.dataclass
 class SitesInformation:
     """Sites Information Object.
 
@@ -84,12 +83,14 @@ class SitesInformation:
                             If this option is not specified, then a default site list will be used.
     """
 
-    data_file_path: dataclasses.InitVar[str] = None
-    sites: Dict[str, SiteInformation] = dataclasses.field(
-        init=False, default_factory=dict
-    )
+    sites: Dict[str, SiteInformation]
+    data_file_path: Optional[str] = None
+    filter_list: Optional[List[str]] = None
 
-    def __post_init__(self, data_file_path: Optional[str] = None) -> None:
+    def __init__(
+        self, data_file_path: Optional[str] = None, filter_list: Optional[str] = None
+    ) -> None:
+        self.sites: Dict[str, SiteInformation] = {}
         if data_file_path is None:
             # The default data file is the live data.json which is in the GitHub repo.
             # The reason why we are using this instead of the local one is so that
@@ -111,8 +112,8 @@ class SitesInformation:
             site_data = load_sites.from_file(data_file_path)
 
         # Add all of site information from the json file to internal site list.
-        for name, data in site_data.items():
-            try:
+        if filter_list is None:
+            for name, data in site_data.items():
                 self.sites[name] = SiteInformation(
                     name=name,
                     url_home=data["urlMain"],
@@ -121,25 +122,22 @@ class SitesInformation:
                     username_unclaimed=data["username_unclaimed"],
                     information=data,
                 )
-            except KeyError as error:
-                raise ValueError(
-                    f"Problem parsing json contents at "
-                    f"'{data_file_path}':  Missing attribute {str(error)}."
-                )
+        else:
+            for name in filter_list:
+                if name in site_data:
+                    self.sites[name] = SiteInformation(
+                        name=name,
+                        url_home=site_data[name]["urlMain"],
+                        url_username_format=site_data[name]["url"],
+                        username_claimed=site_data[name]["username_claimed"],
+                        username_unclaimed=site_data[name]["username_unclaimed"],
+                        information=site_data[name],
+                    )
+                else:
+                    print(f"Error: Desired sites not found: {name}.")
 
-    def site_name_list(self) -> List[str]:
-        """Get Site Name List.
-
-        Keyword Arguments:
-        self                   -- This object.
-
-        Return Value:
-        List of strings containing names of sites.
-        """
-
-        site_names = sorted([site.name for site in self], key=str.lower)
-
-        return site_names
+    def get_dict(self) -> Dict[str, Dict[str, Any]]:
+        return {name: site_info.information for name, site_info in self.sites.items()}
 
     def __iter__(self) -> Iterator[SiteInformation]:
         """Iterator For Object.
@@ -151,16 +149,5 @@ class SitesInformation:
         Iterator for sites object.
         """
 
-        for site_name in self.sites:
-            yield self.sites[site_name]
-
-    def __len__(self) -> int:
-        """Length For Object.
-
-        Keyword Arguments:
-        self                   -- This object.
-
-        Return Value:
-        Length of sites object.
-        """
-        return len(self.sites)
+        for info in self.sites.values():
+            yield info

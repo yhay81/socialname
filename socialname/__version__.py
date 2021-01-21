@@ -1,0 +1,5 @@
+__title__ = "socialname"
+__version__ = "0.1.0"
+__author__ = "Yusuke Hayashi"
+__author_email__ = "yusuke8h@gmail.com"
+__license__ = "MIT"
