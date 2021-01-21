@@ -3,7 +3,8 @@
 This module defines the objects for notifying the caller about the
 results of queries.
 """
-from typing import Optional
+import dataclasses
+from typing import Optional, Union
 
 from colorama import Fore, Style, init
 
@@ -96,9 +97,27 @@ class QueryNotify:
         Return Value:
         Nicely formatted string to get information about this object.
         """
-        result = str(self.result)
+        return str(self.result)
 
-        return result
+
+@dataclasses.dataclass
+class PrintStyle:
+    bright: Union[str, int] = ""
+    reset_all: Union[str, int] = ""
+    white: Union[str, int] = ""
+    green: Union[str, int] = ""
+    yellow: Union[str, int] = ""
+    red: Union[str, int] = ""
+    color: dataclasses.InitVar[bool] = False
+
+    def __post_init__(self, color: bool) -> None:
+        if color is True:
+            self.bright = Style.BRIGHT
+            self.reset_all = Style.RESET_ALL
+            self.white = Fore.WHITE
+            self.green = Fore.GREEN
+            self.yellow = Fore.YELLOW
+            self.red = Fore.RED
 
 
 class QueryNotifyPrint(QueryNotify):
@@ -138,7 +157,7 @@ class QueryNotifyPrint(QueryNotify):
         super().__init__(result)
         self.verbose = verbose
         self.print_all = print_all
-        self.color = color
+        self.sty = PrintStyle(color=color)
 
     def start(self, message: Optional[str] = None) -> None:
         """Notify Start.
@@ -155,22 +174,10 @@ class QueryNotifyPrint(QueryNotify):
         """
 
         title = "Checking username"
-        if self.color:
-            print(
-                Style.BRIGHT
-                + Fore.GREEN
-                + "["
-                + Fore.YELLOW
-                + "*"
-                + Fore.GREEN
-                + f"] {title}"
-                + Fore.WHITE
-                + f" {message}"
-                + Fore.GREEN
-                + " on:"
-            )
-        else:
-            print(f"[*] {title} {message} on:")
+        print(
+            f"{self.sty.bright}{self.sty.green}[{self.sty.yellow}*{self.sty.green}] {title}"
+            f"{self.sty.white} {message}{self.sty.green} on:"
+        )
 
     def update(self, result: QueryResult) -> None:  # noqa
         """Notify Update.
@@ -194,85 +201,37 @@ class QueryNotifyPrint(QueryNotify):
 
         # Output to the terminal is desired.
         if result.status == QueryStatus.CLAIMED:
-            if self.color:
-                print(
-                    (
-                        f"{Style.BRIGHT}{Fore.WHITE}[{Fore.GREEN}+{Fore.WHITE}]{response_time_text}"
-                        + f"{Fore.GREEN} {self.result.site_name}: "
-                        + f"{Style.RESET_ALL}{self.result.site_url_user}"
-                    )
+            print(
+                (
+                    f"{self.sty.bright}{self.sty.white}[{self.sty.green}+{self.sty.white}]{response_time_text} "
+                    f"{self.sty.green}{self.result.site_name}: "
+                    f"{self.sty.reset_all}{self.result.site_url_user}"
                 )
-            else:
-                print(
-                    f"[+]{response_time_text} {self.result.site_name}: {self.result.site_url_user}"
-                )
+            )
 
         elif result.status == QueryStatus.AVAILABLE:
             if self.print_all:
-                if self.color:
-                    print(
-                        (
-                            Style.BRIGHT
-                            + Fore.WHITE
-                            + "["
-                            + Fore.RED
-                            + "-"
-                            + Fore.WHITE
-                            + "]"
-                            + response_time_text
-                            + Fore.GREEN
-                            + f" {self.result.site_name}:"
-                            + Fore.YELLOW
-                            + " Not Found!"
-                        )
-                    )
-                else:
-                    print(
-                        f"[-]{response_time_text} {self.result.site_name}: Not Found!"
-                    )
+                print(
+                    f"{self.sty.bright}{self.sty.white}[{self.sty.red}-{self.sty.white}]{response_time_text} "
+                    f"{self.sty.green}{self.result.site_name}: "
+                    f"{self.sty.yellow}Not Found!"
+                )
 
         elif result.status == QueryStatus.UNKNOWN:
             if self.print_all:
-                if self.color:
-                    print(
-                        Style.BRIGHT
-                        + Fore.WHITE
-                        + "["
-                        + Fore.RED
-                        + "-"
-                        + Fore.WHITE
-                        + "]"
-                        + Fore.GREEN
-                        + f" {self.result.site_name}:"
-                        + Fore.RED
-                        + f" {self.result.context}"
-                        + Fore.YELLOW
-                        + " "
-                    )
-                else:
-                    print(f"[-] {self.result.site_name}: {self.result.context} ")
+                print(
+                    f"{self.sty.bright}{self.sty.white}[{self.sty.red}-{self.sty.white}] "
+                    f"{self.sty.green}{self.result.site_name}: "
+                    f"{self.sty.red}{self.result.context}{self.sty.yellow} "
+                )
 
         elif result.status == QueryStatus.ILLEGAL:
             if self.print_all:
                 msg = "Illegal Username Format For This Site!"
-                if self.color:
-                    print(
-                        (
-                            Style.BRIGHT
-                            + Fore.WHITE
-                            + "["
-                            + Fore.RED
-                            + "-"
-                            + Fore.WHITE
-                            + "]"
-                            + Fore.GREEN
-                            + f" {self.result.site_name}:"
-                            + Fore.YELLOW
-                            + f" {msg}"
-                        )
-                    )
-                else:
-                    print(f"[-] {self.result.site_name} {msg}")
+                print(
+                    f"{self.sty.bright}{self.sty.white}[{self.sty.red}-{self.sty.white}] "
+                    f"{self.sty.green}{self.result.site_name} {self.sty.yellow}{msg}"
+                )
 
         else:
             # It should be impossible to ever get here...
@@ -280,16 +239,3 @@ class QueryNotifyPrint(QueryNotify):
                 f"Unknown Query Status '{str(result.status)}' for "
                 f"site '{self.result.site_name}'"
             )
-
-    def __str__(self) -> str:
-        """Convert Object To String.
-
-        Keyword Arguments:
-        self                   -- This object.
-
-        Return Value:
-        Nicely formatted string to get information about this object.
-        """
-        result = str(self.result)
-
-        return result
