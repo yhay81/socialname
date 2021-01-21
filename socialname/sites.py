@@ -4,11 +4,10 @@ This module supports storing information about web sites.
 This is the raw data that will be used to search for usernames.
 """
 import dataclasses
-import json
 from typing import Any, Dict, Iterator, List, Optional
 import urllib.parse
 
-import requests
+from socialname import load_sites
 
 
 @dataclasses.dataclass
@@ -56,47 +55,6 @@ class SiteInformation:
         """
 
         return f"{self.name} ({self.url_home})"
-
-
-def fetch_site_data(data_file_path: str) -> Dict[str, Any]:
-    # Reference is to a URL.
-    try:
-        response = requests.get(url=data_file_path)
-    except Exception as error:
-        raise FileNotFoundError(
-            f"Problem while attempting to access "
-            f"data file URL '{data_file_path}':  {str(error)}"
-        )
-    if response.status_code == 200:
-        try:
-            result: Dict[str, Any] = response.json()
-            return result
-        except Exception as error:
-            raise ValueError(
-                f"Problem parsing json contents at "
-                f"'{data_file_path}':  {str(error)}."
-            )
-    raise FileNotFoundError(
-        f"Bad response while accessing data file URL '{data_file_path}'."
-    )
-
-
-def load_site_data(data_file_path: str) -> Dict[str, Any]:
-    # Reference is to a file.
-    try:
-        with open(data_file_path, "r", encoding="utf-8") as file:
-            try:
-                result: Dict[str, Any] = json.load(file)
-                return result
-            except Exception as error:
-                raise ValueError(
-                    f"Problem parsing json contents at "
-                    f"'{data_file_path}':  {str(error)}."
-                )
-    except FileNotFoundError:
-        raise FileNotFoundError(
-            f"Problem while attempting to access data file '{data_file_path}'."
-        )
 
 
 @dataclasses.dataclass
@@ -148,9 +106,9 @@ class SitesInformation:
             )
 
         if urllib.parse.urlparse(data_file_path).scheme in ["http", "https"]:
-            site_data = fetch_site_data(data_file_path)
+            site_data = load_sites.from_url(data_file_path)
         else:
-            site_data = load_site_data(data_file_path)
+            site_data = load_sites.from_file(data_file_path)
 
         # Add all of site information from the json file to internal site list.
         for name, data in site_data.items():
