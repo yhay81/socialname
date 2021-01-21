@@ -6,6 +6,7 @@ This is the raw data that will be used to search for usernames.
 import dataclasses
 import json
 from typing import Any, Dict, Iterator, List, Optional
+import urllib.parse
 
 import requests
 
@@ -146,10 +147,7 @@ class SitesInformation:
                 f"Incorrect JSON file extension for data file '{data_file_path}'."
             )
 
-        if (
-            data_file_path[:7].lower() == "http://"
-            or data_file_path[:8].lower() == "https://"
-        ):
+        if urllib.parse.urlparse(data_file_path).scheme in ["http", "https"]:
             site_data = fetch_site_data(data_file_path)
         else:
             site_data = load_site_data(data_file_path)
