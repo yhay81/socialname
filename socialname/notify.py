@@ -205,7 +205,7 @@ class QueryNotifyPrint(QueryNotify):
                 (
                     f"{self.sty.bright}{self.sty.white}[{self.sty.green}+{self.sty.white}]{response_time_text} "
                     f"{self.sty.green}{self.result.site_name}: "
-                    f"{self.sty.reset_all}{self.result.site_url_user}"
+                    f"{self.sty.reset_all}{self.result.url_user}"
                 )
             )
 

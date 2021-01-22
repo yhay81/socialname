@@ -73,7 +73,7 @@ def run() -> None:  # noqa
     results = {
         username: sherlock(
             username,
-            sites.get_dict(),
+            sites,
             query_notify,
             tor=args.tor,
             unique_tor=args.unique_tor,

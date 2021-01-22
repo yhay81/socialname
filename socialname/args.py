@@ -6,16 +6,41 @@ Sherlock: Find Usernames Across Social Networks Module
 This module contains the main logic to search for usernames at social
 networks.
 """
+from typing import Union
 import argparse
 import platform
 import sys
 
 import requests
 
-from socialname.sherlock import timeout_check
-
 MODULE_NAME = "Sherlock: Find Usernames Across Social Networks"
 __version__ = "0.14.0"
+
+
+def timeout_check(value: Union[float, int, str]) -> float:
+    """Check Timeout Argument.
+
+    Checks timeout for validity.
+
+    Keyword Arguments:
+    value                  -- Time in seconds to wait before timing out request.
+
+    Return Value:
+    Floating point number representing the time (in seconds) that should be
+    used for the timeout.
+
+    NOTE:  Will raise an exception if the timeout in invalid.
+    """
+
+    try:
+        timeout = float(value)
+    except Exception:
+        raise argparse.ArgumentTypeError(f"Timeout '{value}' must be a number.")
+    if timeout <= 0:
+        raise argparse.ArgumentTypeError(
+            f"Timeout '{value}' must be greater than 0.0s."
+        )
+    return timeout
 
 
 def get_args() -> argparse.Namespace:

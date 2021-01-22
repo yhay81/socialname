@@ -4,7 +4,7 @@ This module defines various objects for recording the results of queries.
 """
 import dataclasses
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 
 
 class QueryStatus(Enum):
@@ -42,7 +42,7 @@ class QueryResult:
     username             -- String indicating username that query result
                             was about.
     site_name            -- String which identifies site.
-    site_url_user        -- String containing URL for username on site.
+    url_user        -- String containing URL for username on site.
                             NOTE:   The site may or may not exist:  this
                                     just indicates what the name would
                                     be, if it existed.
@@ -59,7 +59,7 @@ class QueryResult:
 
     username: str
     site_name: str
-    site_url_user: str
+    url_user: str
     status: QueryStatus
     query_time: Optional[int] = None
     context: Optional[str] = None
@@ -78,3 +78,12 @@ class QueryResult:
         if self.context is None:
             return str(self.status)
         return f"{str(self.status)} ({self.context})"
+
+
+@dataclasses.dataclass
+class Result:
+    url_main: str
+    url_user: str
+    http_status: Optional[Union[str, int]] = None
+    response_text: Optional[str] = None
+    status: Optional[QueryResult] = None

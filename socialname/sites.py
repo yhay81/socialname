@@ -4,22 +4,22 @@ This module supports storing information about web sites.
 This is the raw data that will be used to search for usernames.
 """
 import dataclasses
-from typing import Any, Dict, List, Optional, Iterator
+from typing import Any, Dict, List, Optional, Iterator, Tuple, Union
 import urllib.parse
 
 from socialname import load_sites
 
 
 @dataclasses.dataclass
-class SiteInformation:
+class SiteInformation:  # noqa
     """Site Information Object.
 
     Contains information about a specific web site.
 
     Keyword Arguments:
     name                 -- String which identifies site.
-    url_home             -- String containing URL for home of site.
-    url_username_format  -- String containing URL for Username format on site.
+    url_main             -- String containing URL for home of site.
+    url_user  -- String containing URL for Username format on site.
                             NOTE:  The string should contain the token "{}"
                             where the username should be substituted.
                             For example, a string of "https://somesite.com/users/{}"
@@ -38,11 +38,33 @@ class SiteInformation:
     """
 
     name: str
-    url_home: str
-    url_username_format: str
-    username_claimed: str
-    username_unclaimed: str
-    information: Dict[str, Any]
+    url_main: str = dataclasses.field(init=False, repr=False)
+    url_user: str = dataclasses.field(init=False, repr=False)
+    username_claimed: str = dataclasses.field(init=False, repr=False)
+    username_unclaimed: str = dataclasses.field(init=False, repr=False)
+    headers: Dict[str, str] = dataclasses.field(init=False, repr=False)
+    request_method: str = dataclasses.field(init=False, repr=False)
+    request_head_only: bool = dataclasses.field(init=False, repr=False)
+    error_type: Optional[str] = dataclasses.field(init=False, repr=False)
+    error_message: Optional[Union[str, List[str]]] = dataclasses.field(
+        init=False, repr=False
+    )
+    regex_check: Optional[str] = dataclasses.field(init=False, repr=False)
+    url_probe: Optional[str] = dataclasses.field(init=False, repr=False)
+    information: Dict[str, Any] = dataclasses.field(repr=False)
+
+    def __post_init__(self) -> None:
+        self.headers = self.information.get("headers", {})
+        self.error_type = self.information.get("errorType")
+        self.error_message = self.information.get("errorMsg")
+        self.regex_check = self.information.get("regexCheck")
+        self.request_head_only = self.information.get("request_head_only", False)
+        self.request_method = self.information.get("request_method", "GET")
+        self.url_main = self.information["urlMain"]
+        self.url_probe = self.information.get("urlProbe")
+        self.url_user = self.information["url"]
+        self.username_claimed = self.information["username_claimed"]
+        self.username_unclaimed = self.information["username_unclaimed"]
 
     def __str__(self) -> str:
         """Convert Object To String.
@@ -54,7 +76,7 @@ class SiteInformation:
         Nicely formatted string to get information about this object.
         """
 
-        return f"{self.name} ({self.url_home})"
+        return f"{self.name} ({self.url_main})"
 
 
 class SitesInformation:
@@ -113,33 +135,27 @@ class SitesInformation:
 
         # Add all of site information from the json file to internal site list.
         if filter_list is None:
-            for name, data in site_data.items():
-                self.sites[name] = SiteInformation(
-                    name=name,
-                    url_home=data["urlMain"],
-                    url_username_format=data["url"],
-                    username_claimed=data["username_claimed"],
-                    username_unclaimed=data["username_unclaimed"],
-                    information=data,
+            for site_name, information in site_data.items():
+                self.sites[site_name] = SiteInformation(
+                    name=site_name, information=information
                 )
         else:
-            for name in filter_list:
-                if name in site_data:
-                    self.sites[name] = SiteInformation(
-                        name=name,
-                        url_home=site_data[name]["urlMain"],
-                        url_username_format=site_data[name]["url"],
-                        username_claimed=site_data[name]["username_claimed"],
-                        username_unclaimed=site_data[name]["username_unclaimed"],
-                        information=site_data[name],
+            for site_name in filter_list:
+                if site_name in site_data:
+                    information = site_data[site_name]
+                    self.sites[site_name] = SiteInformation(
+                        name=site_name, information=information
                     )
                 else:
-                    print(f"Error: Desired sites not found: {name}.")
+                    print(f"Error: Desired sites not found: {site_name}.")
 
     def get_dict(self) -> Dict[str, Dict[str, Any]]:
-        return {name: site_info.information for name, site_info in self.sites.items()}
+        return {
+            site_name: site_info.information
+            for site_name, site_info in self.sites.items()
+        }
 
-    def __iter__(self) -> Iterator[SiteInformation]:
+    def __iter__(self) -> Iterator[Tuple[str, SiteInformation]]:
         """Iterator For Object.
 
         Keyword Arguments:
@@ -149,5 +165,17 @@ class SitesInformation:
         Iterator for sites object.
         """
 
-        for info in self.sites.values():
-            yield info
+        for site_name, site_info in self.sites.items():
+            yield site_name, site_info
+
+    def __len__(self) -> int:
+        """Length Of Object.
+
+        Keyword Arguments:
+        self                   -- This object.
+
+        Return Value:
+        length of sites object.
+        """
+
+        return len(self.sites)
