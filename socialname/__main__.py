@@ -17,16 +17,9 @@ if __name__ == "__main__":
     #               major --^
     #               minor ----^
     #               micro ------^
-    major = sys.version_info[0]
-    minor = sys.version_info[1]
+    (major, minor, micro, _, __) = sys.version_info
 
-    PYTHON_VERSION = (
-        str(sys.version_info[0])
-        + "."
-        + str(sys.version_info[1])
-        + "."
-        + str(sys.version_info[2])
-    )
+    PYTHON_VERSION = f"{major}.{minor}.{micro}"
 
     if major != 3 or major == 3 and minor < 6:
         print(

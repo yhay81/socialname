@@ -4,4 +4,5 @@ mypy
 prospector[with_pyroma,with_mypy,with_bandit]
 pyroma
 pytest
+pytest-cov
 tox

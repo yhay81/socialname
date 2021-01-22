@@ -2,7 +2,7 @@
 
 This module contains various tests.
 """
-from socialname.tests.base import SherlockBaseTest
+from tests.test_base import SherlockBaseTest
 
 
 class SherlockDetectTests(SherlockBaseTest):

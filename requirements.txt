@@ -1,8 +1,0 @@
-bs4
-cerberus
-colorama
-lxml
-requests
-requests-futures
-torrequest
-psutil

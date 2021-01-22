@@ -38,8 +38,8 @@ class SherlockBaseTest(unittest.TestCase):
         # Eventually, the rest of the code will be updated to use the new object
         # directly, but this will glue the two pieces together.
         site_data_all: Dict[str, Any] = {}
-        for site in sites:
-            site_data_all[site.name] = site.information
+        for site_name, site_info in sites:
+            site_data_all[site_name] = site_info
         self.site_data_all = site_data_all
 
         # Load excluded sites list, if any
@@ -109,8 +109,8 @@ class SherlockBaseTest(unittest.TestCase):
         """
 
         # Filter all site data down to just what is needed for this test.
-        site_data = self.site_data_filter(site_list)
-
+        # site_data = self.site_data_filter(site_list)
+        print(site_list)
         if exist_check:
             check_type_text = "claimed"
             exist_result_desired = QueryStatus.CLAIMED
@@ -121,7 +121,7 @@ class SherlockBaseTest(unittest.TestCase):
         for username in username_list:
             results = sherlock.sherlock(
                 username,
-                site_data,
+                SitesInformation(),
                 self.query_notify,
                 tor=self.tor,
                 unique_tor=self.unique_tor,
