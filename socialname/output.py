@@ -10,17 +10,17 @@ networks.
 import csv
 import os
 import webbrowser
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional
 
-from socialname.result import QueryStatus
+from socialname.result import SocialNameStatus, SocialNameResult
 
 
 def write_txt(
-    results: Dict[str, Dict[str, Any]],
+    total_results: Dict[str, Dict[str, SocialNameResult]],
     output: Optional[str] = None,
     folderoutput: Optional[str] = None,
 ) -> None:
-    for username, result in results.items():
+    for username, results in total_results.items():
         if output is not None:
             result_file = output
         elif folderoutput is not None:
@@ -33,51 +33,58 @@ def write_txt(
 
         with open(result_file, "w", encoding="utf-8") as file:
             exists_counter = 0
-            for info in result.values():
-                if "status" in info and info["status"].status == QueryStatus.CLAIMED:
+            for result in results.values():
+                if result.status is SocialNameStatus.CLAIMED:
                     exists_counter += 1
-                    file.write(info["url_user"] + "\n")
+                    file.write(result.url_user + "\n")
             file.write(f"Total Websites Username Detected On : {exists_counter}\n")
 
 
-def write_csv_singleoutput(results: Dict[str, Dict[str, Any]]) -> None:
-    csv_data: List[Tuple[str, str, str, str]] = [
-        ("username", "name", "url_user", "account_count"),
+def write_csv_singleoutput(
+    total_results: Dict[str, Dict[str, SocialNameResult]]
+) -> None:
+    csv_data: List[Tuple[str, str, str, str, str, str]] = [
+        ("username", "site_name", "url_main", "url_user", "status", "response_time_s"),
     ]
-    for username, result in results.items():
-        exists_counter = 0
-        for name, info in result.items():
-            if info["status"].status == QueryStatus.CLAIMED:
-                exists_counter += 1
-                csv_data.append((username, name, info["url_user"], str(exists_counter)))
+    for username, results in total_results.items():
+        for site_name, result in results.items():
+            if result.status is SocialNameStatus.CLAIMED:
+                csv_data.append(
+                    (
+                        username,
+                        site_name,
+                        result.url_main,
+                        result.url_user,
+                        str(result.status),
+                        str(result.elapsed_time) or "",
+                    )
+                )
     with open("master.csv", "a", newline="", encoding="utf-8") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerows(csv_data)
 
 
-def write_csv(results: Dict[str, Dict[str, Any]]) -> None:
-    for username, result in results.items():
-        csv_data: List[Tuple[str, str, str, str, str, str, str]] = [
+def write_csv(total_results: Dict[str, Dict[str, SocialNameResult]]) -> None:
+    for username, results in total_results.items():
+        csv_data: List[Tuple[str, str, str, str, str, str]] = [
             (
                 "username",
-                "name",
+                "site_name",
                 "url_main",
                 "url_user",
-                "exists",
-                "http_status",
+                "status",
                 "response_time_s",
             ),
         ]
-        for name, info in result.items():
+        for site_name, result in results.items():
             csv_data.append(
                 (
                     username,
-                    name,
-                    info["url_main"],
-                    info["url_user"],
-                    str(info["status"].status),
-                    info["http_status"],
-                    info["status"].query_time or "",
+                    site_name,
+                    result.url_main,
+                    result.url_user,
+                    str(result.status),
+                    str(result.elapsed_time) or "",
                 )
             )
         with open(username + ".csv", "w", newline="", encoding="utf-8") as csv_file:
@@ -85,9 +92,9 @@ def write_csv(results: Dict[str, Dict[str, Any]]) -> None:
             writer.writerows(csv_data)
 
 
-def open_browser(results: Dict[str, Dict[str, Any]]) -> None:
+def open_browser(total_results: Dict[str, Dict[str, SocialNameResult]]) -> None:
     # opening web browser after results are computed
-    for result in results.values():
-        for site_info in result.values():
-            if site_info["status"].status == QueryStatus.CLAIMED:
-                webbrowser.open_new_tab(site_info["url_user"])
+    for results in total_results.values():
+        for result in results.values():
+            if result.status is SocialNameStatus.CLAIMED:
+                webbrowser.open_new_tab(result.url_user)

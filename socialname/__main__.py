@@ -30,6 +30,6 @@ if __name__ == "__main__":
         )
         sys.exit(1)
 
-    from socialname import command
+    from socialname.cli import command
 
     command.run()

@@ -5,6 +5,7 @@ This is the raw data that will be used to search for usernames.
 """
 import json
 from typing import Any, Dict
+import importlib
 
 import requests
 import cerberus
@@ -12,23 +13,14 @@ import cerberus
 
 VALIDATOR = cerberus.Validator(
     {
-        "errorMsg": {
-            "anyof": [
-                {"type": "string"},
-                {"type": "list", "schema": {"type": "string"}},
-            ]
-        },
-        "errorType": {"type": "string", "required": True},
-        "errorUrl": {"type": "string"},
-        "headers": {"type": "dict"},
-        "noPeriod": {"type": "string"},
-        "regexCheck": {"type": "string"},
-        "request_head_only": {"type": "boolean"},
-        "url": {"type": "string", "required": True},
+        "logic": {"type": "string", "required": True},
         "urlMain": {"type": "string", "required": True},
+        "urlUser": {"type": "string", "required": True},
         "urlProbe": {"type": "string"},
-        "username_claimed": {"type": "string", "required": True},
-        "username_unclaimed": {"type": "string", "required": True},
+        "regexCheck": {"type": "string"},
+        "usernameClaimed": {"type": "string", "required": True},
+        "usernameUnclaimed": {"type": "string", "required": True},
+        "options": {"type": "dict", "allow_unknown": True},
     }
 )
 
@@ -36,8 +28,16 @@ VALIDATOR = cerberus.Validator(
 def validate(data: Dict[str, Any]) -> None:
     errors: Dict[str, str] = {}
     for key, value in data.items():
-        if not VALIDATOR.validate(value):
+        is_valid = VALIDATOR.validate(value)
+        if not is_valid:
             errors[key] = VALIDATOR.errors
+            continue
+        logic: str = value["logic"]
+        module = importlib.import_module(f"socialname.logics.{logic}")
+        options_validator: cerberus.Validator = module.OPTIONS_VALIDATOR  # type: ignore
+        is_options_valid = options_validator.validate(value.get("options", {}))
+        if not is_options_valid:
+            errors[key] = options_validator.errors
     if len(errors) > 0:
         raise ValueError(f"Loaded data is not valid. {errors}")
 

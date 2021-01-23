@@ -8,9 +8,9 @@ import unittest
 import warnings
 from typing import Any, Dict, List
 
-from socialname import sherlock
+from socialname import socialname
 from socialname.notify import QueryNotify
-from socialname.result import QueryStatus
+from socialname.result import SocialNameResult
 from socialname.sites import SitesInformation
 
 

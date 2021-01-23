@@ -4,10 +4,10 @@ This module defines various objects for recording the results of queries.
 """
 import dataclasses
 from enum import Enum
-from typing import Optional, Union
+from typing import Optional, Dict, Any
 
 
-class QueryStatus(Enum):
+class SocialNameStatus(Enum):
     """Query Status Enumeration.
 
     Describes status of query about a given username.
@@ -31,7 +31,7 @@ class QueryStatus(Enum):
 
 
 @dataclasses.dataclass
-class QueryResult:
+class SocialNameResult:
     """Query Result Object.
 
     Describes result of query about a given username.
@@ -59,10 +59,11 @@ class QueryResult:
 
     username: str
     site_name: str
+    url_main: str
     url_user: str
-    status: QueryStatus
-    query_time: Optional[int] = None
-    context: Optional[str] = None
+    status: SocialNameStatus
+    elapsed_time: Optional[int]
+    context: Dict[str, Any]
 
     def __str__(self) -> str:
         """Convert Object To String.
@@ -75,15 +76,6 @@ class QueryResult:
         There is extra context information available about the results.
         Append it to the normal response text.
         """
-        if self.context is None:
+        if not self.context:
             return str(self.status)
         return f"{str(self.status)} ({self.context})"
-
-
-@dataclasses.dataclass
-class Result:
-    url_main: str
-    url_user: str
-    http_status: Optional[Union[str, int]] = None
-    response_text: Optional[str] = None
-    status: Optional[QueryResult] = None

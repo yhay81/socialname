@@ -12,9 +12,7 @@ import platform
 import sys
 
 import requests
-
-MODULE_NAME = "Sherlock: Find Usernames Across Social Networks"
-__version__ = "0.14.0"
+from socialname.__version__ import __version__, __title__
 
 
 def timeout_check(value: Union[float, int, str]) -> float:
@@ -52,7 +50,7 @@ def get_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description=f"{MODULE_NAME} (Version {__version__})",
+        description=f"{__title__} (Version {__version__})",
     )
     parser.add_argument(
         "--version",
@@ -197,7 +195,7 @@ def get_args() -> argparse.Namespace:
         "--local",
         "-l",
         action="store_true",
-        default=False,
+        default=True,
         help="Force the use of the local data.json file.",
     )
 

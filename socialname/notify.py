@@ -8,7 +8,7 @@ from typing import Optional, Union
 
 from colorama import Fore, Style, init
 
-from socialname.result import QueryResult, QueryStatus
+from socialname.result import SocialNameResult, SocialNameStatus
 
 
 class QueryNotify:
@@ -20,7 +20,7 @@ class QueryNotify:
     override the methods to implement specific functionality.
     """
 
-    def __init__(self, result: Optional[QueryResult] = None) -> None:
+    def __init__(self, result: Optional[SocialNameResult] = None) -> None:
         """Create Query Notify Object.
 
         Contains information about a specific method of notifying the results
@@ -54,7 +54,7 @@ class QueryNotify:
         Nothing.
         """
 
-    def update(self, result: QueryResult) -> None:
+    def update(self, result: SocialNameResult) -> None:
         """Notify Update.
 
         Notify method for query result.  This method will typically be
@@ -128,7 +128,7 @@ class QueryNotifyPrint(QueryNotify):
 
     def __init__(
         self,
-        result: Optional[QueryResult] = None,
+        result: Optional[SocialNameResult] = None,
         verbose: bool = False,
         color: bool = True,
         print_all: bool = False,
@@ -179,7 +179,7 @@ class QueryNotifyPrint(QueryNotify):
             f"{self.sty.white} {message}{self.sty.green} on:"
         )
 
-    def update(self, result: QueryResult) -> None:  # noqa
+    def update(self, result: SocialNameResult) -> None:
         """Notify Update.
 
         Will print the query result to the standard output.
@@ -194,48 +194,48 @@ class QueryNotifyPrint(QueryNotify):
         """
         self.result = result
 
-        if self.verbose is False or self.result.query_time is None:
+        if self.verbose is False or result.elapsed_time is None:
             response_time_text = ""
         else:
-            response_time_text = f" [{round(self.result.query_time * 1000)} ms]"
+            response_time_text = f" [{round(result.elapsed_time * 1000)} ms]"
 
         # Output to the terminal is desired.
-        if result.status == QueryStatus.CLAIMED:
+        if result.status == SocialNameStatus.CLAIMED:
             print(
                 (
                     f"{self.sty.bright}{self.sty.white}[{self.sty.green}+{self.sty.white}]{response_time_text} "
-                    f"{self.sty.green}{self.result.site_name}: "
-                    f"{self.sty.reset_all}{self.result.url_user}"
+                    f"{self.sty.green}{result.site_name}: "
+                    f"{self.sty.reset_all}{result.url_user}"
                 )
             )
 
-        elif result.status == QueryStatus.AVAILABLE:
+        elif result.status == SocialNameStatus.AVAILABLE:
             if self.print_all:
                 print(
                     f"{self.sty.bright}{self.sty.white}[{self.sty.red}-{self.sty.white}]{response_time_text} "
-                    f"{self.sty.green}{self.result.site_name}: "
+                    f"{self.sty.green}{result.site_name}: "
                     f"{self.sty.yellow}Not Found!"
                 )
 
-        elif result.status == QueryStatus.UNKNOWN:
+        elif result.status == SocialNameStatus.UNKNOWN:
             if self.print_all:
                 print(
                     f"{self.sty.bright}{self.sty.white}[{self.sty.red}-{self.sty.white}] "
-                    f"{self.sty.green}{self.result.site_name}: "
-                    f"{self.sty.red}{self.result.context}{self.sty.yellow} "
+                    f"{self.sty.green}{result.site_name}: "
+                    f"{self.sty.red}{result.context}{self.sty.yellow} "
                 )
 
-        elif result.status == QueryStatus.ILLEGAL:
+        elif result.status == SocialNameStatus.ILLEGAL:
             if self.print_all:
                 msg = "Illegal Username Format For This Site!"
                 print(
                     f"{self.sty.bright}{self.sty.white}[{self.sty.red}-{self.sty.white}] "
-                    f"{self.sty.green}{self.result.site_name} {self.sty.yellow}{msg}"
+                    f"{self.sty.green}{result.site_name} {self.sty.yellow}{msg}"
                 )
 
         else:
             # It should be impossible to ever get here...
             raise ValueError(
                 f"Unknown Query Status '{str(result.status)}' for "
-                f"site '{self.result.site_name}'"
+                f"site '{result.site_name}'"
             )

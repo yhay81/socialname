@@ -15,9 +15,9 @@ install_requires = [
     "bs4",
     "cerberus",
     "colorama",
+    "dataclasses",
     "lxml",
     "requests",
-    "requests-futures",
     "torrequest",
     "psutil",
 ]
