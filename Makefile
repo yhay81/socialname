@@ -25,7 +25,14 @@ coverage:
 sites:
 	python scripts/site_list.py
 publish:
-	pip install twine
+	rm -fr build dist .egg socialname.egg-info
+	pip install twine wheel
 	python setup.py sdist bdist_wheel
 	twine upload dist/*
+	rm -fr build dist .egg socialname.egg-info
+testpublish:
+	rm -fr build dist .egg socialname.egg-info
+	pip install twine wheel
+	python setup.py sdist bdist_wheel
+	twine upload --repository testpypi dist/*
 	rm -fr build dist .egg socialname.egg-info

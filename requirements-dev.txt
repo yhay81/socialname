@@ -1,7 +1,5 @@
-bs4
-cerberus
+Cerberus
 colorama
-lxml
 requests
 torrequest
 psutil

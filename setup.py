@@ -11,13 +11,11 @@ with codecs.open("socialname/__version__.py", "r") as version_file:
 
 
 install_requires = [
-    "bs4",
-    "cerberus",
-    "colorama",
-    "lxml",
-    "requests",
-    "torrequest",
-    "psutil",
+    "Cerberus>=1.3.2",
+    "colorama>=0.4.4",
+    "requests>=2.25.1",
+    "torrequest>=0.1.0",
+    "psutil>=5.8.0",
 ]
 
 if sys.version_info[:2] == (3, 6):
