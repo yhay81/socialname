@@ -1,11 +1,3 @@
-#! /usr/bin/env python3
-
-"""
-Sherlock: Find Usernames Across Social Networks Module
-
-This module contains the main logic to search for usernames at social
-networks.
-"""
 from typing import Union
 import argparse
 import platform

@@ -1,3 +1,11 @@
+bs4
+cerberus
+colorama
+lxml
+requests
+torrequest
+psutil
+
 bandit
 black
 mypy

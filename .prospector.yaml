@@ -11,6 +11,8 @@ pyroma:
 
 bandit:
   run: true
+  severity: LOW
+  confidence: LOW
 
 mypy:
   run: true

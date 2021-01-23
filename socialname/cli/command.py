@@ -1,12 +1,3 @@
-#! /usr/bin/env python3
-
-"""
-Sherlock: Find Usernames Across Social Networks Module
-
-This module contains the main logic to search for usernames at social
-networks.
-"""
-
 import re
 import sys
 import pathlib
@@ -43,7 +34,7 @@ def check_newer_version() -> None:
         print(f"A problem occurred while checking for an update: {error}")
 
 
-def run() -> None:
+def execute() -> None:
     check_newer_version()
     args = get_args()
     check_args(args)
@@ -99,4 +90,4 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    run()
+    execute()

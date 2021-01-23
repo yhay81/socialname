@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 """
-Sherlock: Find Usernames Across Social Networks Module
+SocialName: Find Usernames Across Social Networks Module
 
 This module contains the main logic to search for usernames at social
 networks.
@@ -24,12 +24,12 @@ if __name__ == "__main__":
     if major != 3 or major == 3 and minor < 6:
         print(
             (
-                f"Sherlock requires Python 3.6+\nYou are using Python {PYTHON_VERSION}, "
-                "which is not supported by Sherlock"
+                f"SocialName requires Python 3.6+\nYou are using Python {PYTHON_VERSION}, "
+                "which is not supported by SocialName"
             )
         )
         sys.exit(1)
 
     from socialname.cli import command
 
-    command.run()
+    command.execute()

@@ -1,4 +1,4 @@
-"""Sherlock Sites Information Module
+"""SocialName Sites Information Module
 
 This module supports storing information about web sites.
 This is the raw data that will be used to search for usernames.
@@ -84,7 +84,7 @@ def create_sites_info(
         # issue about false positives which has already been fixed or having outdated data
         data_file_path = (
             "https://raw.githubusercontent.com"
-            "/sherlock-project/sherlock/master/sherlock/resources/data.json"
+            "/yhay81/socialname/master/socialname/resources/data.json"
         )
     # Ensure that specified data file has correct extension.
     if not data_file_path.lower().endswith(".json"):

@@ -1,32 +1,33 @@
 #!/usr/bin/env python
 import codecs
+import sys
 from typing import Dict
 
 import setuptools
 
 __version__: Dict[str, str] = {}
-with codecs.open("socialname/__version__.py", "r", "utf-8") as version_file:
+with codecs.open("socialname/__version__.py", "r") as version_file:
     exec(version_file.read(), __version__)  # noqa
 
-with codecs.open("README.md", "r", "utf-8") as f:
-    readme = f.read()
 
 install_requires = [
     "bs4",
     "cerberus",
     "colorama",
-    "dataclasses",
     "lxml",
     "requests",
     "torrequest",
     "psutil",
 ]
 
+if sys.version_info[:2] == (3, 6):
+    install_requires.append("dataclasses")
+
 setuptools.setup(
     name=__version__["__title__"],
     version=__version__["__version__"],
     description=__version__["__description__"],
-    long_description=readme,
+    long_description=codecs.open("README.md", "r").read(),
     long_description_content_type="text/markdown",
     keywords=["sns"],
     url=__version__["__url__"],
@@ -34,11 +35,11 @@ setuptools.setup(
     author_email=__version__["__author_email__"],
     license=__version__["__license__"],
     install_requires=install_requires,
-    packages=["socialname"],
+    packages=setuptools.find_packages(exclude=["tests*"]),
     package_data={"": ["LICENSE"]},
     package_dir={"socialname": "socialname"},
     include_package_data=True,
-    python_requires=">=3.7",
+    python_requires=">=3.6",
     zip_safe=False,
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -55,4 +56,10 @@ setuptools.setup(
         "Programming Language :: Python :: Implementation :: PyPy",
     ],
     project_urls={"Source": "https://github.com/yhay81/socialname"},
+    extras_require={},
+    entry_points={
+        "console_scripts": [
+            "socialname = socialname.cli.command:execute",
+        ],
+    },
 )

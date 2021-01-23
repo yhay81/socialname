@@ -1,4 +1,4 @@
-"""Sherlock Result Module
+"""SocialName Result Module
 
 This module defines various objects for recording the results of queries.
 """

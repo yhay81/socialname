@@ -1,7 +1,3 @@
-"""Sherlock Result Module
-
-This module defines various objects for recording the results of queries.
-"""
 from typing import Callable
 
 import requests
