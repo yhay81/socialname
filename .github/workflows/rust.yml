@@ -1,0 +1,82 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Rust core
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --locked --workspace --exclude socialname-desktop --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --locked --workspace --exclude socialname-desktop --all-targets
+
+      - name: Validate Site Rule v1 pack
+        run: cargo run --locked -p socialname-cli -- rules validate
+
+      - name: Verify deterministic site fixtures
+        run: cargo run --locked -p socialname-cli -- fixtures
+
+  desktop:
+    name: Desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check frontend
+        run: npm run check
+
+      - name: Build desktop application
+        run: npm run tauri -- build --debug --no-bundle --ci
+
+      - name: Run desktop Clippy
+        working-directory: ${{ github.workspace }}
+        run: cargo clippy --locked -p socialname-desktop --all-targets -- -D warnings
