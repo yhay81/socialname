@@ -1,0 +1,61 @@
+schema: socialname.dev/site/v1
+id: x
+name: X
+homepage: https://x.com/
+profile_url: https://x.com/{username:path}
+namespace: person_or_organization
+username:
+  pattern: '^[A-Za-z\d_]{1,15}$'
+  case_sensitive: false
+  normalization: lowercase
+probes:
+  - id: profile
+    http:
+      method: GET
+      url: https://x.com/{username:path}
+      redirects:
+        mode: same_site
+        max_hops: 2
+      allowed_hosts: [x.com]
+      headers:
+        accept: text/html
+      expected_body: bounded_text
+      transport_profile: browser_like
+plan:
+  type: single
+  probe: profile
+classification:
+  blocked:
+    any:
+      - status:
+          probe: profile
+          in: [403, 429]
+      - transport:
+          probe: profile
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: profile
+          in: [200]
+      - body:
+          probe: profile
+          op: contains_template
+          value: 'https://x.com/{username}'
+  not_found:
+    status:
+      probe: profile
+      in: [404]
+  otherwise: inconclusive
+canary:
+  found: [github]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 15
+      attempts: 3
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [social, html, anti-bot]
+  notes: Fixtures prove classifier semantics; live rule remains disabled until login-wall and anti-bot states have stable markers.

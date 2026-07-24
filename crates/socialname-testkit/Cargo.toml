@@ -1,0 +1,20 @@
+[package]
+name = "socialname-testkit"
+description = "Deterministic fixtures and pack verification for SocialName"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_yaml_ng.workspace = true
+socialname-domain = { path = "../socialname-domain" }
+socialname-engine = { path = "../socialname-engine" }
+socialname-rule-compiler = { path = "../socialname-rule-compiler" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

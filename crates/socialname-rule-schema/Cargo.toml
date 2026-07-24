@@ -1,0 +1,17 @@
+[package]
+name = "socialname-rule-schema"
+description = "Typed source schema for SocialName site rules"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

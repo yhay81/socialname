@@ -1,0 +1,72 @@
+schema: socialname.dev/site/v1
+id: gitlab
+name: GitLab
+homepage: https://gitlab.com/
+profile_url: https://gitlab.com/{username:path}
+namespace: person_or_organization
+username:
+  pattern: '^[a-z\d](?:[a-z\d._-]{0,253}[a-z\d])?$'
+  case_sensitive: false
+  normalization: lowercase
+probes:
+  - id: api
+    http:
+      method: GET
+      url: https://gitlab.com/api/v4/users?username={username:query}
+      redirects:
+        mode: same_site
+        max_hops: 2
+      allowed_hosts: [gitlab.com]
+      headers:
+        accept: application/json
+      expected_body: json
+      transport_profile: api_json
+plan:
+  type: single
+  probe: api
+classification:
+  blocked:
+    any:
+      - status:
+          probe: api
+          in: [403, 429]
+      - transport:
+          probe: api
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: api
+          in: [200]
+      - json:
+          probe: api
+          pointer: /0/username
+          op: equals_template
+          template: '{username}'
+      - json:
+          probe: api
+          pointer: /0/id
+          op: exists
+  not_found:
+    all:
+      - status:
+          probe: api
+          in: [200]
+      - json:
+          probe: api
+          pointer: ''
+          op: array_length
+          length: 0
+  otherwise: inconclusive
+canary:
+  found: [gitlab]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 40
+      attempts: 3
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [developer, source-code, api]
+  notes: Exact username API lookup; empty result array is the negative identity marker.

@@ -1,80 +1,106 @@
-# SocialName: Yet Another fork of Sherlock
+# SocialName
 
-## Installation
+SocialName is being rebuilt as a Rust-based public-identifier observability
+platform. The first implementation slice provides a private local CLI, one
+shared probe/classification engine, a strict Site Rule v1 compiler, and
+explainable assertion derivation.
 
-```bash
-$ pip install socialname
+The product direction is:
+
+- local-first, fast CLI searches;
+- a developer API using exactly the same engine and rule pack;
+- paid continuous monitoring, history, and notifications;
+- an opt-in central quality network that distinguishes verified,
+  corroborated, conflicted, stale, and blocked results.
+
+A matching username across sites is not proof that the accounts belong to one
+person.
+
+## Implemented
+
+- Rust workspace with domain, schema, compiler, engine, application core, CLI,
+  desktop, and testkit crates.
+- Deterministic `found`, `not_found`, `inconclusive`, and conflict
+  classification with matcher traces and evidence digests.
+- Context-safe path, query, and subdomain URL templates.
+- HTTPS and per-rule host allowlists, bounded redirects, timeouts, and body
+  inspection.
+- Canonical JSON rule compilation and deterministic SHA-256 rule-pack hashes.
+- Assertion v1 trust thresholds for managed and opt-in shared observations.
+- Ten representative site rules and 30 minimized offline fixture cases.
+- Discovery-only quarantine for rules that are not yet live-canary qualified.
+- Tauri 2 desktop application for Windows and macOS with explicit research
+  consent, site selection, streaming evidence, and cancellation.
+
+The central server, SQLite cache, signed rule-pack publication, managed
+canaries, and monitoring pipeline are the next implementation slices.
+
+## Build and verify
+
+Rust stable is pinned through `rust-toolchain.toml`.
+
+```console
+cargo build --workspace --exclude socialname-desktop
+cargo test --workspace --exclude socialname-desktop --all-targets
+cargo clippy --workspace --exclude socialname-desktop --all-targets --all-features -- -D warnings
 ```
 
-## Usage
+Validate the complete rule pack and its deterministic fixtures:
 
-```bash
-$ socialname --help
-usage: socialname [-h] [--version] [--verbose] [--folderoutput FOLDEROUTPUT]
-                [--output OUTPUT] [--tor] [--unique-tor] [--csv]
-                [--site SITE_NAME] [--proxy PROXY_URL] [--json JSON_FILE]
-                [--timeout TIMEOUT] [--print-all] [--print-found] [--no-color]
-                [--browse] [--local]
-                USERNAMES [USERNAMES ...]
-
-SocialName: Find Usernames Across Social Networks (Version 0.1.0)
-
-positional arguments:
-  USERNAMES             One or more usernames to check with social networks.
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --version             Display version information and dependencies.
-  --verbose, -v, -d, --debug
-                        Display extra debugging information and metrics.
-  --folderoutput FOLDEROUTPUT, -fo FOLDEROUTPUT
-                        If using multiple usernames, the output of the results
-                        will be saved to this folder.
-  --output OUTPUT, -o OUTPUT
-                        If using single username, the output of the result
-                        will be saved to this file.
-  --tor, -t             Make requests over Tor; increases runtime; requires
-                        Tor to be installed and in system path.
-  --unique-tor, -u      Make requests over Tor with new Tor circuit after each
-                        request; increases runtime; requires Tor to be
-                        installed and in system path.
-  --csv                 Create Comma-Separated Values (CSV) File.
-  --site SITE_NAME      Limit analysis to just the listed sites. Add multiple
-                        options to specify more than one site.
-  --proxy PROXY_URL, -p PROXY_URL
-                        Make requests over a proxy. e.g.
-                        socks5://127.0.0.1:1080
-  --json JSON_FILE, -j JSON_FILE
-                        Load data from a JSON file or an online, valid, JSON
-                        file.
-  --timeout TIMEOUT     Time (in seconds) to wait for response to requests.
-                        Default timeout is infinity. A longer timeout will be
-                        more likely to get results from slow sites. On the
-                        other hand, this may cause a long delay to gather all
-                        results.
-  --print-all           Output sites where the username was not found.
-  --print-found         Output sites where the username was found.
-  --no-color            Don't color terminal output
-  --browse, -b          Browse to all results on default browser.
-  --local, -l           Force the use of the local data.json file. (default True)
+```console
+cargo run -p socialname-cli -- rules validate
+cargo run -p socialname-cli -- rules list --all
+cargo run -p socialname-cli -- fixtures
 ```
 
-To search for only one user:
+Run an explicitly local live probe:
 
-```bash
-$ socialname user123
+```console
+cargo run -p socialname-cli -- search github --site github --allow-disabled --json
 ```
 
-To search for more than one user:
+Run the desktop application (Node.js 24 and the native Tauri prerequisites are
+required):
 
-```bash
-$ socialname user1 user2 user3
+```console
+cd apps/desktop
+npm ci
+npm run tauri -- dev
 ```
 
-Or if usename contains spaces:
+Windows and macOS CI compile the complete native desktop target separately.
 
-```bash
-$ socialname "user with spaces"
+All representative rules remain `discovery` until the managed multi-region
+live-canary gate exists. They are blocked from live execution unless
+`--allow-disabled` is supplied deliberately.
+
+## Workspace
+
+```text
+crates/
+  socialname-app-core/       UI-independent local search orchestration
+  socialname-domain/         observations and assertion/v1 derivation
+  socialname-rule-schema/    strict Site Rule v1 source types
+  socialname-rule-compiler/  validation and canonical compilation
+  socialname-engine/         HTTP probing and deterministic classification
+  socialname-cli/            local command-line entry point
+  socialname-testkit/        offline fixture verification
+apps/
+  desktop/                   Tauri 2 + React application for Windows and macOS
+rules/
+  sites/                     one reviewed YAML rule per site
+  fixtures/                  minimized deterministic response cases
+docs/                        product, architecture, trust, and governance records
 ```
 
-Accounts found will be stored in an individual text file with the corresponding username (e.g `user123.txt`).
+Start with the [design index](docs/README.md), the
+[accepted decisions](docs/decisions-2026-07-24.md), and the
+[Site Rule v1 validation record](docs/site-rule-v1-validation.md).
+The desktop boundary and platform policy are recorded in
+[Desktop application](docs/desktop-application.md).
+
+## Legacy implementation
+
+The existing Python package under `socialname/` remains only as a migration and
+behavioral reference while v2 is built. New implementation work belongs in the
+Rust workspace.

@@ -1,0 +1,73 @@
+schema: socialname.dev/site/v1
+id: bluesky
+name: Bluesky
+homepage: https://bsky.app/
+profile_url: https://bsky.app/profile/{username:path}
+namespace: federated_account
+username:
+  pattern: '^(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z](?:[a-z\d-]{0,61}[a-z\d])?$'
+  case_sensitive: false
+  normalization: lowercase
+probes:
+  - id: public-api
+    http:
+      method: GET
+      url: https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor={username:query}
+      redirects:
+        mode: follow
+        max_hops: 2
+      allowed_hosts: [public.api.bsky.app]
+      headers:
+        accept: application/json
+      expected_body: json
+      transport_profile: api_json
+plan:
+  type: single
+  probe: public-api
+classification:
+  blocked:
+    any:
+      - status:
+          probe: public-api
+          in: [403, 429]
+      - transport:
+          probe: public-api
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: public-api
+          in: [200]
+      - json:
+          probe: public-api
+          pointer: /handle
+          op: equals_template
+          template: '{username}'
+      - json:
+          probe: public-api
+          pointer: /did
+          op: exists
+  not_found:
+    all:
+      - status:
+          probe: public-api
+          in: [400]
+      - json:
+          probe: public-api
+          pointer: /error
+          op: equals
+          value: ProfileNotFound
+  otherwise: inconclusive
+canary:
+  found: [bsky.app]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 24
+      attempts: 3
+      suffix: .bsky.social
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [federated, atproto, api]
+  notes: DID plus exact handle provide high-strength identity evidence.

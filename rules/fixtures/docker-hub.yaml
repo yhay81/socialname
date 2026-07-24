@@ -1,0 +1,39 @@
+schema: socialname.dev/fixture/v1
+site_id: docker-hub
+cases:
+  - id: structured-found
+    username: docker
+    expected: found
+    minimum_evidence: e4_structured_identity
+    responses:
+      - probe_id: api
+        transport: completed
+        status: 200
+        final_url: https://hub.docker.com/v2/users/docker/
+        headers:
+          content-type: application/json
+        body: '{"name":"docker","type":"Organization"}'
+  - id: endpoint-not-found
+    username: snv1probe9f4d2c7b6a1e00000000
+    expected: not_found
+    minimum_evidence: e3_explicit_endpoint
+    responses:
+      - probe_id: api
+        transport: completed
+        status: 404
+        final_url: https://hub.docker.com/v2/users/snv1probe9f4d2c7b6a1e00000000/
+        headers:
+          content-type: application/json
+        body: '{"detail":"Not found."}'
+  - id: access-blocked
+    username: docker
+    expected: inconclusive
+    expected_reason: blocked
+    responses:
+      - probe_id: api
+        transport: completed
+        status: 403
+        final_url: https://hub.docker.com/v2/users/docker/
+        headers:
+          content-type: application/json
+        body: '{"detail":"Forbidden"}'

@@ -1,0 +1,39 @@
+schema: socialname.dev/fixture/v1
+site_id: steam
+cases:
+  - id: canonical-profile-found
+    username: valve
+    expected: found
+    minimum_evidence: e3_explicit_endpoint
+    responses:
+      - probe_id: profile
+        transport: completed
+        status: 200
+        final_url: https://steamcommunity.com/id/valve
+        headers:
+          content-type: text/html
+        body: '<html><link rel="canonical" href="https://steamcommunity.com/id/valve"><title>Valve</title></html>'
+  - id: soft-not-found
+    username: snv1probe9f4d2c7b6a1e0000000000
+    expected: not_found
+    minimum_evidence: e2_differential_template
+    responses:
+      - probe_id: profile
+        transport: completed
+        status: 200
+        final_url: https://steamcommunity.com/id/snv1probe9f4d2c7b6a1e0000000000
+        headers:
+          content-type: text/html
+        body: '<html>The specified profile could not be found.</html>'
+  - id: access-blocked
+    username: valve
+    expected: inconclusive
+    expected_reason: blocked
+    responses:
+      - probe_id: profile
+        transport: completed
+        status: 403
+        final_url: https://steamcommunity.com/id/valve
+        headers:
+          content-type: text/html
+        body: '<html>Access denied</html>'

@@ -1,0 +1,66 @@
+schema: socialname.dev/site/v1
+id: reddit
+name: Reddit
+homepage: https://www.reddit.com/
+profile_url: https://www.reddit.com/user/{username:path}/
+namespace: person
+username:
+  pattern: '^[A-Za-z0-9_-]{3,20}$'
+  case_sensitive: false
+  normalization: preserve
+probes:
+  - id: about
+    http:
+      method: GET
+      url: https://www.reddit.com/user/{username:path}/about.json
+      redirects:
+        mode: same_site
+        max_hops: 2
+      allowed_hosts: [www.reddit.com]
+      headers:
+        accept: application/json
+      expected_body: json
+      transport_profile: api_json
+plan:
+  type: single
+  probe: about
+classification:
+  blocked:
+    any:
+      - status:
+          probe: about
+          in: [403, 429]
+      - transport:
+          probe: about
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: about
+          in: [200]
+      - json:
+          probe: about
+          pointer: /data/name
+          op: equals_template
+          template: '{username}'
+      - json:
+          probe: about
+          pointer: /data/id
+          op: exists
+  not_found:
+    status:
+      probe: about
+      in: [404]
+  otherwise: inconclusive
+canary:
+  found: [reddit]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 20
+      attempts: 3
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [community, api, policy-review]
+  notes: Rule is proven by fixtures but disabled until access policy and regional block behavior are continuously canaried.

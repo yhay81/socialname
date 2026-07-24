@@ -1,0 +1,62 @@
+schema: socialname.dev/site/v1
+id: mastodon-social
+name: mastodon.social
+homepage: https://mastodon.social/
+profile_url: https://mastodon.social/@{username:path}
+namespace: federated_account
+username:
+  pattern: '^[A-Za-z\d_]{1,30}$'
+  case_sensitive: false
+  normalization: lowercase
+probes:
+  - id: webfinger
+    http:
+      method: GET
+      url: https://mastodon.social/.well-known/webfinger?resource=acct%3A{username:query}%40mastodon.social
+      redirects:
+        mode: same_site
+        max_hops: 2
+      allowed_hosts: [mastodon.social]
+      headers:
+        accept: application/jrd+json
+      expected_body: json
+      transport_profile: api_json
+plan:
+  type: single
+  probe: webfinger
+classification:
+  blocked:
+    any:
+      - status:
+          probe: webfinger
+          in: [403, 429]
+      - transport:
+          probe: webfinger
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: webfinger
+          in: [200]
+      - json:
+          probe: webfinger
+          pointer: /subject
+          op: equals_template
+          template: 'acct:{username}@mastodon.social'
+  not_found:
+    status:
+      probe: webfinger
+      in: [404]
+  otherwise: inconclusive
+canary:
+  found: [gargron]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 30
+      attempts: 3
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [federated, activitypub, webfinger]
+  notes: Instance-scoped v1 rule; future federation support should model domain as part of the target.

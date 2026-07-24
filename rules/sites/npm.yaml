@@ -1,0 +1,61 @@
+schema: socialname.dev/site/v1
+id: npm
+name: npm
+homepage: https://www.npmjs.com/
+profile_url: https://www.npmjs.com/~{username:path}
+namespace: developer_account
+username:
+  pattern: '^[a-z\d][a-z\d._-]{0,63}$'
+  case_sensitive: false
+  normalization: lowercase
+probes:
+  - id: profile
+    http:
+      method: GET
+      url: https://www.npmjs.com/~{username:path}
+      redirects:
+        mode: same_site
+        max_hops: 2
+      allowed_hosts: [www.npmjs.com]
+      headers:
+        accept: text/html
+      expected_body: bounded_text
+      transport_profile: browser_like
+plan:
+  type: single
+  probe: profile
+classification:
+  blocked:
+    any:
+      - status:
+          probe: profile
+          in: [403, 429]
+      - transport:
+          probe: profile
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: profile
+          in: [200]
+      - body:
+          probe: profile
+          op: contains_template
+          value: '/~{username}'
+  not_found:
+    status:
+      probe: profile
+      in: [404]
+  otherwise: inconclusive
+canary:
+  found: [npm]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 40
+      attempts: 3
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [developer, package-registry, html]
+  notes: Disabled pending continuous validation of the HTML identity marker.

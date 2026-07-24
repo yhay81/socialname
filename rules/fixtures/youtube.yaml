@@ -1,0 +1,39 @@
+schema: socialname.dev/fixture/v1
+site_id: youtube
+cases:
+  - id: canonical-handle-found
+    username: YouTube
+    expected: found
+    minimum_evidence: e3_explicit_endpoint
+    responses:
+      - probe_id: handle
+        transport: completed
+        status: 200
+        final_url: https://www.youtube.com/@YouTube
+        headers:
+          content-type: text/html
+        body: '<html><link rel="canonical" href="https://www.youtube.com/@YouTube"></html>'
+  - id: endpoint-not-found
+    username: snv1probe9f4d2c7b6a1e0000000000
+    expected: not_found
+    minimum_evidence: e3_explicit_endpoint
+    responses:
+      - probe_id: handle
+        transport: completed
+        status: 404
+        final_url: https://www.youtube.com/@snv1probe9f4d2c7b6a1e0000000000
+        headers:
+          content-type: text/html
+        body: '<html>Not Found</html>'
+  - id: access-blocked
+    username: YouTube
+    expected: inconclusive
+    expected_reason: blocked
+    responses:
+      - probe_id: handle
+        transport: completed
+        status: 403
+        final_url: https://www.youtube.com/@YouTube
+        headers:
+          content-type: text/html
+        body: '<html>Consent required</html>'

@@ -1,0 +1,68 @@
+schema: socialname.dev/site/v1
+id: docker-hub
+name: Docker Hub
+homepage: https://hub.docker.com/
+profile_url: https://hub.docker.com/u/{username:path}
+namespace: person_or_organization
+username:
+  pattern: '^[a-z\d](?:[a-z\d_-]{2,28}[a-z\d])?$'
+  case_sensitive: false
+  normalization: lowercase
+probes:
+  - id: api
+    http:
+      method: GET
+      url: https://hub.docker.com/v2/users/{username:path}/
+      redirects:
+        mode: same_site
+        max_hops: 2
+      allowed_hosts: [hub.docker.com]
+      headers:
+        accept: application/json
+      expected_body: json
+      transport_profile: api_json
+plan:
+  type: single
+  probe: api
+classification:
+  blocked:
+    any:
+      - status:
+          probe: api
+          in: [403, 429]
+      - transport:
+          probe: api
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: api
+          in: [200]
+      - any:
+          - json:
+              probe: api
+              pointer: /username
+              op: equals_template
+              template: '{username}'
+          - json:
+              probe: api
+              pointer: /name
+              op: equals_template
+              template: '{username}'
+  not_found:
+    status:
+      probe: api
+      in: [404]
+  otherwise: inconclusive
+canary:
+  found: [docker]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 30
+      attempts: 3
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [developer, container-registry, api]
+  notes: Structured endpoint supports personal and organization namespaces.

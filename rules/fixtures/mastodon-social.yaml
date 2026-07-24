@@ -1,0 +1,39 @@
+schema: socialname.dev/fixture/v1
+site_id: mastodon-social
+cases:
+  - id: webfinger-found
+    username: gargron
+    expected: found
+    minimum_evidence: e4_structured_identity
+    responses:
+      - probe_id: webfinger
+        transport: completed
+        status: 200
+        final_url: https://mastodon.social/.well-known/webfinger?resource=acct%3Agargron%40mastodon.social
+        headers:
+          content-type: application/jrd+json
+        body: '{"subject":"acct:gargron@mastodon.social","aliases":["https://mastodon.social/@Gargron"]}'
+  - id: endpoint-not-found
+    username: snv1probe9f4d2c7b6a1e0000000000
+    expected: not_found
+    minimum_evidence: e3_explicit_endpoint
+    responses:
+      - probe_id: webfinger
+        transport: completed
+        status: 404
+        final_url: https://mastodon.social/.well-known/webfinger?resource=acct%3Asnv1probe9f4d2c7b6a1e0000000000%40mastodon.social
+        headers:
+          content-type: application/json
+        body: '{}'
+  - id: access-blocked
+    username: gargron
+    expected: inconclusive
+    expected_reason: blocked
+    responses:
+      - probe_id: webfinger
+        transport: completed
+        status: 403
+        final_url: https://mastodon.social/.well-known/webfinger?resource=acct%3Agargron%40mastodon.social
+        headers:
+          content-type: text/html
+        body: '<html>Forbidden</html>'

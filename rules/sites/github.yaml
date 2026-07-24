@@ -1,0 +1,72 @@
+schema: socialname.dev/site/v1
+id: github
+name: GitHub
+homepage: https://github.com/
+profile_url: https://github.com/{username:path}
+namespace: person_or_organization
+username:
+  pattern: '^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$'
+  case_sensitive: false
+  normalization: lowercase
+probes:
+  - id: api
+    http:
+      method: GET
+      url: https://api.github.com/users/{username:path}
+      redirects:
+        mode: follow
+        max_hops: 2
+      allowed_hosts: [api.github.com]
+      headers:
+        accept: application/vnd.github+json
+      expected_body: json
+      transport_profile: api_json
+plan:
+  type: single
+  probe: api
+classification:
+  blocked:
+    any:
+      - status:
+          probe: api
+          in: [403, 429]
+      - transport:
+          probe: api
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: api
+          in: [200]
+      - json:
+          probe: api
+          pointer: /login
+          op: equals_template
+          template: '{username}'
+      - json:
+          probe: api
+          pointer: /id
+          op: exists
+  not_found:
+    all:
+      - status:
+          probe: api
+          in: [404]
+      - json:
+          probe: api
+          pointer: /message
+          op: equals
+          value: Not Found
+  otherwise: inconclusive
+canary:
+  found: [github, octocat]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 32
+      attempts: 3
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [developer, source-code, api]
+  notes: Structured public user API with explicit identity and not-found markers.

@@ -1,0 +1,39 @@
+schema: socialname.dev/fixture/v1
+site_id: x
+cases:
+  - id: canonical-profile-found
+    username: github
+    expected: found
+    minimum_evidence: e3_explicit_endpoint
+    responses:
+      - probe_id: profile
+        transport: completed
+        status: 200
+        final_url: https://x.com/github
+        headers:
+          content-type: text/html
+        body: '<html><link rel="canonical" href="https://x.com/github"></html>'
+  - id: endpoint-not-found
+    username: snv1probe9f4d2c
+    expected: not_found
+    minimum_evidence: e3_explicit_endpoint
+    responses:
+      - probe_id: profile
+        transport: completed
+        status: 404
+        final_url: https://x.com/snv1probe9f4d2c
+        headers:
+          content-type: text/html
+        body: '<html>This account does not exist</html>'
+  - id: access-blocked
+    username: github
+    expected: inconclusive
+    expected_reason: blocked
+    responses:
+      - probe_id: profile
+        transport: completed
+        status: 403
+        final_url: https://x.com/github
+        headers:
+          content-type: text/html
+        body: '<html>Login required</html>'

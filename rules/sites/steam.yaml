@@ -1,0 +1,70 @@
+schema: socialname.dev/site/v1
+id: steam
+name: Steam Community
+homepage: https://steamcommunity.com/
+profile_url: https://steamcommunity.com/id/{username:path}
+namespace: person
+username:
+  pattern: '^[A-Za-z\d_-]{2,32}$'
+  case_sensitive: false
+  normalization: preserve
+probes:
+  - id: profile
+    http:
+      method: GET
+      url: https://steamcommunity.com/id/{username:path}
+      redirects:
+        mode: same_site
+        max_hops: 2
+      allowed_hosts: [steamcommunity.com]
+      headers:
+        accept: text/html
+      expected_body: bounded_text
+      transport_profile: browser_like
+plan:
+  type: single
+  probe: profile
+classification:
+  blocked:
+    any:
+      - status:
+          probe: profile
+          in: [403, 429]
+      - transport:
+          probe: profile
+          in: [blocked, rate_limited, timeout, dns, connect, tls, redirect_rejected, response_too_large, decode]
+  found:
+    all:
+      - status:
+          probe: profile
+          in: [200]
+      - body:
+          probe: profile
+          op: contains_template
+          value: 'https://steamcommunity.com/id/{username}'
+      - body:
+          probe: profile
+          op: not_contains
+          value: The specified profile could not be found.
+  not_found:
+    all:
+      - status:
+          probe: profile
+          in: [200]
+      - body:
+          probe: profile
+          op: contains
+          value: The specified profile could not be found.
+  otherwise: inconclusive
+canary:
+  found: [valve]
+  not_found:
+    generator:
+      alphabet: lowercase_alnum
+      length: 32
+      attempts: 3
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags: [gaming, soft-404, html]
+  notes: Soft-404 rule requires paired body markers and continuous canary health before enablement.

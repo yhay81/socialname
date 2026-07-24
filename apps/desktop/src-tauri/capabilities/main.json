@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The bundled SocialName UI has no direct OS plugin privileges.",
+  "windows": ["main"],
+  "permissions": []
+}

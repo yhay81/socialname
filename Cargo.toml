@@ -1,0 +1,70 @@
+[workspace]
+members = [
+    "apps/desktop/src-tauri",
+    "crates/socialname-app-core",
+    "crates/socialname-cli",
+    "crates/socialname-domain",
+    "crates/socialname-engine",
+    "crates/socialname-rule-compiler",
+    "crates/socialname-rule-schema",
+    "crates/socialname-testkit",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["SocialName contributors"]
+license = "MIT"
+repository = "https://github.com/yhay81/socialname"
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.6.4", features = ["derive"] }
+futures-util = "0.3.31"
+hex = "0.4.3"
+percent-encoding = "2.3.2"
+regex = "1.13.1"
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "brotli",
+    "deflate",
+    "form",
+    "gzip",
+    "http2",
+    "json",
+    "rustls",
+    "stream",
+    "zstd",
+] }
+schemars = "1.2.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml_ng = "0.10.0"
+sha2 = "0.10.9"
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = [
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "signal",
+    "time",
+] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+url = { version = "2.5.8", features = ["serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+await_holding_lock = "deny"
+dbg_macro = "deny"
+todo = "warn"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
