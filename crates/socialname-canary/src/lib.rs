@@ -6,6 +6,7 @@ mod error;
 mod report;
 mod runner;
 mod schema;
+mod shadow;
 
 pub use aggregate::{
     CANARY_AGGREGATE_V1, CanaryAcceptanceAggregate, CanaryAcceptanceDisposition,
@@ -26,4 +27,10 @@ pub use runner::{
 pub use schema::{
     CANARY_MANIFEST_V1, CanaryManifestSource, NegativeAlphabet, NegativeCanaryGeneratorSource,
     NegativeCanarySource, PositiveCanaryKind, PositiveCanarySource,
+};
+pub use shadow::{
+    CANARY_SHADOW_V1, CanaryShadowBuilder, CanaryShadowComparisonV1, CanaryShadowDisposition,
+    CanaryShadowEnvelope, CanaryShadowError, CanaryShadowIssue, CanaryShadowPair,
+    CanaryShadowPolicy, CanaryShadowRun, CanaryShadowSummary, CanaryShadowValidator,
+    ValidatedCanaryShadow,
 };

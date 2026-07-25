@@ -189,6 +189,14 @@ impl CanaryRunner<SearchEngine> {
 }
 
 impl<P: CanaryProbe> CanaryRunner<P> {
+    pub(crate) const fn probe(&self) -> &P {
+        &self.probe
+    }
+
+    pub(crate) fn engine_hash(&self) -> &str {
+        &self.engine_hash
+    }
+
     pub async fn run(
         &self,
         rule: &CompiledSiteRule,
@@ -327,18 +335,18 @@ impl<P: CanaryProbe> CanaryRunner<P> {
 }
 
 #[derive(Clone, Debug)]
-struct CanaryCase {
-    id: String,
-    username: String,
-    expectation: CanaryCaseExpectation,
+pub(crate) struct CanaryCase {
+    pub(crate) id: String,
+    pub(crate) username: String,
+    pub(crate) expectation: CanaryCaseExpectation,
 }
 
 #[derive(Clone, Debug)]
-struct CompletedCase {
-    index: usize,
-    outcome: CanaryCaseOutcome,
-    requests: usize,
-    response_bytes: usize,
+pub(crate) struct CompletedCase {
+    pub(crate) index: usize,
+    pub(crate) outcome: CanaryCaseOutcome,
+    pub(crate) requests: usize,
+    pub(crate) response_bytes: usize,
 }
 
 fn build_cases<R: Rng + ?Sized>(
@@ -395,7 +403,7 @@ fn build_cases<R: Rng + ?Sized>(
     Ok(cases)
 }
 
-fn validate_run_inputs(
+pub(crate) fn validate_run_inputs(
     rule: &CompiledSiteRule,
     manifest: &CompiledCanaryManifest,
     vantage: &DeclaredVantage,
@@ -431,7 +439,7 @@ fn valid_region(value: &str) -> bool {
         && characters.all(|character| matches!(character, 'a'..='z' | '0'..='9' | '-'))
 }
 
-fn maximum_requests_per_search(rule: &CompiledSiteRule) -> usize {
+pub(crate) fn maximum_requests_per_search(rule: &CompiledSiteRule) -> usize {
     match &rule.source.plan {
         ProbePlanSource::Single { .. } => 1,
         ProbePlanSource::Fallback { .. } => 2,
@@ -439,7 +447,7 @@ fn maximum_requests_per_search(rule: &CompiledSiteRule) -> usize {
     }
 }
 
-fn maximum_inspected_bytes_per_search(rule: &CompiledSiteRule) -> usize {
+pub(crate) fn maximum_inspected_bytes_per_search(rule: &CompiledSiteRule) -> usize {
     let probe_limit = |probe_id: &str| {
         rule.probe_index
             .get(probe_id)
@@ -458,7 +466,11 @@ fn maximum_inspected_bytes_per_search(rule: &CompiledSiteRule) -> usize {
     }
 }
 
-fn completed_case(index: usize, case: CanaryCase, result: SearchResult) -> CompletedCase {
+pub(crate) fn completed_case(
+    index: usize,
+    case: CanaryCase,
+    result: SearchResult,
+) -> CompletedCase {
     let requests = result.probes.len();
     let response_bytes = result
         .probes
