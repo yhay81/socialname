@@ -28,6 +28,7 @@ const MAX_GENERATED_USERNAME_BYTES: usize = 128;
 #[derive(Clone, Debug)]
 pub struct CompiledCanaryManifest {
     pub source: CanaryManifestSource,
+    pub validated_rule_hash: String,
     pub manifest_hash: String,
     pub canonical_json: Vec<u8>,
 }
@@ -96,6 +97,7 @@ impl CanaryManifestCompiler {
         let manifest_hash = sha256_hex(&canonical_json);
         Ok(CompiledCanaryManifest {
             source,
+            validated_rule_hash: rule.rule_hash.clone(),
             manifest_hash,
             canonical_json,
         })
@@ -290,7 +292,8 @@ fn validate_negative_generator(
 
 fn valid_canary_id(value: &str) -> bool {
     let mut characters = value.chars();
-    matches!(characters.next(), Some('a'..='z'))
+    !value.starts_with("generated-negative-")
+        && matches!(characters.next(), Some('a'..='z'))
         && value.len() <= 64
         && characters.all(|character| matches!(character, 'a'..='z' | '0'..='9' | '-'))
 }
@@ -501,6 +504,18 @@ negative:
         assert!(errors.0.iter().any(|error| {
             error == &CanaryManifestError::DuplicatePositiveUsername("delta".to_owned())
         }));
+    }
+
+    #[test]
+    fn rejects_positive_id_reserved_for_generated_negatives() {
+        let source = VALID_MANIFEST.replace("id: platform", "id: generated-negative-001");
+        let errors = CanaryManifestCompiler::new()
+            .compile_yaml_at(&source, &rule(), Some("example"), validation_time())
+            .unwrap_err();
+
+        assert!(errors.0.contains(&CanaryManifestError::InvalidPositiveId(
+            "generated-negative-001".to_owned()
+        )));
     }
 
     #[test]

@@ -36,6 +36,9 @@ jobs:
       - name: Validate Site Rule v1 pack
         run: cargo run --locked -p socialname-cli -- rules validate
 
+      - name: Validate canary manifests
+        run: cargo run --locked -p socialname-cli -- canaries validate
+
       - name: Verify deterministic site fixtures
         run: cargo run --locked -p socialname-cli -- fixtures
 

@@ -34,6 +34,8 @@ person.
 - Canonical JSON rule compilation and deterministic SHA-256 rule-pack hashes.
 - Independent typed canary manifests with review, expiry, policy compatibility,
   and deterministic content hashes.
+- A cancellable production-engine canary runner with preflight request,
+  concurrency, wall-time, and inspected-byte budgets.
 - Assertion v1 trust thresholds for managed and opt-in shared observations.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.

@@ -64,8 +64,7 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: implement the bounded canary runner using the production
-engine.
+Next executable item: emit and validate the versioned canary report.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -73,7 +72,7 @@ disabled.
 ### 1A. Live canary software
 
 - [x] Define typed positive/negative canary manifests separate from site rules.
-- [ ] Implement a bounded canary runner using the production engine.
+- [x] Implement a bounded canary runner using the production engine.
 - [ ] Emit a versioned report containing rule/engine hash, declared vantage,
       precision, conclusive coverage, latency, bytes, response classes, and
       conflicts without complete bodies.
@@ -111,6 +110,27 @@ reviewed positive controls, five or more generated negatives, expiry, unique
 normalized identifiers, HTTPS review evidence, minimum generator entropy, and
 compatibility with the compiled site username policy. No production manifests
 were fabricated; the external review gate remains pending.
+
+Runner-slice evidence:
+
+```console
+cargo test --locked --workspace --all-targets
+# socialname-canary: 13 passed, including completion, request/byte preflight,
+# cancellation, deadline, and rule-hash mismatch cases
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+```
+
+The runner uses the production `SearchEngine`, OS-seeded negative generation,
+worst-case request and inspected-byte preflight, bounded concurrency and wall
+time, cancellation with explicit partial completion, and a minimized result
+surface that excludes usernames, URLs, bodies, and matcher detail. Live CLI
+execution requires both an accepted manifest and `--allow-live`.
 
 Software acceptance gate:
 
@@ -308,3 +328,7 @@ Choose these only when their trigger is measured:
   review, entropy, duplication, and site-policy validation; retained an empty
   production manifest set so all ten rules remain discovery-only pending real
   external evidence.
+- **2026-07-25:** Added the production-engine canary runner with conservative
+  request/byte preflight, concurrency and deadline caps, cancellation-safe
+  partial results, minimized evidence, explicit live acknowledgement, and CI
+  manifest validation.

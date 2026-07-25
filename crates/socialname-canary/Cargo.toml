@@ -9,14 +9,21 @@ repository.workspace = true
 
 [dependencies]
 chrono.workspace = true
+futures-util.workspace = true
 hex.workspace = true
+rand.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 sha2.workspace = true
+socialname-domain = { path = "../socialname-domain" }
+socialname-engine = { path = "../socialname-engine" }
 socialname-rule-compiler = { path = "../socialname-rule-compiler" }
+socialname-rule-schema = { path = "../socialname-rule-schema" }
 thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 url.workspace = true
 
 [lints]

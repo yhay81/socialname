@@ -5,10 +5,13 @@ use std::{path::PathBuf, process::ExitCode};
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use clap::{Args, Parser, Subcommand};
-use socialname_canary::CanaryManifestCompiler;
+use socialname_canary::{
+    CanaryManifestCompiler, CanaryRunBudget, CanaryRunCompletion, CanaryRunner, DeclaredVantage,
+};
 use socialname_engine::SearchEngine;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_testkit::verify_fixtures;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -73,6 +76,31 @@ enum CanaryCommand {
         #[arg(long, default_value = "rules/canaries")]
         manifests_dir: PathBuf,
     },
+    /// Run one bounded live canary set through the production engine.
+    Run {
+        #[arg(long)]
+        site: String,
+        /// Coarse managed-region label recorded with the run.
+        #[arg(long)]
+        region: String,
+        #[arg(long, default_value = "rules/sites")]
+        rules_dir: PathBuf,
+        #[arg(long, default_value = "rules/canaries")]
+        manifests_dir: PathBuf,
+        #[arg(long, default_value_t = 64)]
+        max_requests: usize,
+        #[arg(long, default_value_t = 4)]
+        max_concurrency: usize,
+        #[arg(long, default_value_t = 120_000)]
+        max_elapsed_ms: u64,
+        #[arg(long, default_value_t = 16_777_216)]
+        max_response_bytes: usize,
+        /// Acknowledge that this command sends bounded requests to a third party.
+        #[arg(long)]
+        allow_live: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the generated JSON Schema.
     Schema,
 }
@@ -114,13 +142,13 @@ async fn main() -> ExitCode {
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Rules(arguments) => run_rules(arguments),
-        Command::Canaries(arguments) => run_canaries(arguments),
+        Command::Canaries(arguments) => run_canaries(arguments).await,
         Command::Fixtures(arguments) => run_fixtures(arguments),
         Command::Search(arguments) => run_search(arguments).await,
     }
 }
 
-fn run_canaries(arguments: CanaryArgs) -> Result<()> {
+async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
     let compiler = CanaryManifestCompiler::new();
     match arguments.command {
         CanaryCommand::Validate {
@@ -142,6 +170,82 @@ fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                 manifests.len(),
                 discovery_rules
             );
+        }
+        CanaryCommand::Run {
+            site,
+            region,
+            rules_dir,
+            manifests_dir,
+            max_requests,
+            max_concurrency,
+            max_elapsed_ms,
+            max_response_bytes,
+            allow_live,
+            json,
+        } => {
+            if !allow_live {
+                bail!(
+                    "live canary execution is explicit; pass --allow-live to acknowledge bounded third-party requests"
+                );
+            }
+            let rules = RuleCompiler::new()
+                .load_directory(&rules_dir)
+                .map_err(format_compile_errors)?;
+            let manifests = compiler
+                .load_directory_at(&manifests_dir, &rules, Utc::now())
+                .map_err(format_canary_errors)?;
+            let rule = rules
+                .iter()
+                .find(|rule| rule.source.id == site)
+                .with_context(|| format!("unknown site {site:?}"))?;
+            let manifest = manifests
+                .iter()
+                .find(|manifest| manifest.source.site_id == site)
+                .with_context(|| format!("no accepted canary manifest for site {site:?}"))?;
+            let cancellation = CancellationToken::new();
+            let signal = cancellation.clone();
+            let _signal_task = tokio::spawn(async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    signal.cancel();
+                }
+            });
+            let run = CanaryRunner::production()?
+                .run(
+                    rule,
+                    manifest,
+                    DeclaredVantage { region },
+                    CanaryRunBudget {
+                        max_requests,
+                        max_concurrency,
+                        max_elapsed_ms,
+                        max_response_bytes,
+                    },
+                    &cancellation,
+                )
+                .await?;
+            let completed = run.completion == CanaryRunCompletion::Complete;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&run)?);
+            } else {
+                let matched = run
+                    .outcomes
+                    .iter()
+                    .filter(|outcome| outcome.matched_expectation)
+                    .count();
+                println!(
+                    "{}\t{:?}\t{matched}/{}\tcompleted_requests={}/{}\tcompleted_bytes={}\telapsed_ms={}",
+                    run.site_id,
+                    run.completion,
+                    run.outcomes.len(),
+                    run.completed_requests,
+                    run.planned_requests,
+                    run.completed_response_bytes,
+                    run.elapsed_ms
+                );
+            }
+            if !completed {
+                bail!("canary run ended with {:?}", run.completion);
+            }
         }
         CanaryCommand::Schema => {
             println!("{}", compiler.json_schema()?);

@@ -61,6 +61,8 @@ The first vertical slice is implemented in the repository:
 - ten representative rules with 30 minimized offline cases;
 - independent, time-bounded positive/negative canary manifests with strict
   semantic validation against compiled site rules;
+- a bounded, cancellable canary runner using the production measurement engine
+  without exposing target identifiers in its result surface;
 - a Tauri 2 Windows/macOS desktop slice with local streaming and explicit
   research-mode consent.
 

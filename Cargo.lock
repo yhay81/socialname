@@ -3347,14 +3347,21 @@ name = "socialname-canary"
 version = "0.2.0"
 dependencies = [
  "chrono",
+ "futures-util",
  "hex",
+ "rand",
  "schemars 1.2.1",
  "serde",
  "serde_json",
  "serde_yaml_ng",
  "sha2",
+ "socialname-domain",
+ "socialname-engine",
  "socialname-rule-compiler",
+ "socialname-rule-schema",
  "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
  "url",
 ]
 
@@ -3371,6 +3378,7 @@ dependencies = [
  "socialname-rule-compiler",
  "socialname-testkit",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

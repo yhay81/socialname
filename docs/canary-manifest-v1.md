@@ -73,7 +73,8 @@ rejected when:
 - its issue time is in the future, its validity window is reversed, or it is
   expired;
 - it contains fewer than five or more than 32 positive controls;
-- positive IDs or normalized usernames are duplicated;
+- positive IDs or normalized usernames are duplicated, or a positive ID uses
+  the reserved `generated-negative-` prefix;
 - a positive username violates the current compiled rule's username policy or
   is not in canonical form;
 - a review is newer than the manifest or the validation time;
@@ -109,10 +110,47 @@ cargo run --locked -p socialname-cli -- canaries validate
 cargo run --locked -p socialname-cli -- canaries schema
 ```
 
+## Bounded runner
+
+The implemented runner consumes a manifest compiled against the selected rule
+hash and calls the same `SearchEngine` used by the local product. Before any
+network work it:
+
+- rejects a rule hash other than the one used for manifest validation;
+- generates unique negative candidates with the operating-system-seeded
+  cryptographic RNG and the manifest's bounded retry policy;
+- computes the maximum requests and inspected response bytes implied by the
+  rule's probe plan;
+- rejects runs whose worst case exceeds the caller's request or byte budget;
+- validates hard caps for concurrency, wall time, and coarse region labels.
+
+During execution it limits concurrency, honors cancellation, applies a wall
+clock deadline, and drops pending probe futures when a limit is reached. A
+cancelled or timed-out run returns its completed partial outcomes with an
+explicit terminal state; it is not represented as a complete failed canary
+sample.
+
+Runner outcomes omit usernames, profile URLs, response bodies, final URLs, and
+matcher detail. They retain only the control ID, expectation, verdict,
+inconclusive reason, evidence class and digest, plus bounded probe status,
+transport, content type, inspected bytes, truncation, and latency. Request and
+byte counters are explicitly labeled as completed values because an interrupted
+in-flight request cannot yet be counted exactly.
+
+Live execution requires both an accepted manifest and an explicit acknowledgement:
+
+```console
+cargo run --locked -p socialname-cli -- canaries run --site <site-id> --region <coarse-region> --allow-live --json
+```
+
+The repository currently has no accepted production manifests, so this command
+cannot run against the representative sites. That is the intended external-gate
+state.
+
 ## Next integration
 
-The bounded runner will consume a compiled manifest and the production engine,
-generate the declared negative controls, record only minimized evidence, and
-bind every result to the manifest, rule, engine, and declared vantage hashes.
-Report validation, aggregation, shadow comparison, and promotion remain later
-Milestone 1A deliverables.
+The next slice will turn the bounded run into a versioned report bound to the
+manifest, rule, engine, and declared vantage; derive precision, conclusive
+coverage, latency, bytes, response classes, and conflicts; and reject malformed
+or replay-incompatible reports. Aggregation, shadow comparison, and promotion
+remain later Milestone 1A deliverables.

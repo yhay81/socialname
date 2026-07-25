@@ -196,7 +196,8 @@ cannot produce both definitive states.
 - **Done:** Thirty deterministic minimized responses with matcher traces.
 - **Done:** Independent typed `socialname.dev/canary-manifest/v1` source,
   semantic validation, JSON Schema, and canonical hashing.
-- **Next:** A live canary runner with per-site and per-region budgets.
+- **Done:** A production-engine live canary runner with per-site and per-region
+  request, concurrency, wall-time, and inspected-byte budgets.
 - **Next:** A report showing precision, conclusive coverage, latency, bytes,
   response classes, and conflicts.
 - **Next:** Signed pack publication and a last-known-good rollback
