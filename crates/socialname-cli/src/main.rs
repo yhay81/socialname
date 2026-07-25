@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::ExitCode,
@@ -15,7 +15,8 @@ use socialname_canary::{
     CanaryReportBuilder, CanaryReportPolicy, CanaryReportValidator, CanaryRunBudget,
     CanaryRunCompletion, CanaryRunner, CanaryShadowBuilder, CanaryShadowDisposition,
     CanaryShadowPair, CanaryShadowPolicy, CanaryShadowValidator, DeclaredVantage,
-    ValidatedCanaryReport,
+    PromotionBuildRequest, PromotionBuilder, PromotionSigningKey, PromotionTrustPolicy,
+    PromotionVerifier, ValidatedCanaryReport,
 };
 use socialname_domain::{RuleHealthPolicy, RuleHealthRecord};
 use socialname_engine::SearchEngine;
@@ -211,6 +212,52 @@ enum CanaryCommand {
         operational_failures_to_quarantine: u32,
         #[arg(long)]
         json: bool,
+    },
+    /// Sign accepted regional health into a versioned promotion artifact.
+    Promote {
+        #[arg(long)]
+        site: String,
+        #[arg(long, default_value = "rules/sites")]
+        rules_dir: PathBuf,
+        #[arg(long = "health-record", required = true)]
+        health_records: Vec<PathBuf>,
+        #[arg(long = "required-region", required = true)]
+        required_regions: Vec<String>,
+        #[arg(long)]
+        sequence: u64,
+        #[arg(long)]
+        previous_rule_pack_hash: Option<String>,
+        #[arg(long)]
+        expires_at: DateTime<Utc>,
+        #[arg(long)]
+        key_id: String,
+        /// File containing one 32-byte Ed25519 seed as 64 hexadecimal characters.
+        #[arg(long)]
+        signing_key_file: PathBuf,
+    },
+    /// Verify a signed promotion against an exact local pack and trust policy.
+    VerifyPromotion {
+        #[arg(long)]
+        artifact: PathBuf,
+        #[arg(long)]
+        site: String,
+        #[arg(long, default_value = "rules/sites")]
+        rules_dir: PathBuf,
+        #[arg(long)]
+        manifest_hash: String,
+        #[arg(long)]
+        engine_hash: String,
+        #[arg(long = "required-region", required = true)]
+        required_regions: Vec<String>,
+        #[arg(long)]
+        previous_rule_pack_hash: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        minimum_sequence_exclusive: u64,
+        #[arg(long)]
+        key_id: String,
+        /// File containing one 32-byte Ed25519 public key as 64 hexadecimal characters.
+        #[arg(long)]
+        verifying_key_file: PathBuf,
     },
     /// Print the generated JSON Schema.
     Schema,
@@ -703,11 +750,144 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                 );
             }
         }
+        CanaryCommand::Promote {
+            site,
+            rules_dir,
+            health_records,
+            required_regions,
+            sequence,
+            previous_rule_pack_hash,
+            expires_at,
+            key_id,
+            signing_key_file,
+        } => {
+            let rule_compiler = RuleCompiler::new();
+            let rules = rule_compiler
+                .load_directory(&rules_dir)
+                .map_err(format_compile_errors)?;
+            let candidate = rules
+                .iter()
+                .find(|rule| rule.source.id == site)
+                .with_context(|| format!("unknown site {site:?}"))?;
+            let rule_pack = rule_compiler
+                .compile_pack(&rules)
+                .map_err(format_compile_errors)?;
+            let health_records = health_records
+                .iter()
+                .map(|path| load_rule_health_record(path))
+                .collect::<Result<Vec<_>>>()?;
+            let required_regions: BTreeSet<_> = required_regions.into_iter().collect();
+            let seed = load_hex_key::<32>(&signing_key_file, "Ed25519 signing seed")?;
+            let signing_key = PromotionSigningKey::from_seed(key_id.clone(), seed)?;
+            let issued_at = Utc::now();
+            let envelope = PromotionBuilder::new().build(
+                &signing_key,
+                PromotionBuildRequest {
+                    sequence,
+                    candidate,
+                    rule_pack: &rule_pack,
+                    previous_rule_pack_hash: previous_rule_pack_hash.as_deref(),
+                    health_records: &health_records,
+                    required_regions: &required_regions,
+                    issued_at_unix_ms: issued_at.timestamp_millis(),
+                    expires_at_unix_ms: expires_at.timestamp_millis(),
+                },
+            )?;
+            let trust_policy = PromotionTrustPolicy {
+                trusted_keys: BTreeMap::from([(key_id, signing_key.verifying_key_bytes())]),
+                expected_site_id: site,
+                expected_rule_hash: candidate.rule_hash.clone(),
+                expected_rule_pack_hash: rule_pack.content_hash.clone(),
+                expected_previous_rule_pack_hash: previous_rule_pack_hash,
+                expected_manifest_hash: envelope.promotion.manifest_hash.clone(),
+                expected_engine_hash: envelope.promotion.engine_hash.clone(),
+                required_regions,
+                minimum_sequence_exclusive: sequence.saturating_sub(1),
+            };
+            PromotionVerifier::new().validate_at(
+                &envelope,
+                &trust_policy,
+                issued_at.timestamp_millis(),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&envelope)?);
+        }
+        CanaryCommand::VerifyPromotion {
+            artifact,
+            site,
+            rules_dir,
+            manifest_hash,
+            engine_hash,
+            required_regions,
+            previous_rule_pack_hash,
+            minimum_sequence_exclusive,
+            key_id,
+            verifying_key_file,
+        } => {
+            let rule_compiler = RuleCompiler::new();
+            let rules = rule_compiler
+                .load_directory(&rules_dir)
+                .map_err(format_compile_errors)?;
+            let candidate = rules
+                .iter()
+                .find(|rule| rule.source.id == site)
+                .with_context(|| format!("unknown site {site:?}"))?;
+            let rule_pack = rule_compiler
+                .compile_pack(&rules)
+                .map_err(format_compile_errors)?;
+            let verifying_key = load_hex_key::<32>(&verifying_key_file, "Ed25519 verifying key")?;
+            let source = fs::read(&artifact)
+                .with_context(|| format!("failed to read promotion artifact {artifact:?}"))?;
+            let validated = PromotionVerifier::new().validate_json_at(
+                &source,
+                &PromotionTrustPolicy {
+                    trusted_keys: BTreeMap::from([(key_id, verifying_key)]),
+                    expected_site_id: site,
+                    expected_rule_hash: candidate.rule_hash.clone(),
+                    expected_rule_pack_hash: rule_pack.content_hash,
+                    expected_previous_rule_pack_hash: previous_rule_pack_hash,
+                    expected_manifest_hash: manifest_hash,
+                    expected_engine_hash: engine_hash,
+                    required_regions: required_regions.into_iter().collect(),
+                    minimum_sequence_exclusive,
+                },
+                Utc::now().timestamp_millis(),
+            )?;
+            println!(
+                "verified promotion {} for {} at sequence {}; activate only with pack sha256={}",
+                validated.envelope().promotion_id,
+                validated.promotion().site_id,
+                validated.promotion().sequence,
+                validated.promotion().rule_pack_hash,
+            );
+        }
         CanaryCommand::Schema => {
             println!("{}", compiler.json_schema()?);
         }
     }
     Ok(())
+}
+
+fn load_rule_health_record(path: &Path) -> Result<RuleHealthRecord> {
+    let source = fs::read_to_string(path)
+        .with_context(|| format!("failed to read health record {path:?}"))?;
+    let value: serde_json::Value = serde_json::from_str(&source)
+        .with_context(|| format!("failed to parse health record {path:?}"))?;
+    let record_value = value.get("record").cloned().unwrap_or(value);
+    serde_json::from_value(record_value)
+        .with_context(|| format!("failed to decode health record {path:?}"))
+}
+
+fn load_hex_key<const N: usize>(path: &Path, description: &str) -> Result<[u8; N]> {
+    let source = fs::read_to_string(path)
+        .with_context(|| format!("failed to read {description} {path:?}"))?;
+    let decoded = hex::decode(source.trim())
+        .with_context(|| format!("{description} must contain hexadecimal bytes"))?;
+    decoded.try_into().map_err(|bytes: Vec<u8>| {
+        anyhow::anyhow!(
+            "{description} must contain exactly {N} bytes, found {}",
+            bytes.len()
+        )
+    })
 }
 
 fn load_validated_canary_reports(
