@@ -8,8 +8,10 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous},
 };
 
+mod eligibility;
 mod observation_store;
 
+pub use eligibility::{CacheEligibilityQuery, CacheVerdictPolicy, MAX_ELIGIBLE_OBSERVATIONS};
 pub use observation_store::{CacheMetadata, CachedObservation, StoreOutcome};
 
 pub const CACHE_APPLICATION_ID: i64 = 1_397_637_453;
@@ -141,6 +143,12 @@ pub enum CacheError {
     ObservationConflict,
     #[error("stored observation is invalid: {field}")]
     InvalidStoredObservation { field: &'static str },
+    #[error("cache eligibility query is invalid: {field}")]
+    InvalidEligibilityQuery { field: &'static str },
+    #[error("eligible observation set exceeds the safe maximum of {maximum}")]
+    TooManyEligibleObservations { maximum: usize },
+    #[error("stored cache access count cannot be incremented")]
+    AccessCountOverflow,
     #[error("local cache database operation failed")]
     Database(#[from] sqlx::Error),
     #[error("local cache migration failed")]

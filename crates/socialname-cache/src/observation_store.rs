@@ -53,7 +53,7 @@ pub enum StoreOutcome {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct StoredObservationRow {
+pub(crate) struct StoredObservationRow {
     observation_id: String,
     site_id: String,
     normalized_username: String,
@@ -168,7 +168,7 @@ impl LocalCache {
 }
 
 impl StoredObservationRow {
-    fn into_cached(self) -> Result<CachedObservation, CacheError> {
+    pub(crate) fn into_cached(self) -> Result<CachedObservation, CacheError> {
         let cached_at_unix_ms =
             self.cached_at_unix_ms
                 .ok_or(CacheError::InvalidStoredObservation {
