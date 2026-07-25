@@ -3943,6 +3943,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "socialname-protocol"
+version = "0.2.0"
+dependencies = [
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "socialname-rule-compiler"
 version = "0.2.0"
 dependencies = [

@@ -7,6 +7,7 @@ members = [
     "crates/socialname-cli",
     "crates/socialname-domain",
     "crates/socialname-engine",
+    "crates/socialname-protocol",
     "crates/socialname-rule-compiler",
     "crates/socialname-rule-schema",
     "crates/socialname-testkit",
