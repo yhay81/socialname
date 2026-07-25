@@ -39,6 +39,8 @@ person.
 - Content-addressed Canary Report v1 output with rational precision/coverage,
   latency and response-class metrics, expiry, duplicate detection, and strict
   ingestion-policy validation.
+- Canary Aggregate v1 with an exact 24-hour window and per-region run count,
+  precision, coverage, conflict, and p95-latency gates.
 - Assertion v1 trust thresholds for managed and opt-in shared observations.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.

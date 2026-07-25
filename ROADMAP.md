@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: aggregate validated reports across runs, managed
-vantages, and the documented 24-hour acceptance window.
+Next executable item: add shadow comparison between candidate and
+last-known-good rules.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -78,7 +78,7 @@ disabled.
       precision, conclusive coverage, latency, bytes, response classes, and
       conflicts without complete bodies.
 - [x] Reject duplicate, expired, malformed, or policy-incompatible reports.
-- [ ] Implement aggregation across runs, vantages, and the documented 24-hour
+- [x] Implement aggregation across runs, vantages, and the documented 24-hour
       acceptance window.
 - [ ] Add shadow comparison between candidate and last-known-good rules.
 - [ ] Add rule-health states and safe `healthy -> degraded -> quarantined ->
@@ -146,11 +146,27 @@ cargo run --locked -p socialname-cli -- canaries validate
 ```
 
 `socialname.dev/canary-report/v1` binds the manifest, rule, executing-binary
-engine hash, coarse vantage, and a validity window no longer than 24 hours.
+engine hash, coarse vantage, and a bounded ingestion-validity window.
 Precision and conclusive coverage are exact ratios; latency, completed bytes,
 response classes, and conflicts are recomputed from minimized cases. The
 content hash detects modification but is explicitly not producer
 authentication; signing remains a later gate.
+
+Aggregation-slice evidence:
+
+```console
+cargo test --locked --workspace --all-targets
+# socialname-canary: 29 passed, including three-region acceptance, missing
+# region, insufficient-run, short-interval, precision, coverage, conflict,
+# latency, and duplicate-report cases
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+```
+
+`socialname.dev/canary-aggregate/v1` consumes only validator-produced report
+wrappers. It requires an exact 24-hour measurement window, at least three
+managed regions and three runs per region, 100% conclusive precision, at least
+95% conclusive coverage, zero conflicts, and the reviewed p95 latency in every
+required region. Global volume cannot hide a missing or failed region.
 
 Software acceptance gate:
 
@@ -354,5 +370,8 @@ Choose these only when their trigger is measured:
   manifest validation.
 - **2026-07-25:** Added Canary Report v1 with executable engine hashing,
   rational precision/coverage, deterministic latency and response metrics,
-  24-hour expiry, content-integrity and duplicate checks, strict
+  bounded expiry, content-integrity and duplicate checks, strict
   ingestion-policy validation, and privacy-bounded case evidence.
+- **2026-07-25:** Added Canary Aggregate v1 with validator-only inputs, an exact
+  24-hour interval, three-region/three-run requirements, per-region precision,
+  coverage, conflict and p95 gates, and typed non-suppressing rejection issues.

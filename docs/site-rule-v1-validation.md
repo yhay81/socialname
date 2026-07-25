@@ -201,7 +201,9 @@ cannot produce both definitive states.
 - **Done:** A privacy-bounded versioned report showing precision, conclusive
   coverage, latency, bytes, response classes, and conflicts, with expiry,
   content-integrity, duplicate, and ingestion-policy validation.
-- **Next:** Aggregation across runs, managed vantages, and the 24-hour
-  acceptance window.
+- **Done:** Deterministic aggregation across runs and managed vantages with the
+  24-hour interval, three-run, 100% precision, 95% conclusive coverage,
+  zero-conflict, and reviewed-p95 gates evaluated per region.
+- **Next:** Shadow comparison between candidate and last-known-good rules.
 - **Next:** Signed pack publication and a last-known-good rollback
   demonstration.

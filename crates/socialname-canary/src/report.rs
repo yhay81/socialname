@@ -13,7 +13,7 @@ use crate::{
 
 pub const CANARY_REPORT_V1: &str = "socialname.dev/canary-report/v1";
 
-const REPORT_VALIDITY_HOURS: i64 = 24;
+const REPORT_VALIDITY_HOURS: i64 = 48;
 const MAX_CLOCK_SKEW_MINUTES: i64 = 5;
 const MAX_RUN_MINUTES: i64 = 15;
 const MAX_REPORT_BYTES: usize = 1_024 * 1_024;
@@ -28,6 +28,23 @@ const MAX_PROBE_BODY_BYTES: usize = 8 * 1_024 * 1_024;
 pub struct CanaryReportEnvelope {
     pub report_id: String,
     pub report: CanaryReportV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedCanaryReport {
+    envelope: CanaryReportEnvelope,
+}
+
+impl ValidatedCanaryReport {
+    #[must_use]
+    pub const fn envelope(&self) -> &CanaryReportEnvelope {
+        &self.envelope
+    }
+
+    #[must_use]
+    pub fn into_envelope(self) -> CanaryReportEnvelope {
+        self.envelope
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,7 +235,7 @@ impl CanaryReportValidator {
         policy: &CanaryReportPolicy,
         seen_report_ids: &BTreeSet<String>,
         validation_time: DateTime<Utc>,
-    ) -> Result<CanaryReportEnvelope, CanaryReportError> {
+    ) -> Result<ValidatedCanaryReport, CanaryReportError> {
         if source.len() > MAX_REPORT_BYTES {
             return Err(CanaryReportError::ReportTooLarge {
                 maximum: MAX_REPORT_BYTES,
@@ -226,8 +243,7 @@ impl CanaryReportValidator {
         }
         let envelope: CanaryReportEnvelope = serde_json::from_str(source)
             .map_err(|error| CanaryReportError::MalformedJson(error.to_string()))?;
-        self.validate_at(&envelope, policy, seen_report_ids, validation_time)?;
-        Ok(envelope)
+        self.validate_at(&envelope, policy, seen_report_ids, validation_time)
     }
 
     pub fn validate_at(
@@ -236,7 +252,7 @@ impl CanaryReportValidator {
         policy: &CanaryReportPolicy,
         seen_report_ids: &BTreeSet<String>,
         validation_time: DateTime<Utc>,
-    ) -> Result<(), CanaryReportError> {
+    ) -> Result<ValidatedCanaryReport, CanaryReportError> {
         validate_policy(policy)?;
         if envelope.report.schema != CANARY_REPORT_V1 {
             return Err(CanaryReportError::UnsupportedSchema);
@@ -256,7 +272,9 @@ impl CanaryReportValidator {
         if derive_summary_from_report(&envelope.report)? != envelope.report.summary {
             return Err(CanaryReportError::SummaryMismatch);
         }
-        Ok(())
+        Ok(ValidatedCanaryReport {
+            envelope: envelope.clone(),
+        })
     }
 }
 
@@ -447,7 +465,7 @@ fn derive_summary_from_report(
     )
 }
 
-fn derive_summary_parts(
+pub(crate) fn derive_summary_parts(
     cases: &[CanaryCaseOutcome],
     planned_requests: usize,
     completed_requests: usize,
@@ -836,7 +854,7 @@ mod tests {
     fn rejects_expired_report() {
         let report = report();
         let after_expiry = Utc
-            .with_ymd_and_hms(2026, 7, 26, 2, 0, 0)
+            .with_ymd_and_hms(2026, 7, 27, 1, 0, 0)
             .single()
             .expect("test timestamp is valid");
         let error = CanaryReportValidator::new()

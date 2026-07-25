@@ -1,17 +1,23 @@
 #![forbid(unsafe_code)]
 
+mod aggregate;
 mod compiler;
 mod error;
 mod report;
 mod runner;
 mod schema;
 
+pub use aggregate::{
+    CANARY_AGGREGATE_V1, CanaryAcceptanceAggregate, CanaryAcceptanceDisposition,
+    CanaryAcceptanceIssue, CanaryAggregationError, CanaryAggregationPolicy, CanaryRegionAggregate,
+    CanaryReportAggregator,
+};
 pub use compiler::{CanaryManifestCompiler, CompiledCanaryManifest};
 pub use error::{CanaryManifestError, CanaryManifestErrors};
 pub use report::{
     CANARY_REPORT_V1, CanaryLatencySummary, CanaryRatio, CanaryReportBuilder, CanaryReportEnvelope,
     CanaryReportError, CanaryReportPolicy, CanaryReportSummary, CanaryReportV1,
-    CanaryReportValidator,
+    CanaryReportValidator, ValidatedCanaryReport,
 };
 pub use runner::{
     CanaryCaseExpectation, CanaryCaseOutcome, CanaryProbe, CanaryProbeSummary, CanaryRun,

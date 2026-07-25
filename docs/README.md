@@ -85,6 +85,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   controls, validity, review evidence, and policy compatibility.
 - [Canary Report v1](canary-report-v1.md) — versioned run evidence, recomputed
   metrics, expiry, duplicate detection, and ingestion-policy validation.
+- [Canary Aggregation v1](canary-aggregation-v1.md) — repeated-run,
+  multi-region, 24-hour acceptance metrics and explicit regional failures.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

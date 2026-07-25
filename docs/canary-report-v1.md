@@ -43,9 +43,10 @@ The report binds:
 - the declared coarse managed-region label;
 - the start and finish timestamps.
 
-The report expires no later than 24 hours after completion and never later than
-its canary manifest. This supports the documented 24-hour acceptance window
-without turning a past measurement into timeless truth.
+The report expires no later than 48 hours after completion and never later than
+its canary manifest. Aggregation separately admits only an explicit 24-hour
+measurement window. The extra ingestion margin lets the first and last samples
+span a full day without making a past measurement timeless.
 
 Only a complete run can become a report. Cancellation and deadline outcomes
 remain explicit partial runner diagnostics and cannot be mislabeled as an

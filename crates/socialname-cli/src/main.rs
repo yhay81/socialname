@@ -1,13 +1,14 @@
 #![forbid(unsafe_code)]
 
-use std::{collections::BTreeSet, path::PathBuf, process::ExitCode};
+use std::{collections::BTreeSet, fs, path::PathBuf, process::ExitCode};
 
 use anyhow::{Context, Result, bail};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use socialname_canary::{
-    CanaryManifestCompiler, CanaryReportBuilder, CanaryReportPolicy, CanaryReportValidator,
-    CanaryRunBudget, CanaryRunCompletion, CanaryRunner, DeclaredVantage,
+    CanaryAggregationPolicy, CanaryManifestCompiler, CanaryReportAggregator, CanaryReportBuilder,
+    CanaryReportPolicy, CanaryReportValidator, CanaryRunBudget, CanaryRunCompletion, CanaryRunner,
+    DeclaredVantage,
 };
 use socialname_engine::SearchEngine;
 use socialname_rule_compiler::RuleCompiler;
@@ -99,6 +100,35 @@ enum CanaryCommand {
         /// Acknowledge that this command sends bounded requests to a third party.
         #[arg(long)]
         allow_live: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Aggregate validated reports over one explicit 24-hour window.
+    Aggregate {
+        #[arg(long)]
+        reports_dir: PathBuf,
+        #[arg(long)]
+        site: String,
+        #[arg(long)]
+        manifest_hash: String,
+        #[arg(long)]
+        rule_hash: String,
+        #[arg(long)]
+        engine_hash: String,
+        #[arg(long = "region", required = true)]
+        regions: Vec<String>,
+        #[arg(long)]
+        window_start: DateTime<Utc>,
+        #[arg(long)]
+        window_end: DateTime<Utc>,
+        #[arg(long, default_value_t = 3)]
+        minimum_runs_per_region: u32,
+        #[arg(long, default_value_t = 6_000)]
+        maximum_p95_latency_ms: u64,
+        #[arg(long, default_value_t = 64)]
+        max_planned_requests: u32,
+        #[arg(long, default_value_t = 16_777_216)]
+        max_completed_response_bytes: u64,
         #[arg(long)]
         json: bool,
     },
@@ -274,6 +304,95 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                     report.report.summary.planned_requests,
                     report.report.summary.completed_response_bytes,
                 );
+            }
+        }
+        CanaryCommand::Aggregate {
+            reports_dir,
+            site,
+            manifest_hash,
+            rule_hash,
+            engine_hash,
+            regions,
+            window_start,
+            window_end,
+            minimum_runs_per_region,
+            maximum_p95_latency_ms,
+            max_planned_requests,
+            max_completed_response_bytes,
+            json,
+        } => {
+            let aggregation_time = Utc::now();
+            let allowed_regions: BTreeSet<_> = regions.into_iter().collect();
+            let report_policy = CanaryReportPolicy {
+                site_id: site.clone(),
+                manifest_hash: manifest_hash.clone(),
+                allowed_rule_hashes: BTreeSet::from([rule_hash.clone()]),
+                allowed_engine_hashes: BTreeSet::from([engine_hash.clone()]),
+                allowed_regions: allowed_regions.clone(),
+                max_planned_requests,
+                max_completed_response_bytes,
+            };
+            let mut paths = Vec::new();
+            for entry in fs::read_dir(&reports_dir)
+                .with_context(|| format!("failed to read report directory {reports_dir:?}"))?
+            {
+                let path = entry
+                    .with_context(|| format!("failed to read report directory {reports_dir:?}"))?
+                    .path();
+                if path
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+                {
+                    paths.push(path);
+                }
+            }
+            paths.sort();
+
+            let validator = CanaryReportValidator::new();
+            let mut seen_report_ids = BTreeSet::new();
+            let mut reports = Vec::new();
+            for path in paths {
+                let source = fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read report {path:?}"))?;
+                let validated = validator.parse_and_validate_json_at(
+                    &source,
+                    &report_policy,
+                    &seen_report_ids,
+                    aggregation_time,
+                )?;
+                seen_report_ids.insert(validated.envelope().report_id.clone());
+                reports.push(validated);
+            }
+
+            let aggregate = CanaryReportAggregator::new().aggregate_at(
+                &reports,
+                &CanaryAggregationPolicy {
+                    site_id: site,
+                    manifest_hash,
+                    rule_hash,
+                    engine_hash,
+                    required_regions: allowed_regions,
+                    window_start,
+                    window_end,
+                    minimum_runs_per_region,
+                    maximum_p95_latency_ms,
+                },
+                aggregation_time,
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&aggregate)?);
+            } else {
+                println!(
+                    "{}\t{:?}\treports={}\tregions={}\tissues={}",
+                    aggregate.site_id,
+                    aggregate.disposition,
+                    aggregate.report_ids.len(),
+                    aggregate.regions.len(),
+                    aggregate.issues.len()
+                );
+                for issue in aggregate.issues {
+                    println!("issue\t{issue:?}");
+                }
             }
         }
         CanaryCommand::Schema => {
