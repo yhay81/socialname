@@ -15,15 +15,6 @@ pub enum AssertionQuality {
     Untrusted,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RuleHealth {
-    Green,
-    Yellow,
-    Red,
-    Quarantined,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Assertion {
     pub target: TargetKey,
