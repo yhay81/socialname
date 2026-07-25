@@ -10,7 +10,10 @@ repository.workspace = true
 
 [dependencies]
 futures-util.workspace = true
+hex.workspace = true
 serde.workspace = true
+sha2.workspace = true
+socialname-cache = { path = "../socialname-cache" }
 socialname-domain = { path = "../socialname-domain" }
 socialname-engine = { path = "../socialname-engine" }
 socialname-rule-compiler = { path = "../socialname-rule-compiler" }

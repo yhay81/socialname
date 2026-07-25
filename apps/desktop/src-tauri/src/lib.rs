@@ -2,16 +2,22 @@
 
 use std::{
     collections::BTreeMap,
+    fs,
     sync::{Arc, Mutex},
 };
 
 use serde::Serialize;
-use socialname_app_core::{AppCore, SearchCompletion, SearchEvent, SearchRequest, SiteSummary};
-use tauri::{State, ipc::Channel};
+use socialname_app_core::{
+    AppCore, SearchCompletion, SearchEvent, SearchPolicy, SearchRequest, SearchSource, SiteSummary,
+    SyncPolicy,
+};
+use socialname_cache::LocalCache;
+use tauri::{Manager, State, ipc::Channel};
 use tokio_util::sync::CancellationToken;
 
 struct DesktopState {
     core: Arc<AppCore>,
+    cache_error: Option<String>,
     active_searches: Mutex<BTreeMap<String, CancellationToken>>,
 }
 
@@ -19,8 +25,11 @@ struct DesktopState {
 #[serde(rename_all = "camelCase")]
 struct AppInfo {
     version: &'static str,
-    execution_mode: &'static str,
-    synchronization: &'static str,
+    available_sources: [SearchSource; 2],
+    default_policy: SearchPolicy,
+    synchronization: SyncPolicy,
+    cache_ready: bool,
+    cache_error: Option<String>,
     rule_pack_hash: String,
 }
 
@@ -28,8 +37,11 @@ struct AppInfo {
 fn get_app_info(state: State<'_, DesktopState>) -> AppInfo {
     AppInfo {
         version: env!("CARGO_PKG_VERSION"),
-        execution_mode: "local",
-        synchronization: "never",
+        available_sources: [SearchSource::Local, SearchSource::Cache],
+        default_policy: SearchPolicy::default(),
+        synchronization: SyncPolicy::Never,
+        cache_ready: state.cache_error.is_none(),
+        cache_error: state.cache_error.clone(),
         rule_pack_hash: state.core.rule_pack_hash().to_owned(),
     }
 }
@@ -106,11 +118,31 @@ fn validate_search_id(search_id: &str) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let core = AppCore::from_embedded_rules().expect("embedded Site Rule v1 pack must be valid");
     tauri::Builder::default()
-        .manage(DesktopState {
-            core: Arc::new(core),
-            active_searches: Mutex::new(BTreeMap::new()),
+        .setup(|app| {
+            let core =
+                AppCore::from_embedded_rules().expect("embedded Site Rule v1 pack must be valid");
+            let cache_result = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|error| error.to_string())
+                .and_then(|directory| {
+                    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+                    tauri::async_runtime::block_on(LocalCache::open(
+                        directory.join("observations.sqlite3"),
+                    ))
+                    .map_err(|error| error.to_string())
+                });
+            let (core, cache_error) = match cache_result {
+                Ok(cache) => (core.with_local_cache(cache), None),
+                Err(error) => (core, Some(error)),
+            };
+            app.manage(DesktopState {
+                core: Arc::new(core),
+                cache_error,
+                active_searches: Mutex::new(BTreeMap::new()),
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_app_info,

@@ -12,6 +12,7 @@ import type {
   AppInfo,
   SearchEvent,
   SearchResult,
+  SearchSource,
   SiteSummary,
   Verdict,
 } from "./types";
@@ -34,6 +35,7 @@ function App() {
   const [username, setUsername] = useState("");
   const [siteFilter, setSiteFilter] = useState("");
   const [allowDiscovery, setAllowDiscovery] = useState(false);
+  const [source, setSource] = useState<SearchSource>("local");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [activeSearchId, setActiveSearchId] = useState<string>();
   const [totalSites, setTotalSites] = useState(0);
@@ -68,7 +70,13 @@ function App() {
       verdictOrder.map((verdict) => [verdict, 0]),
     ) as Record<Verdict, number>;
     for (const result of results) {
-      counts[result.verdict] += 1;
+      if (result.liveResult) {
+        counts[result.liveResult.verdict] += 1;
+      } else {
+        for (const observation of result.observations) {
+          counts[observation.verdict] += 1;
+        }
+      }
     }
     return counts;
   }, [results]);
@@ -81,7 +89,8 @@ function App() {
     !running &&
     username.trim().length > 0 &&
     selectedSites.size > 0 &&
-    (!discoverySitesSelected || allowDiscovery);
+    (source !== "cache" || appInfo?.cacheReady === true) &&
+    (source !== "local" || !discoverySitesSelected || allowDiscovery);
 
   function handleEvent(searchId: string, event: SearchEvent) {
     if (activeSearchRef.current !== searchId) {
@@ -117,6 +126,12 @@ function App() {
           username: username.trim(),
           siteIds: [...selectedSites],
           allowDiscovery,
+          policy: {
+            source,
+            sync: "never",
+            regionClass: "local",
+            maximumAgeMs: 86_400_000,
+          },
         },
         (event) => handleEvent(searchId, event),
       );
@@ -179,7 +194,7 @@ function App() {
         <div className="topbar__status">
           <span className="status-pill">
             <span className="status-dot" />
-            Local execution
+            {source === "local" ? "Local probe" : "Offline cache"}
           </span>
           <span className="status-pill status-pill--muted">
             <Icon name="shield" />
@@ -274,10 +289,46 @@ function App() {
             <p className="eyebrow">Local username search</p>
             <h1>Trace an identity across the open web.</h1>
             <p className="search-hero__description">
-              Requests run from this device. Results stay local and are never
-              uploaded unless you explicitly choose to share them in a future
-              release.
+              {source === "local"
+                ? "Requests run from this device. Results remain local and are stored only in this installation's cache."
+                : "Cache lookup is strictly offline. It never falls through to a network probe and only returns fresh, rule-matched observations."}
             </p>
+
+            <div
+              aria-label="Search source"
+              className="source-policy"
+              role="group"
+            >
+              <button
+                aria-pressed={source === "local"}
+                disabled={running}
+                onClick={() => setSource("local")}
+                type="button"
+              >
+                <Icon name="globe" />
+                <span>
+                  <strong>Local probe</strong>
+                  <small>Contact selected public sites</small>
+                </span>
+              </button>
+              <button
+                aria-pressed={source === "cache"}
+                disabled={running || appInfo?.cacheReady !== true}
+                onClick={() => setSource("cache")}
+                title={appInfo?.cacheError ?? undefined}
+                type="button"
+              >
+                <Icon name="clock" />
+                <span>
+                  <strong>Offline cache</strong>
+                  <small>
+                    {appInfo?.cacheReady === false
+                      ? "Cache unavailable"
+                      : "No network refresh"}
+                  </small>
+                </span>
+              </button>
+            </div>
 
             <form
               className="search-form"
@@ -321,7 +372,7 @@ function App() {
               )}
             </form>
 
-            {discoverySitesSelected && (
+            {source === "local" && discoverySitesSelected && (
               <label className="research-consent">
                 <input
                   checked={allowDiscovery}
@@ -359,7 +410,9 @@ function App() {
           <section className="results-section" aria-live="polite">
             <div className="results-heading">
               <div>
-                <p className="eyebrow">Live evidence</p>
+                <p className="eyebrow">
+                  {source === "local" ? "Local evidence" : "Cached evidence"}
+                </p>
                 <h2>
                   {running
                     ? `Searching ${completed} of ${totalSites}`
@@ -404,8 +457,8 @@ function App() {
                 </span>
                 <h3>No search has run yet</h3>
                 <p>
-                  Choose the sites you trust, enter a username, and inspect each
-                  result with its underlying evidence.
+                  Choose a source and sites, enter a username, and inspect every
+                  result with its source and freshness.
                 </p>
               </div>
             ) : (

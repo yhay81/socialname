@@ -3829,8 +3829,11 @@ name = "socialname-app-core"
 version = "0.2.0"
 dependencies = [
  "futures-util",
+ "hex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "socialname-cache",
  "socialname-domain",
  "socialname-engine",
  "socialname-rule-compiler",
@@ -3887,7 +3890,6 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "socialname-app-core",
  "socialname-cache",
  "socialname-canary",
@@ -3907,6 +3909,7 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "socialname-app-core",
+ "socialname-cache",
  "tauri",
  "tauri-build",
  "tokio-util",

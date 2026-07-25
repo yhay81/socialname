@@ -59,6 +59,31 @@ export interface SearchRequest {
   username: string;
   siteIds: string[];
   allowDiscovery: boolean;
+  policy: SearchPolicy;
+}
+
+export type SearchSource = "local" | "cache";
+export type SyncPolicy = "never";
+export type SearchStatus =
+  | "complete"
+  | "cache_miss"
+  | "invalid_username"
+  | "rule_not_promoted"
+  | "rule_health_unavailable"
+  | "rule_not_healthy"
+  | "rule_health_stale";
+export type RefreshState = "completed" | "not_requested";
+export type RuleHealth =
+  | "healthy"
+  | "degraded"
+  | "quarantined"
+  | "recovering";
+
+export interface SearchPolicy {
+  source: SearchSource;
+  sync: SyncPolicy;
+  regionClass: string;
+  maximumAgeMs: number;
 }
 
 export interface ProbeSummary {
@@ -82,9 +107,36 @@ export interface SearchResult {
   siteId: string;
   siteName: string;
   username: string;
-  source: string;
+  source: SearchSource;
+  sync: SyncPolicy;
+  status: SearchStatus;
+  refreshState: RefreshState;
   profileUrl: string | null;
   ruleHash: string;
+  rulePromoted: boolean;
+  ruleHealth: RuleHealth | null;
+  ruleHealthExpiresAtUnixMs: number | null;
+  observations: SearchObservation[];
+  liveResult: LiveSearchResult | null;
+}
+
+export interface SearchObservation {
+  observationId: string;
+  verdict: Verdict;
+  inconclusiveReason: InconclusiveReason | null;
+  evidenceClass: EvidenceClass;
+  evidenceDigest: string;
+  observedAtUnixMs: number;
+  expiresAtUnixMs: number;
+  regionClass: string;
+  ruleHash: string;
+  ruleHealthGreen: boolean;
+  cachedAtUnixMs: number | null;
+  lastAccessedAtUnixMs: number | null;
+  accessCount: number | null;
+}
+
+export interface LiveSearchResult {
   verdict: Verdict;
   inconclusiveReason: InconclusiveReason | null;
   evidenceClass: EvidenceClass;
@@ -100,6 +152,9 @@ export interface SearchCompletion {
   notFound: number;
   inconclusive: number;
   invalidUsername: number;
+  cacheHits: number;
+  cacheMisses: number;
+  unavailable: number;
   cancelled: boolean;
 }
 
@@ -126,6 +181,9 @@ export type SearchEvent =
 export interface AppInfo {
   version: string;
   rulePackHash: string;
-  executionMode: "local";
-  synchronization: "never";
+  availableSources: SearchSource[];
+  defaultPolicy: SearchPolicy;
+  synchronization: SyncPolicy;
+  cacheReady: boolean;
+  cacheError: string | null;
 }

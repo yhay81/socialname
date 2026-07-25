@@ -1,12 +1,39 @@
 import { useState } from "react";
-import type { EvidenceClass, SearchResult, Verdict } from "../types";
+import type {
+  EvidenceClass,
+  SearchObservation,
+  SearchResult,
+  SearchStatus,
+  Verdict,
+} from "../types";
 import { Icon, type IconName } from "./Icon";
 
-const verdictDetails: Record<Verdict, { label: string; icon: IconName; tone: string }> = {
+const verdictDetails: Record<
+  Verdict,
+  { label: string; icon: IconName; tone: string }
+> = {
   found: { label: "Found", icon: "check", tone: "positive" },
   not_found: { label: "Not found", icon: "minus", tone: "neutral" },
-  invalid_username: { label: "Invalid username", icon: "close", tone: "negative" },
-  inconclusive: { label: "Inconclusive", icon: "warning", tone: "warning" },
+  invalid_username: {
+    label: "Invalid username",
+    icon: "close",
+    tone: "negative",
+  },
+  inconclusive: {
+    label: "Inconclusive",
+    icon: "warning",
+    tone: "warning",
+  },
+};
+
+const statusLabels: Record<SearchStatus, string> = {
+  complete: "Complete",
+  cache_miss: "No eligible cached observation",
+  invalid_username: "Invalid username",
+  rule_not_promoted: "Rule not promoted",
+  rule_health_unavailable: "Rule health unavailable",
+  rule_not_healthy: "Rule not healthy",
+  rule_health_stale: "Rule health evidence expired",
 };
 
 const evidenceLabels: Record<EvidenceClass, string> = {
@@ -22,16 +49,49 @@ interface ResultCardProps {
   result: SearchResult;
 }
 
+function formatTime(value: number) {
+  return new Date(value).toLocaleString();
+}
+
+function observationLabel(observation: SearchObservation) {
+  if (
+    observation.verdict === "inconclusive" &&
+    observation.inconclusiveReason
+  ) {
+    return observation.inconclusiveReason.replaceAll("_", " ");
+  }
+  return verdictDetails[observation.verdict].label;
+}
+
 export function ResultCard({ researchRule, result }: ResultCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const verdict = {
-    ...verdictDetails[result.verdict],
-    label:
-      result.verdict === "inconclusive" && result.inconclusiveReason
-        ? result.inconclusiveReason.replaceAll("_", " ")
-        : verdictDetails[result.verdict].label,
-  };
-  const primaryProbe = result.probes.at(-1);
+  const live = result.liveResult;
+  const observationVerdicts = new Set(
+    result.observations.map((observation) => observation.verdict),
+  );
+  const representative = live ?? result.observations[0];
+  const conflictingCachedEvidence =
+    !live && result.observations.length > 1 && observationVerdicts.size > 1;
+  const verdict = conflictingCachedEvidence
+    ? { label: "Conflicting cached observations", icon: "warning" as const, tone: "warning" }
+    : representative
+      ? {
+          ...verdictDetails[representative.verdict],
+          label:
+            representative.verdict === "inconclusive" &&
+            representative.inconclusiveReason
+              ? representative.inconclusiveReason.replaceAll("_", " ")
+              : verdictDetails[representative.verdict].label,
+        }
+      : {
+          label: statusLabels[result.status],
+          icon:
+            result.status === "cache_miss"
+              ? ("clock" as const)
+              : ("warning" as const),
+          tone: result.status === "cache_miss" ? "neutral" : "warning",
+        };
+  const primaryProbe = live?.probes.at(-1);
 
   return (
     <article className={`result-card result-card--${verdict.tone}`}>
@@ -43,6 +103,9 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
         <div className="result-card__identity">
           <div className="result-card__title-row">
             <h3>{result.siteName}</h3>
+            <span className={`tag tag--${result.source}`}>
+              {result.source === "local" ? "Local probe" : "Cached"}
+            </span>
             {researchRule && (
               <span className="tag tag--research">Research rule</span>
             )}
@@ -60,7 +123,9 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
           <span>
             {primaryProbe
               ? `${primaryProbe.status ?? primaryProbe.transport} · ${primaryProbe.elapsedMs} ms`
-              : "No response"}
+              : result.observations.length > 0
+                ? `${result.observations.length} observation${result.observations.length === 1 ? "" : "s"} · offline`
+                : statusLabels[result.status]}
           </span>
         </div>
 
@@ -79,28 +144,73 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
         <div className="result-card__details">
           <dl className="evidence-grid">
             <div>
-              <dt>Evidence</dt>
-              <dd>{evidenceLabels[result.evidenceClass]}</dd>
+              <dt>Source</dt>
+              <dd>{result.source === "local" ? "Local probe" : "Local cache"}</dd>
             </div>
             <div>
-              <dt>Decision</dt>
-              <dd>{result.inconclusiveReason ?? result.verdict}</dd>
+              <dt>Refresh</dt>
+              <dd>{result.refreshState.replaceAll("_", " ")}</dd>
             </div>
             <div>
-              <dt>Transport</dt>
-              <dd>{primaryProbe?.transport ?? "—"}</dd>
+              <dt>Rule health</dt>
+              <dd>{result.ruleHealth ?? "unavailable"}</dd>
             </div>
             <div>
-              <dt>Content type</dt>
-              <dd>{primaryProbe?.contentType ?? "—"}</dd>
+              <dt>Rule hash</dt>
+              <dd>
+                <code title={result.ruleHash}>{result.ruleHash.slice(0, 12)}</code>
+              </dd>
             </div>
+            {live && (
+              <>
+                <div>
+                  <dt>Live evidence</dt>
+                  <dd>{evidenceLabels[live.evidenceClass]}</dd>
+                </div>
+                <div>
+                  <dt>Transport</dt>
+                  <dd>{primaryProbe?.transport ?? "—"}</dd>
+                </div>
+              </>
+            )}
           </dl>
 
-          {result.matcherTrace.length > 0 && (
+          {result.observations.length > 0 && (
+            <div className="observation-list">
+              <h4>Immutable observations</h4>
+              {result.observations.map((observation) => (
+                <dl key={observation.observationId}>
+                  <div>
+                    <dt>Verdict</dt>
+                    <dd>{observationLabel(observation)}</dd>
+                  </div>
+                  <div>
+                    <dt>Observed</dt>
+                    <dd>{formatTime(observation.observedAtUnixMs)}</dd>
+                  </div>
+                  <div>
+                    <dt>Expires</dt>
+                    <dd>{formatTime(observation.expiresAtUnixMs)}</dd>
+                  </div>
+                  <div>
+                    <dt>Region / rule</dt>
+                    <dd>
+                      {observation.regionClass} ·{" "}
+                      <code title={observation.ruleHash}>
+                        {observation.ruleHash.slice(0, 12)}
+                      </code>
+                    </dd>
+                  </div>
+                </dl>
+              ))}
+            </div>
+          )}
+
+          {live && live.matcherTrace.length > 0 && (
             <div className="matcher-trace">
               <h4>Matcher trace</h4>
               <ul>
-                {result.matcherTrace.map((trace, index) => (
+                {live.matcherTrace.map((trace, index) => (
                   <li key={`${trace.path}-${index}`}>
                     <span
                       className={

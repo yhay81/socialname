@@ -467,6 +467,57 @@ input::placeholder {
   line-height: 1.65;
 }
 
+.source-policy {
+  display: grid;
+  max-width: 620px;
+  margin-bottom: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.source-policy button {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 11px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  text-align: left;
+  gap: 10px;
+}
+
+.source-policy button[aria-pressed="true"] {
+  border-color: var(--positive);
+  color: var(--text);
+  background: #132820;
+}
+
+.source-policy button:disabled {
+  opacity: 0.52;
+}
+
+.source-policy svg {
+  width: 18px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.source-policy span {
+  display: grid;
+  gap: 2px;
+}
+
+.source-policy strong {
+  font-size: 12px;
+}
+
+.source-policy small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
 .search-form {
   display: grid;
   max-width: 820px;
@@ -799,6 +850,18 @@ input::placeholder {
   text-transform: uppercase;
 }
 
+.tag--local {
+  border-color: #2d5a4d;
+  color: #8bd8bd;
+  background: #12251f;
+}
+
+.tag--cache {
+  border-color: #3e5060;
+  color: #a8bfd1;
+  background: #162029;
+}
+
 .result-card__url {
   overflow: hidden;
   margin-bottom: 0;
@@ -882,7 +945,8 @@ input::placeholder {
 }
 
 .evidence-grid dt,
-.matcher-trace h4 {
+.matcher-trace h4,
+.observation-list h4 {
   color: var(--text-muted);
   font-size: 9px;
   font-weight: 700;
@@ -907,8 +971,42 @@ input::placeholder {
   margin-top: 18px;
 }
 
-.matcher-trace h4 {
+.matcher-trace h4,
+.observation-list h4 {
   margin-bottom: 8px;
+}
+
+.observation-list {
+  display: grid;
+  margin-top: 18px;
+  gap: 8px;
+}
+
+.observation-list > dl {
+  display: grid;
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.observation-list dt {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.observation-list dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-secondary);
+  font: 10px ui-monospace, "Cascadia Code", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .matcher-trace ul {
@@ -1012,7 +1110,8 @@ input::placeholder {
     display: none;
   }
 
-  .evidence-grid {
+  .evidence-grid,
+  .observation-list > dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1049,6 +1148,11 @@ input::placeholder {
   }
 
   .search-form {
+    grid-template-columns: 1fr;
+  }
+
+  .source-policy,
+  .observation-list > dl {
     grid-template-columns: 1fr;
   }
 
