@@ -212,5 +212,9 @@ cannot produce both definitive states.
   state with quarantined initialization, replay-safe evidence sequencing,
   operational degradation, immediate classification quarantine, two-pass
   recovery, and account-notification suppression.
-- **Next:** Signed promotion metadata and a retained last-known-good rollback
-  path.
+- **Done:** Domain-separated Ed25519 promotion metadata with exact pack,
+  predecessor, region, accepted-evidence, sequence, and expiry binding plus a
+  retained last-known-good rollback path.
+- **Done:** Disabled-by-default manual and 12-hour scheduled managed-vantage
+  workflow templates with protected manifest secrets, fixed request,
+  concurrency, time, and byte budgets, and short-lived minimized reports.

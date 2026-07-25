@@ -151,6 +151,8 @@ state.
 
 Complete runs produce the privacy-bounded, content-addressed report defined in
 [`canary-report-v1.md`](canary-report-v1.md), and validated reports can be
-aggregated across the 24-hour acceptance window. Paired shadow software is also
-implemented, but real managed-region and shadow evidence plus signed promotion
-remain pending Milestone 1A gates.
+aggregated across the 24-hour acceptance window. Paired shadow, regional
+health, signed promotion, rollback, and disabled-by-default managed-runner
+workflow software are implemented. Real reviewed manifests, consent,
+multi-region runners, elapsed evidence, signing custody, publication, and
+rollback exercise remain external gates.

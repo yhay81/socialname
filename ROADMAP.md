@@ -64,8 +64,7 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add manual and scheduled canary workflow templates with
-strict concurrency, request, time, and byte budgets.
+Next executable item: add `socialname-cache` with embedded SQLite migrations.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -90,7 +89,7 @@ disabled.
       failing report cannot produce an account-state notification.
 - [x] Add deterministic tests for healthy, blocked, drifting, partial-region,
       rollback, and report-tampering cases.
-- [ ] Add manual and scheduled canary workflow templates with strict
+- [x] Add manual and scheduled canary workflow templates with strict
       concurrency, request, time, and byte budgets.
 
 Manifest-slice evidence:
@@ -226,6 +225,25 @@ activation. Activation recompiles the real pack, retains the complete prior
 validated pack, and preserves its sequence high-water mark across explicit
 rollback. No production key or artifact was fabricated; all representative
 rules remain discovery-only.
+
+Workflow-slice evidence:
+
+```console
+cargo test --locked -p socialname-canary workflow_contract
+# parses both workflow files and verifies read-only permissions, enable gates,
+# secret scope, fixed budgets, concurrency, report retention, and no promotion
+cargo test --locked --workspace --all-targets
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+```
+
+Manual and 12-hour scheduled workflows require
+`SOCIALNAME_CANARY_ENABLED=true`, a protected environment, an approved
+base64-encoded manifest secret, and a region-labelled self-hosted Linux runner.
+They hard-code request, in-flight, wall-time, byte, workflow-timeout, overlap,
+and scheduled-matrix limits. Only minimized reports are retained for three
+days; aggregation, health, signing, activation, and notification remain
+separate. The repository supplies no enabling variable, target matrix,
+production manifest, runner, or secret.
 
 Software acceptance gate:
 

@@ -11,4 +11,8 @@ gate and must not be invented from discovery notes. Consequently every current
 site rule remains discovery-only.
 
 See [`docs/canary-manifest-v1.md`](../../docs/canary-manifest-v1.md) for the
-schema, validation contract, trust boundary, and CLI commands.
+schema, validation contract, trust boundary, and CLI commands. The
+disabled-by-default managed-runner templates and their secret/consent
+prerequisites are documented in
+[`docs/canary-workflows.md`](../../docs/canary-workflows.md). Do not commit real
+positive controls merely to make those templates runnable.
