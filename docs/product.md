@@ -1,5 +1,10 @@
 # Product vision and value
 
+The authoritative project mission, North Star, hard boundaries, and product
+decision filter are maintained in [SocialName ultimate goal](ultimate-goal.md).
+This document expands the user, execution-mode, and commercial model beneath
+that charter. Execution order is maintained in [`ROADMAP.md`](../ROADMAP.md).
+
 ## Product statement
 
 SocialName provides fast, evidence-backed knowledge about the presence of a

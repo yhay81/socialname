@@ -1,5 +1,9 @@
 # System architecture
 
+This architecture serves the authoritative
+[SocialName ultimate goal](ultimate-goal.md). Implementation order and current
+acceptance gates are maintained in [`ROADMAP.md`](../ROADMAP.md).
+
 ## Architectural goals
 
 The system must:

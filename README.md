@@ -5,6 +5,12 @@ platform. The first implementation slice provides a private local CLI, one
 shared probe/classification engine, a strict Site Rule v1 compiler, and
 explainable assertion derivation.
 
+> Turn public-identifier presence and change into fast, continuous,
+> evidence-backed, privacy-respecting, actionable knowledge.
+
+Read the authoritative [ultimate goal](docs/ultimate-goal.md) and the active
+[execution roadmap](ROADMAP.md) before planning new work.
+
 The product direction is:
 
 - local-first, fast CLI searches;
@@ -93,7 +99,8 @@ rules/
 docs/                        product, architecture, trust, and governance records
 ```
 
-Start with the [design index](docs/README.md), the
+Start with the [ultimate goal](docs/ultimate-goal.md), the
+[execution roadmap](ROADMAP.md), the [design index](docs/README.md), the
 [accepted decisions](docs/decisions-2026-07-24.md), and the
 [Site Rule v1 validation record](docs/site-rule-v1-validation.md).
 The desktop boundary and platform policy are recorded in

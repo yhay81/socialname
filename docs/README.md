@@ -4,7 +4,21 @@ This directory records the investigation and design decisions for rebuilding
 SocialName. The current Python package is treated as a legacy reference, not as
 the implementation foundation for v2.
 
-The design was last reviewed on 2026-07-24.
+The design was last reviewed on 2026-07-25.
+
+## Authority and execution
+
+- [Ultimate goal](ultimate-goal.md) is the stable, authoritative product
+  charter: mission, promise, value system, North Star, boundaries, and decision
+  filter.
+- [`ROADMAP.md`](../ROADMAP.md) is the canonical execution order: current
+  milestone, software gates, external evidence gates, and completion evidence.
+- [Accepted decisions](decisions-2026-07-24.md) records binding architecture,
+  trust, governance, and client decisions.
+- Focused design documents explain implementation details.
+
+Repository agents follow [`AGENTS.md`](../AGENTS.md). Product work must remain
+consistent with the charter and advance the first incomplete roadmap milestone.
 
 ## Product direction
 
@@ -44,13 +58,17 @@ The first vertical slice is implemented in the repository:
   hashing;
 - asynchronous HTTP probe engine and explainable deterministic classifier;
 - local CLI commands for rule validation, fixture validation, and live probing;
-- ten representative rules with 30 minimized offline cases.
+- ten representative rules with 30 minimized offline cases;
+- a Tauri 2 Windows/macOS desktop slice with local streaming and explicit
+  research-mode consent.
 
 `cargo test --workspace --all-targets` verifies the slice without Internet
 access. Live canaries are intentionally a separate acceptance gate.
 
 ## Documents
 
+- [Ultimate goal](ultimate-goal.md) — mission, product promise, North Star,
+  sustainable advantage, hard boundaries, and decision filter.
 - [Research findings](research.md) — legacy history, current Sherlock, adjacent
   projects, and distributed-measurement lessons.
 - [Product vision](product.md) — users, value, execution modes, privacy, and
@@ -89,15 +107,15 @@ These terms have distinct meanings and should not be used interchangeably:
 - **Watch**: a persisted request to re-evaluate a target and emit state-change
   notifications.
 
-## Next implementation decisions
+## Current execution focus
 
-The following remain deliberately open until the next vertical slices provide
-measurements:
+The current milestone is **Trustworthy local product**. The canonical task
+breakdown and acceptance evidence live in [`ROADMAP.md`](../ROADMAP.md):
 
-- Site-specific freshness policies and monitoring intervals.
-- Pricing and quota boundaries for developer API and monitoring plans.
-- PostgreSQL job/SSE coordination performance and failover behavior.
-- Signing, expiry, rollback, and key-rotation details for distributed rule
-  packs.
-- Whether a separately installed, explicitly operated community probe network
-  is justified after managed regional workers are established.
+1. Implement live-canary manifests, execution, aggregation, rule health,
+   quarantine, shadow comparison, and report validation.
+2. Add the local SQLite observation cache and explicit source/freshness policy
+   to CLI and desktop.
+
+Infrastructure, pricing, scale, and community-network choices remain deferred
+until their roadmap trigger is measured.

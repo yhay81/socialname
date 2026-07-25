@@ -4,6 +4,10 @@ This record supersedes conflicting provisional language in `product.md`,
 `architecture.md`, and `site-rules.md` until those overview documents are
 integrated.
 
+The [ultimate goal](ultimate-goal.md) is the authoritative product charter.
+The live implementation order is maintained in [`ROADMAP.md`](../ROADMAP.md)
+so status does not diverge across design records.
+
 ## Accepted
 
 - The web console evaluates Topcoat first at a replaceable UI boundary.
@@ -28,6 +32,13 @@ integrated.
   layer and the Rust engine linked directly into the process.
 - Desktop webviews receive no generic HTTP, filesystem, database, or shell
   capability. Product operations cross explicit typed commands.
+- Trustworthy Coverage Time is the primary product North Star; search volume or
+  nominal site count cannot override correctness, freshness, continuity,
+  privacy, or deletion guardrails.
+- Roadmap gates distinguish repository-completable software from external
+  deployment, elapsed measurement, credential, signing, and production
+  evidence. Missing external evidence keeps a capability disabled but does not
+  authorize fabricated validation.
 
 ## Detailed records
 
@@ -37,8 +48,10 @@ integrated.
 - [Site rule base design](site-rules.md)
 - [System architecture](architecture.md)
 - [Desktop application](desktop-application.md)
+- [Ultimate goal](ultimate-goal.md)
+- [Execution roadmap](../ROADMAP.md)
 
-## Implementation order
+## Implementation baseline
 
 1. **Partial:** Encode observation and assertion types in
    `socialname-domain`. Consent, deletion, and full Evidence Capsule types move
@@ -47,7 +60,9 @@ integrated.
 3. **Done:** Implement deterministic fixtures for the representative ten sites.
 4. **Done:** Implement the local probe engine and matcher trace.
 5. **Done:** Implement assertion replay with synthetic producers and conflicts.
-6. Implement PostgreSQL lineage and deletion-through tests.
-7. Add managed live canaries and rule-health quarantine.
-8. Build the Axum API and Topcoat monitoring-console vertical slice.
-9. Add the local SQLite cache and explicit desktop source-selection policy.
+6. **Done:** Add the local Tauri desktop search vertical slice and native
+   Windows/macOS compile CI.
+
+The next work is Milestone 1 in `ROADMAP.md`: live-canary and rule-health
+software followed by the local SQLite cache and source-selection policy. The
+first paid monitoring loop follows as Milestone 2.
