@@ -63,6 +63,9 @@ The first vertical slice is implemented in the repository:
   semantic validation against compiled site rules;
 - a bounded, cancellable canary runner using the production measurement engine
   without exposing target identifiers in its result surface;
+- a user-controlled SQLite observation cache with typed persistence,
+  freshness/health eligibility, bounded maintenance, explicit export,
+  quarantine recovery, and complete local deletion;
 - a Tauri 2 Windows/macOS desktop slice with local streaming and explicit
   research-mode consent.
 
@@ -95,8 +98,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   Ed25519 trust policy, activation replay protection, and retained rollback.
 - [Canary workflow operations](canary-workflows.md) — disabled-by-default
   manual and scheduled managed-vantage templates with fixed budgets.
-- [Local cache](local-cache.md) — embedded SQLite migrations, database
-  ownership, immutable observations, and fail-closed opening behavior.
+- [Local cache](local-cache.md) — embedded SQLite persistence, eligibility,
+  maintenance, export, recovery, deletion, and fail-closed behavior.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
@@ -132,8 +135,8 @@ These terms have distinct meanings and should not be used interchangeably:
 The current milestone is **Trustworthy local product**. The canonical task
 breakdown and acceptance evidence live in [`ROADMAP.md`](../ROADMAP.md):
 
-1. Complete the local SQLite observation cache.
-2. Add explicit source and freshness policy to CLI and desktop.
+1. Add explicit `local` and `cache` source modes with `sync=never` to the CLI.
+2. Expose source and freshness policy through the desktop application.
 
 Infrastructure, pricing, scale, and community-network choices remain deferred
 until their roadmap trigger is measured.

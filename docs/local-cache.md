@@ -4,7 +4,7 @@ The local cache is a user-controlled SQLite database for immutable SocialName
 observations and cache-management metadata. It is an optional local product
 component: opening or using it does not contact a SocialName service. It can
 persist and read domain observations, but does not implement synchronization,
-export, search integration, or source-mode presentation yet.
+search integration, or source-mode presentation yet.
 
 ## Ownership and opening policy
 
@@ -12,13 +12,17 @@ export, search integration, or source-mode presentation yet.
 a database:
 
 1. creates it when absent;
-2. rejects a nonzero SQLite application ID that is not SocialName's;
+2. rejects a nonzero SQLite application ID that is not SocialName's and refuses
+   to adopt a nonempty unowned database with application ID zero;
 3. rejects a successful migration version newer than the binary supports;
-4. enables WAL, full synchronous writes, foreign keys, and a bounded busy
+4. resolves a file-backed path to its existing file or parent-directory
+   identity so later deletion targets the database rather than a symlink;
+5. enables WAL, full synchronous writes, foreign keys, and a bounded busy
    timeout only after the ownership and version preflight;
-5. applies the embedded migrations; and
-6. requires the exact current schema version and a successful SQLite
-   `quick_check`.
+6. applies the embedded migrations; and
+7. requires the exact current schema version, a successful SQLite
+   `integrity_check`, no foreign-key violations, and no observation missing its
+   cache metadata.
 
 The cache does not reinterpret a foreign, future, or corrupt database as an
 empty cache. That distinction prevents storage failure from silently becoming
@@ -99,6 +103,65 @@ This API establishes safe cache eligibility only. Later source-policy work
 must label cached data as cached, derive any current interpretation from the
 observation set, and decide whether to refresh locally.
 
+## Maintenance and size limits
+
+`LocalCache::maintain` takes an explicit evaluation time, maximum observation
+count, and maximum logical payload bytes. It validates both nonzero limits
+before changing data, verifies cache integrity, deletes expired observations
+first, and then removes the least-recently-used rows until both limits hold.
+LRU ties use observation time and observation ID for deterministic behavior.
+Metadata deletion follows through the foreign key.
+
+Logical payload bytes count the UTF-8 bytes of every persisted text field plus
+the fixed-width domain and metadata integers. This is a deterministic limit on
+sensitive product data, not a claim about the SQLite main-file, WAL, allocator,
+or filesystem byte count. The maintenance report records observations and
+logical bytes before and after, with expiry and capacity deletions separated.
+If the requested limits are not reached, the transaction rolls back and
+returns an error.
+
+## Explicit export
+
+`LocalCache::export_jsonl` creates a new file and refuses to overwrite any
+existing path. The first line is a
+`socialname.dev/local-cache-export/v1` manifest with the caller-supplied export
+time and snapshot observation count. Following lines contain complete typed
+observations and separate cache metadata in deterministic chronological order.
+Every line is self-identifying JSON.
+
+The export uses one database snapshot, validates every stored row, flushes and
+synchronizes the completed file, and reports its exact byte count. On Unix the
+new file mode is `0600`; Windows uses the containing directory's ACL. An
+invalid cache creates no export, and a failure after creation removes only the
+new partial file or reports cleanup failure explicitly. Export includes target
+identifiers and is therefore a deliberate sensitive-data action; it is never
+sync.
+
+## Recovery and complete deletion
+
+Recovery is never automatic. `LocalCache::recover` first tries the normal
+fail-closed open path:
+
+- a healthy cache returns `RecoveryNotRequired` and remains untouched;
+- a foreign application ID, a nonempty unowned database, or a future schema is
+  refused and is not renamed or downgraded;
+- a corrupt or failed current cache is closed, then its main file and available
+  WAL/SHM/journal sidecars are renamed together to a unique adjacent
+  `.corrupt-<process>-<sequence>` quarantine path;
+- only after quarantine succeeds is a new empty migrated cache created.
+
+The quarantine is retained for explicit inspection or deletion; no
+observations are silently salvaged into trusted results. If new-cache creation
+fails, recovery removes its partial files and restores the quarantine. Windows
+file sharing is handled with a short bounded retry, and any incomplete
+quarantine or rollback is an explicit error.
+
+`LocalCache::delete_database` consumes and closes a file-backed cache, then
+removes its journal, SHM, WAL, and main database in that order. It reports the
+number of removed files and stops with an explicit partial-deletion error on
+the first non-absence failure. It does not claim secure media erasure.
+In-memory caches cannot claim file deletion.
+
 ## Privacy and failure behavior
 
 Normalized usernames and public identifiers are sensitive local product data.
@@ -108,16 +171,17 @@ service.
 
 Opening failure is explicit:
 
-- a foreign application ID is refused before WAL is enabled;
+- a foreign or nonempty unowned database is refused before WAL is enabled;
 - a newer schema is refused instead of downgraded;
 - migration errors are returned without producing observations;
-- integrity failure is distinct from a valid empty cache.
+- integrity, foreign-key, and missing-metadata failure is distinct from a valid
+  empty cache;
 - immutable-ID conflicts and incomplete stored records are distinct from a
   cache miss.
 
-Recovery, export, maximum-size policy, pruning, and complete deletion remain
-separate roadmap items so none of those behaviors is implied before it is
-implemented and tested.
+Opening, lookup, maintenance, and export never contact a SocialName service.
+Recovery and deletion are explicit local calls; later CLI/desktop surfaces
+must keep their destructive confirmation and source/sync policy visible.
 
 ## Verification
 
@@ -133,4 +197,8 @@ transaction rollback, missing metadata, observation immutability, and deletion
 for later pruning. Eligibility tests cover exact hits, target/site/region/rule
 misses, current and captured rule health, verdict filtering, expiry, maximum
 age, negative TTL, access accounting, invalid queries, and bounded conflict
-preservation.
+preservation. Maintenance and lifecycle tests cover expiry-first and LRU
+pruning, count and logical-byte limits, metadata cascade, deterministic export,
+overwrite refusal, integrity failure, corrupt-byte quarantine, healthy,
+foreign, unowned, and future recovery refusal, Windows close/retry behavior,
+and complete database/sidecar deletion.

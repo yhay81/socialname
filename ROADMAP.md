@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: implement bounded pruning, maximum-size behavior,
-corruption recovery, export, and complete local deletion.
+Next executable item: add CLI `local` and `cache` modes plus independent
+`sync=never`.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -269,7 +269,7 @@ External evidence gate:
       latest boolean result.
 - [x] Key eligibility by normalized username, site, region class, rule hash,
       verdict policy, and freshness.
-- [ ] Implement pruning, maximum-size behavior, corruption recovery, export,
+- [x] Implement pruning, maximum-size behavior, corruption recovery, export,
       and complete local deletion.
 - [ ] Add CLI `local` and `cache` modes plus independent `sync=never`.
 - [ ] Show source, observed time, expiry, rule hash, and refresh state in normal
@@ -338,6 +338,26 @@ own unexpired TTL. It returns the complete deterministic matching set instead
 of selecting a latest boolean, updates access metadata only for successful
 hits, and fails rather than truncating above 256 observations so conflicts
 cannot be hidden.
+
+Maintenance/lifecycle-slice evidence:
+
+```console
+cargo test --locked -p socialname-cache
+# 30 passed: expiry-first/LRU pruning, count and logical-byte limits,
+# deterministic create-new export, full integrity checks, corrupt quarantine,
+# healthy/foreign/unowned/future refusal, and database/sidecar deletion
+cargo clippy --locked -p socialname-cache --all-targets --all-features -- -D warnings
+```
+
+Maintenance enforces nonzero observation-count and deterministic logical
+payload-byte limits, deleting expired rows before LRU capacity rows and
+reporting before/after quantities. Versioned JSONL export snapshots complete
+typed observations and metadata without overwriting an existing file.
+Recovery never silently trusts salvage: corrupt current files are retained
+under an adjacent quarantine before creating an empty cache, while healthy,
+foreign, nonempty unowned, and future databases are preserved and refused.
+Complete deletion closes the pool and removes journal, SHM, WAL, and main
+files, reporting any partial failure.
 
 ## Milestone 2 — First paid monitoring loop
 
@@ -523,3 +543,7 @@ Choose these only when their trigger is measured:
   current and captured health, verdict policy, expiry, and maximum age; returns
   a bounded observation set with transactional access accounting instead of a
   latest-writer result.
+- **2026-07-25:** Added expiry-first/LRU maintenance with deterministic logical
+  data limits, create-new versioned JSONL export, full relational integrity
+  checks, explicit corrupt-file quarantine and empty-cache recovery, and
+  complete database/sidecar deletion.

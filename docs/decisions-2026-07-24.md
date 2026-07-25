@@ -67,6 +67,16 @@ so status does not diverge across design records.
   expiry, request maximum age, and explicit verdict policy. It returns the
   bounded matching observation set rather than choosing a latest boolean;
   overflow fails instead of hiding possible conflicts.
+- Cache maintenance deletes expiry-first and then deterministic LRU rows under
+  nonzero observation-count and logical-payload-byte limits. Logical payload
+  is explicitly not SQLite file size. Export is an explicit, create-new,
+  versioned JSONL snapshot that contains sensitive target data and never
+  implies synchronization.
+- Cache recovery is explicit quarantine, not salvage: healthy, foreign,
+  nonempty unowned, and future-schema databases are preserved and refused;
+  corrupt current data and sidecars move to an adjacent quarantine before a
+  new empty cache is created. Complete deletion consumes the cache and removes
+  its journal, SHM, WAL, and main file without claiming secure media erasure.
 
 ## Detailed records
 
@@ -94,7 +104,6 @@ so status does not diverge across design records.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
 
-The next work is Milestone 1 in `ROADMAP.md`: add bounded pruning, size,
-recovery, export, and complete local deletion behavior, then add
-source-selection policy. The first paid monitoring loop follows as Milestone
-2.
+The next work is Milestone 1 in `ROADMAP.md`: add explicit CLI `local` and
+`cache` source modes with independent `sync=never`, then expose source and
+freshness metadata. The first paid monitoring loop follows as Milestone 2.
