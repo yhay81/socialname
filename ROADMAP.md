@@ -64,7 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: emit and validate the versioned canary report.
+Next executable item: aggregate validated reports across runs, managed
+vantages, and the documented 24-hour acceptance window.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -73,10 +74,10 @@ disabled.
 
 - [x] Define typed positive/negative canary manifests separate from site rules.
 - [x] Implement a bounded canary runner using the production engine.
-- [ ] Emit a versioned report containing rule/engine hash, declared vantage,
+- [x] Emit a versioned report containing rule/engine hash, declared vantage,
       precision, conclusive coverage, latency, bytes, response classes, and
       conflicts without complete bodies.
-- [ ] Reject duplicate, expired, malformed, or policy-incompatible reports.
+- [x] Reject duplicate, expired, malformed, or policy-incompatible reports.
 - [ ] Implement aggregation across runs, vantages, and the documented 24-hour
       acceptance window.
 - [ ] Add shadow comparison between candidate and last-known-good rules.
@@ -131,6 +132,25 @@ worst-case request and inspected-byte preflight, bounded concurrency and wall
 time, cancellation with explicit partial completion, and a minimized result
 surface that excludes usernames, URLs, bodies, and matcher detail. Live CLI
 execution requires both an accepted manifest and `--allow-live`.
+
+Report-slice evidence:
+
+```console
+cargo test --locked --workspace --all-targets
+# socialname-canary: 25 passed, including canonical metrics, privacy-field
+# exclusion, content tampering, duplicate, expiry, malformed JSON, summary
+# mismatch, policy mismatch, and incomplete-run rejection
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+```
+
+`socialname.dev/canary-report/v1` binds the manifest, rule, executing-binary
+engine hash, coarse vantage, and a validity window no longer than 24 hours.
+Precision and conclusive coverage are exact ratios; latency, completed bytes,
+response classes, and conflicts are recomputed from minimized cases. The
+content hash detects modification but is explicitly not producer
+authentication; signing remains a later gate.
 
 Software acceptance gate:
 
@@ -332,3 +352,7 @@ Choose these only when their trigger is measured:
   request/byte preflight, concurrency and deadline caps, cancellation-safe
   partial results, minimized evidence, explicit live acknowledgement, and CI
   manifest validation.
+- **2026-07-25:** Added Canary Report v1 with executable engine hashing,
+  rational precision/coverage, deterministic latency and response metrics,
+  24-hour expiry, content-integrity and duplicate checks, strict
+  ingestion-policy validation, and privacy-bounded case evidence.

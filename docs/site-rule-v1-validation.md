@@ -198,7 +198,10 @@ cannot produce both definitive states.
   semantic validation, JSON Schema, and canonical hashing.
 - **Done:** A production-engine live canary runner with per-site and per-region
   request, concurrency, wall-time, and inspected-byte budgets.
-- **Next:** A report showing precision, conclusive coverage, latency, bytes,
-  response classes, and conflicts.
+- **Done:** A privacy-bounded versioned report showing precision, conclusive
+  coverage, latency, bytes, response classes, and conflicts, with expiry,
+  content-integrity, duplicate, and ingestion-policy validation.
+- **Next:** Aggregation across runs, managed vantages, and the 24-hour
+  acceptance window.
 - **Next:** Signed pack publication and a last-known-good rollback
   demonstration.

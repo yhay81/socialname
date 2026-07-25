@@ -1,13 +1,17 @@
 use std::{
     collections::BTreeSet,
+    fs::File,
     future::Future,
+    io::{BufReader, Read},
     pin::Pin,
     time::{Duration, Instant},
 };
 
+use chrono::{DateTime, Utc};
 use futures_util::{StreamExt, stream};
 use rand::{Rng, RngExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use socialname_domain::{EvidenceClass, InconclusiveReason, Verdict};
 use socialname_engine::{ProbeSummary, SearchEngine, SearchResult};
 use socialname_rule_compiler::CompiledSiteRule;
@@ -21,12 +25,14 @@ const MAX_REQUESTS: usize = 1_024;
 const MAX_ELAPSED_MS: u64 = 15 * 60 * 1_000;
 const MAX_RESPONSE_BYTES: usize = 256 * 1_024 * 1_024;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeclaredVantage {
     pub region: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanaryRunBudget {
     pub max_requests: usize,
     pub max_concurrency: usize,
@@ -45,7 +51,7 @@ impl Default for CanaryRunBudget {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CanaryCaseExpectation {
     Found,
@@ -53,7 +59,7 @@ pub enum CanaryCaseExpectation {
 }
 
 impl CanaryCaseExpectation {
-    const fn verdict(self) -> Verdict {
+    pub(crate) const fn verdict(self) -> Verdict {
         match self {
             Self::Found => Verdict::Found,
             Self::NotFound => Verdict::NotFound,
@@ -61,7 +67,8 @@ impl CanaryCaseExpectation {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanaryProbeSummary {
     pub probe_id: String,
     pub transport: TransportOutcome,
@@ -72,7 +79,8 @@ pub struct CanaryProbeSummary {
     pub elapsed_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanaryCaseOutcome {
     pub case_id: String,
     pub expectation: CanaryCaseExpectation,
@@ -84,7 +92,7 @@ pub struct CanaryCaseOutcome {
     pub probes: Vec<CanaryProbeSummary>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CanaryRunCompletion {
     Complete,
@@ -94,12 +102,16 @@ pub enum CanaryRunCompletion {
     ResponseByteBudgetExceeded,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanaryRun {
     pub site_id: String,
     pub manifest_hash: String,
     pub rule_hash: String,
+    pub engine_hash: String,
     pub vantage: DeclaredVantage,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
     pub completion: CanaryRunCompletion,
     pub planned_requests: usize,
     pub completed_requests: usize,
@@ -112,6 +124,10 @@ pub struct CanaryRun {
 pub enum CanaryRunError {
     #[error("failed to initialize the production search engine: {0}")]
     EngineInitialization(String),
+    #[error("failed to fingerprint the current executable: {0}")]
+    EngineFingerprint(String),
+    #[error("engine hash must be a lowercase SHA-256 value")]
+    InvalidEngineHash,
     #[error("declared vantage region is invalid")]
     InvalidVantage,
     #[error("canary run budget is invalid")]
@@ -151,20 +167,24 @@ impl CanaryProbe for SearchEngine {
 #[derive(Clone, Debug)]
 pub struct CanaryRunner<P> {
     probe: P,
+    engine_hash: String,
 }
 
 impl<P> CanaryRunner<P> {
-    #[must_use]
-    pub const fn new(probe: P) -> Self {
-        Self { probe }
+    pub fn new(probe: P, engine_hash: impl Into<String>) -> Result<Self, CanaryRunError> {
+        let engine_hash = engine_hash.into();
+        if !valid_sha256(&engine_hash) {
+            return Err(CanaryRunError::InvalidEngineHash);
+        }
+        Ok(Self { probe, engine_hash })
     }
 }
 
 impl CanaryRunner<SearchEngine> {
     pub fn production() -> Result<Self, CanaryRunError> {
-        SearchEngine::new()
-            .map(Self::new)
-            .map_err(|error| CanaryRunError::EngineInitialization(error.to_string()))
+        let engine = SearchEngine::new()
+            .map_err(|error| CanaryRunError::EngineInitialization(error.to_string()))?;
+        Self::new(engine, current_executable_hash()?)
     }
 }
 
@@ -235,6 +255,7 @@ impl<P: CanaryProbe> CanaryRunner<P> {
             });
         }
 
+        let started_at = Utc::now();
         let start = Instant::now();
         let searches = stream::iter(cases.into_iter().enumerate())
             .map(|(index, case)| async move {
@@ -283,11 +304,15 @@ impl<P: CanaryProbe> CanaryRunner<P> {
         }
 
         indexed_outcomes.sort_by_key(|(index, _)| *index);
+        let finished_at = Utc::now();
         Ok(CanaryRun {
             site_id: rule.source.id.clone(),
             manifest_hash: manifest.manifest_hash.clone(),
             rule_hash: rule.rule_hash.clone(),
+            engine_hash: self.engine_hash.clone(),
             vantage,
+            started_at,
+            finished_at,
             completion,
             planned_requests,
             completed_requests,
@@ -467,7 +492,23 @@ fn sanitize_probe_summary(probe: ProbeSummary) -> CanaryProbeSummary {
         probe_id: probe.probe_id,
         transport: probe.transport,
         status: probe.status,
-        content_type: probe.content_type,
+        content_type: probe.content_type.map(|value| {
+            let base = value
+                .split(';')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase();
+            match base.as_str() {
+                "application/json"
+                | "application/problem+json"
+                | "application/jrd+json"
+                | "text/html"
+                | "text/plain"
+                | "application/octet-stream" => base,
+                _ => "other".to_owned(),
+            }
+        }),
         body_bytes: probe.body_bytes,
         body_truncated: probe.body_truncated,
         elapsed_ms: probe.elapsed_ms,
@@ -476,6 +517,33 @@ fn sanitize_probe_summary(probe: ProbeSummary) -> CanaryProbeSummary {
 
 fn duration_ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+fn current_executable_hash() -> Result<String, CanaryRunError> {
+    let path = std::env::current_exe()
+        .map_err(|error| CanaryRunError::EngineFingerprint(error.to_string()))?;
+    let file =
+        File::open(path).map_err(|error| CanaryRunError::EngineFingerprint(error.to_string()))?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1_024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| CanaryRunError::EngineFingerprint(error.to_string()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 #[cfg(test)]
@@ -619,7 +687,7 @@ negative:
                         transport: TransportOutcome::Completed,
                         status: Some(if verdict == Verdict::Found { 200 } else { 404 }),
                         final_url: Some(format!("https://example.test/u/{username}")),
-                        content_type: Some("application/json".to_owned()),
+                        content_type: Some(format!("application/json; reflected={username}")),
                         body_bytes: self.body_bytes,
                         body_truncated: false,
                         elapsed_ms: 1,
@@ -651,12 +719,16 @@ negative:
         }
     }
 
+    fn runner(probe: FakeProbe) -> CanaryRunner<FakeProbe> {
+        CanaryRunner::new(probe, "a".repeat(64)).expect("test engine hash is valid")
+    }
+
     #[tokio::test]
     async fn runs_positive_and_generated_negative_cases_with_bounded_probe_data() {
         let (rule, manifest) = rule_and_manifest();
         let probe = FakeProbe::immediate();
         let calls = Arc::clone(&probe.calls);
-        let runner = CanaryRunner::new(probe);
+        let runner = runner(probe);
         let mut rng = StdRng::seed_from_u64(7);
 
         let run = runner
@@ -695,7 +767,7 @@ negative:
         let (rule, manifest) = rule_and_manifest();
         let probe = FakeProbe::immediate();
         let calls = Arc::clone(&probe.calls);
-        let runner = CanaryRunner::new(probe);
+        let runner = runner(probe);
         let mut rng = StdRng::seed_from_u64(7);
         let budget = CanaryRunBudget {
             max_requests: 9,
@@ -729,7 +801,7 @@ negative:
         let (rule, manifest) = rule_and_manifest();
         let probe = FakeProbe::immediate();
         let calls = Arc::clone(&probe.calls);
-        let runner = CanaryRunner::new(probe);
+        let runner = runner(probe);
         let mut rng = StdRng::seed_from_u64(7);
         let budget = CanaryRunBudget {
             max_response_bytes: 10 * 1_024 - 1,
@@ -763,7 +835,7 @@ negative:
         let (rule, manifest) = rule_and_manifest();
         let probe = FakeProbe::immediate();
         let calls = Arc::clone(&probe.calls);
-        let runner = CanaryRunner::new(probe);
+        let runner = runner(probe);
         let mut rng = StdRng::seed_from_u64(7);
         let cancellation = CancellationToken::new();
         cancellation.cancel();
@@ -793,7 +865,7 @@ negative:
             delay: Duration::from_millis(50),
             body_bytes: 10,
         };
-        let runner = CanaryRunner::new(probe);
+        let runner = runner(probe);
         let mut rng = StdRng::seed_from_u64(7);
         let budget = CanaryRunBudget {
             max_elapsed_ms: 1,
@@ -821,7 +893,7 @@ negative:
     async fn refuses_a_rule_hash_other_than_the_one_validated() {
         let (rule, mut manifest) = rule_and_manifest();
         manifest.validated_rule_hash = "different-rule".to_owned();
-        let runner = CanaryRunner::new(FakeProbe::immediate());
+        let runner = runner(FakeProbe::immediate());
         let mut rng = StdRng::seed_from_u64(7);
 
         let error = runner
@@ -837,5 +909,17 @@ negative:
             .unwrap_err();
 
         assert_eq!(error, CanaryRunError::RuleHashMismatch);
+    }
+
+    #[test]
+    fn current_executable_produces_a_sha256_engine_hash() {
+        let hash = current_executable_hash().unwrap();
+        assert!(valid_sha256(&hash));
+    }
+
+    #[test]
+    fn rejects_non_sha256_engine_identity() {
+        let error = CanaryRunner::new(FakeProbe::immediate(), "not-a-hash").unwrap_err();
+        assert_eq!(error, CanaryRunError::InvalidEngineHash);
     }
 }

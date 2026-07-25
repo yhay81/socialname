@@ -133,9 +133,9 @@ sample.
 Runner outcomes omit usernames, profile URLs, response bodies, final URLs, and
 matcher detail. They retain only the control ID, expectation, verdict,
 inconclusive reason, evidence class and digest, plus bounded probe status,
-transport, content type, inspected bytes, truncation, and latency. Request and
-byte counters are explicitly labeled as completed values because an interrupted
-in-flight request cannot yet be counted exactly.
+transport, an allowlisted content-type class, inspected bytes, truncation, and
+latency. Request and byte counters are explicitly labeled as completed values
+because an interrupted in-flight request cannot yet be counted exactly.
 
 Live execution requires both an accepted manifest and an explicit acknowledgement:
 
@@ -149,8 +149,7 @@ state.
 
 ## Next integration
 
-The next slice will turn the bounded run into a versioned report bound to the
-manifest, rule, engine, and declared vantage; derive precision, conclusive
-coverage, latency, bytes, response classes, and conflicts; and reject malformed
-or replay-incompatible reports. Aggregation, shadow comparison, and promotion
-remain later Milestone 1A deliverables.
+Complete runs now produce the privacy-bounded, content-addressed report defined
+in [`canary-report-v1.md`](canary-report-v1.md). The next slice aggregates
+validated reports across runs, managed vantages, and the 24-hour acceptance
+window. Shadow comparison and promotion remain later Milestone 1A deliverables.

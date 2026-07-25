@@ -83,6 +83,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   packaging, and migration.
 - [Canary Manifest v1](canary-manifest-v1.md) — independent positive/negative
   controls, validity, review evidence, and policy compatibility.
+- [Canary Report v1](canary-report-v1.md) — versioned run evidence, recomputed
+  metrics, expiry, duplicate detection, and ingestion-policy validation.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

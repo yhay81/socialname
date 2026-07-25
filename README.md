@@ -36,6 +36,9 @@ person.
   and deterministic content hashes.
 - A cancellable production-engine canary runner with preflight request,
   concurrency, wall-time, and inspected-byte budgets.
+- Content-addressed Canary Report v1 output with rational precision/coverage,
+  latency and response-class metrics, expiry, duplicate detection, and strict
+  ingestion-policy validation.
 - Assertion v1 trust thresholds for managed and opt-in shared observations.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.

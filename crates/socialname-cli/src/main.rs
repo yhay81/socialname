@@ -1,12 +1,13 @@
 #![forbid(unsafe_code)]
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{collections::BTreeSet, path::PathBuf, process::ExitCode};
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use clap::{Args, Parser, Subcommand};
 use socialname_canary::{
-    CanaryManifestCompiler, CanaryRunBudget, CanaryRunCompletion, CanaryRunner, DeclaredVantage,
+    CanaryManifestCompiler, CanaryReportBuilder, CanaryReportPolicy, CanaryReportValidator,
+    CanaryRunBudget, CanaryRunCompletion, CanaryRunner, DeclaredVantage,
 };
 use socialname_engine::SearchEngine;
 use socialname_rule_compiler::RuleCompiler;
@@ -224,27 +225,55 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                 )
                 .await?;
             let completed = run.completion == CanaryRunCompletion::Complete;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&run)?);
-            } else {
-                let matched = run
-                    .outcomes
-                    .iter()
-                    .filter(|outcome| outcome.matched_expectation)
-                    .count();
-                println!(
-                    "{}\t{:?}\t{matched}/{}\tcompleted_requests={}/{}\tcompleted_bytes={}\telapsed_ms={}",
-                    run.site_id,
-                    run.completion,
-                    run.outcomes.len(),
-                    run.completed_requests,
-                    run.planned_requests,
-                    run.completed_response_bytes,
-                    run.elapsed_ms
-                );
-            }
             if !completed {
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&run)?);
+                } else {
+                    println!(
+                        "{}\t{:?}\tcompleted_cases={}\tcompleted_requests={}/{}\tcompleted_bytes={}",
+                        run.site_id,
+                        run.completion,
+                        run.outcomes.len(),
+                        run.completed_requests,
+                        run.planned_requests,
+                        run.completed_response_bytes,
+                    );
+                }
                 bail!("canary run ended with {:?}", run.completion);
+            }
+            let report = CanaryReportBuilder::new().build(manifest, &run)?;
+            let policy = CanaryReportPolicy {
+                site_id: report.report.site_id.clone(),
+                manifest_hash: report.report.manifest_hash.clone(),
+                allowed_rule_hashes: BTreeSet::from([report.report.rule_hash.clone()]),
+                allowed_engine_hashes: BTreeSet::from([report.report.engine_hash.clone()]),
+                allowed_regions: BTreeSet::from([report.report.vantage.region.clone()]),
+                max_planned_requests: u32::try_from(max_requests)
+                    .context("max_requests does not fit report policy")?,
+                max_completed_response_bytes: u64::try_from(max_response_bytes)
+                    .context("max_response_bytes does not fit report policy")?,
+            };
+            CanaryReportValidator::new().validate_at(
+                &report,
+                &policy,
+                &BTreeSet::new(),
+                Utc::now(),
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{}\t{}\tprecision={}/{}\tcoverage={}/{}\tcompleted_requests={}/{}\tcompleted_bytes={}",
+                    report.report.site_id,
+                    report.report_id,
+                    report.report.summary.precision.numerator,
+                    report.report.summary.precision.denominator,
+                    report.report.summary.conclusive_coverage.numerator,
+                    report.report.summary.conclusive_coverage.denominator,
+                    report.report.summary.completed_requests,
+                    report.report.summary.planned_requests,
+                    report.report.summary.completed_response_bytes,
+                );
             }
         }
         CanaryCommand::Schema => {
