@@ -523,7 +523,7 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                 reports.push(validated);
             }
 
-            let aggregate = CanaryReportAggregator::new().aggregate_at(
+            let evaluated = CanaryReportAggregator::new().aggregate_at(
                 &reports,
                 &CanaryAggregationPolicy {
                     site_id: site,
@@ -538,6 +538,7 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                 },
                 aggregation_time,
             )?;
+            let aggregate = evaluated.aggregate();
             if json {
                 println!("{}", serde_json::to_string_pretty(&aggregate)?);
             } else {
@@ -549,7 +550,7 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                     aggregate.regions.len(),
                     aggregate.issues.len()
                 );
-                for issue in aggregate.issues {
+                for issue in &aggregate.issues {
                     println!("issue\t{issue:?}");
                 }
             }

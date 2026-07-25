@@ -3,6 +3,7 @@
 mod aggregate;
 mod compiler;
 mod error;
+mod health;
 mod report;
 mod runner;
 mod schema;
@@ -11,10 +12,11 @@ mod shadow;
 pub use aggregate::{
     CANARY_AGGREGATE_V1, CanaryAcceptanceAggregate, CanaryAcceptanceDisposition,
     CanaryAcceptanceIssue, CanaryAggregationError, CanaryAggregationPolicy, CanaryRegionAggregate,
-    CanaryReportAggregator,
+    CanaryReportAggregator, EvaluatedCanaryAggregate,
 };
 pub use compiler::{CanaryManifestCompiler, CompiledCanaryManifest};
 pub use error::{CanaryManifestError, CanaryManifestErrors};
+pub use health::{CanaryHealthAssessor, CanaryHealthError};
 pub use report::{
     CANARY_REPORT_V1, CanaryLatencySummary, CanaryRatio, CanaryReportBuilder, CanaryReportEnvelope,
     CanaryReportError, CanaryReportPolicy, CanaryReportSummary, CanaryReportV1,

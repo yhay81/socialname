@@ -75,6 +75,21 @@ pub enum CanaryAcceptanceIssue {
     },
 }
 
+impl CanaryAcceptanceIssue {
+    #[must_use]
+    pub fn region(&self) -> &str {
+        match self {
+            Self::MissingRegion { region }
+            | Self::InsufficientRuns { region, .. }
+            | Self::IntervalTooShort { region, .. }
+            | Self::PrecisionBelowThreshold { region, .. }
+            | Self::CoverageBelowThreshold { region, .. }
+            | Self::ConflictingEvidence { region, .. }
+            | Self::LatencyExceeded { region, .. } => region,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanaryRegionAggregate {
@@ -100,6 +115,28 @@ pub struct CanaryAcceptanceAggregate {
     pub overall: CanaryReportSummary,
     pub report_ids: Vec<String>,
     pub issues: Vec<CanaryAcceptanceIssue>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvaluatedCanaryAggregate {
+    aggregate: CanaryAcceptanceAggregate,
+}
+
+impl EvaluatedCanaryAggregate {
+    #[must_use]
+    pub const fn aggregate(&self) -> &CanaryAcceptanceAggregate {
+        &self.aggregate
+    }
+
+    #[must_use]
+    pub fn into_aggregate(self) -> CanaryAcceptanceAggregate {
+        self.aggregate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_test(aggregate: CanaryAcceptanceAggregate) -> Self {
+        Self { aggregate }
+    }
 }
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
@@ -138,7 +175,7 @@ impl CanaryReportAggregator {
         reports: &[ValidatedCanaryReport],
         policy: &CanaryAggregationPolicy,
         aggregation_time: DateTime<Utc>,
-    ) -> Result<CanaryAcceptanceAggregate, CanaryAggregationError> {
+    ) -> Result<EvaluatedCanaryAggregate, CanaryAggregationError> {
         validate_policy(policy, aggregation_time)?;
         if reports.is_empty() {
             return Err(CanaryAggregationError::EmptyInput);
@@ -215,20 +252,22 @@ impl CanaryReportAggregator {
             CanaryAcceptanceDisposition::Rejected
         };
 
-        Ok(CanaryAcceptanceAggregate {
-            schema: CANARY_AGGREGATE_V1.to_owned(),
-            site_id: policy.site_id.clone(),
-            manifest_hash: policy.manifest_hash.clone(),
-            rule_hash: policy.rule_hash.clone(),
-            engine_hash: policy.engine_hash.clone(),
-            window_start: policy.window_start,
-            window_end: policy.window_end,
-            aggregated_at: aggregation_time,
-            disposition,
-            regions,
-            overall,
-            report_ids,
-            issues,
+        Ok(EvaluatedCanaryAggregate {
+            aggregate: CanaryAcceptanceAggregate {
+                schema: CANARY_AGGREGATE_V1.to_owned(),
+                site_id: policy.site_id.clone(),
+                manifest_hash: policy.manifest_hash.clone(),
+                rule_hash: policy.rule_hash.clone(),
+                engine_hash: policy.engine_hash.clone(),
+                window_start: policy.window_start,
+                window_end: policy.window_end,
+                aggregated_at: aggregation_time,
+                disposition,
+                regions,
+                overall,
+                report_ids,
+                issues,
+            },
         })
     }
 }
@@ -590,7 +629,8 @@ mod tests {
     fn accepts_three_regions_with_three_precise_runs_spanning_24_hours() {
         let aggregate = CanaryReportAggregator::new()
             .aggregate_at(&healthy_reports(), &policy(), timestamp(26, 0, 1))
-            .unwrap();
+            .unwrap()
+            .into_aggregate();
 
         assert_eq!(aggregate.disposition, CanaryAcceptanceDisposition::Accepted);
         assert!(aggregate.issues.is_empty());
@@ -615,7 +655,8 @@ mod tests {
         ];
         let aggregate = CanaryReportAggregator::new()
             .aggregate_at(&reports, &policy(), timestamp(26, 0, 1))
-            .unwrap();
+            .unwrap()
+            .into_aggregate();
 
         assert_eq!(aggregate.disposition, CanaryAcceptanceDisposition::Rejected);
         assert!(aggregate.issues.iter().any(|issue| matches!(
@@ -639,7 +680,8 @@ mod tests {
         reports[1] = validated_report("region-a", timestamp(25, 12, 0), Quality::Unhealthy);
         let aggregate = CanaryReportAggregator::new()
             .aggregate_at(&reports, &policy(), timestamp(26, 0, 1))
-            .unwrap();
+            .unwrap()
+            .into_aggregate();
 
         assert_eq!(aggregate.disposition, CanaryAcceptanceDisposition::Rejected);
         assert!(aggregate.issues.iter().any(|issue| matches!(
