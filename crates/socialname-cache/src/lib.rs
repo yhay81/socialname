@@ -8,6 +8,10 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous},
 };
 
+mod observation_store;
+
+pub use observation_store::{CacheMetadata, CachedObservation, StoreOutcome};
+
 pub const CACHE_APPLICATION_ID: i64 = 1_397_637_453;
 pub const CURRENT_SCHEMA_VERSION: i64 = 1;
 
@@ -131,6 +135,12 @@ pub enum CacheError {
     UnsupportedSchema { found: i64, supported: i64 },
     #[error("local cache integrity check failed")]
     IntegrityCheckFailed,
+    #[error("observation is invalid for local persistence: {field}")]
+    InvalidObservation { field: &'static str },
+    #[error("an observation with the same identity has different immutable content")]
+    ObservationConflict,
+    #[error("stored observation is invalid: {field}")]
+    InvalidStoredObservation { field: &'static str },
     #[error("local cache database operation failed")]
     Database(#[from] sqlx::Error),
     #[error("local cache migration failed")]

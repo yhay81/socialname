@@ -9,6 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+socialname-domain = { path = "../socialname-domain" }
 sqlx.workspace = true
 thiserror.workspace = true
 
