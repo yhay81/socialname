@@ -96,6 +96,8 @@ impl CanaryHealthAssessor {
                 region: region.to_owned(),
             },
             sequence,
+            manifest_hash: aggregate.manifest_hash.clone(),
+            engine_hash: aggregate.engine_hash.clone(),
             observed_at_unix_ms: observed_at.timestamp_millis(),
             expires_at_unix_ms: expires_at.timestamp_millis(),
             signal,
@@ -446,6 +448,9 @@ mod tests {
             updated_at_unix_ms: event.observed_at_unix_ms - 1,
             consecutive_recovery_passes: 0,
             consecutive_operational_failures: 0,
+            last_manifest_hash: Some(MANIFEST_HASH.to_owned()),
+            last_engine_hash: Some(ENGINE_HASH.to_owned()),
+            last_evidence_expires_at_unix_ms: Some(event.expires_at_unix_ms),
             last_evidence_ids: vec!["7".repeat(64)],
         }
     }

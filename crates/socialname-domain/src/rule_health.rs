@@ -69,6 +69,8 @@ pub enum RuleHealthSignal {
 pub struct RuleHealthEvent {
     pub key: RuleHealthKey,
     pub sequence: u64,
+    pub manifest_hash: String,
+    pub engine_hash: String,
     pub observed_at_unix_ms: i64,
     pub expires_at_unix_ms: i64,
     pub signal: RuleHealthSignal,
@@ -99,6 +101,9 @@ pub struct RuleHealthRecord {
     pub updated_at_unix_ms: i64,
     pub consecutive_recovery_passes: u32,
     pub consecutive_operational_failures: u32,
+    pub last_manifest_hash: Option<String>,
+    pub last_engine_hash: Option<String>,
+    pub last_evidence_expires_at_unix_ms: Option<i64>,
     pub last_evidence_ids: Vec<String>,
 }
 
@@ -110,7 +115,10 @@ pub struct RuleHealthTransition {
     pub from: RuleHealth,
     pub to: RuleHealth,
     pub changed: bool,
+    pub manifest_hash: String,
+    pub engine_hash: String,
     pub observed_at_unix_ms: i64,
+    pub evidence_expires_at_unix_ms: i64,
     pub evidence_ids: Vec<String>,
 }
 
@@ -155,6 +163,9 @@ impl RuleHealthRecord {
             updated_at_unix_ms: initialized_at_unix_ms,
             consecutive_recovery_passes: 0,
             consecutive_operational_failures: 0,
+            last_manifest_hash: None,
+            last_engine_hash: None,
+            last_evidence_expires_at_unix_ms: None,
             last_evidence_ids: Vec::new(),
         })
     }
@@ -179,6 +190,9 @@ impl RuleHealthRecord {
         {
             return Err(RuleHealthError::InvalidSequence);
         }
+        if !valid_sha256(&event.manifest_hash) || !valid_sha256(&event.engine_hash) {
+            return Err(RuleHealthError::InvalidEvidenceId);
+        }
         if event.observed_at_unix_ms < self.updated_at_unix_ms
             || event.observed_at_unix_ms > applied_at_unix_ms
             || event.expires_at_unix_ms <= applied_at_unix_ms
@@ -198,6 +212,9 @@ impl RuleHealthRecord {
         let mut next = self.clone();
         next.sequence = event.sequence;
         next.updated_at_unix_ms = event.observed_at_unix_ms;
+        next.last_manifest_hash = Some(event.manifest_hash.clone());
+        next.last_engine_hash = Some(event.engine_hash.clone());
+        next.last_evidence_expires_at_unix_ms = Some(event.expires_at_unix_ms);
         next.last_evidence_ids.clone_from(&evidence_ids);
 
         match event.signal {
@@ -268,7 +285,10 @@ impl RuleHealthRecord {
             from,
             to: next.state,
             changed,
+            manifest_hash: event.manifest_hash.clone(),
+            engine_hash: event.engine_hash.clone(),
             observed_at_unix_ms: event.observed_at_unix_ms,
+            evidence_expires_at_unix_ms: event.expires_at_unix_ms,
             evidence_ids,
         };
         Ok((next, transition))
@@ -278,11 +298,26 @@ impl RuleHealthRecord {
         validate_policy(policy)?;
         validate_key(&self.key)?;
         let valid_initial_shape = self.last_evidence_ids.is_empty()
+            && self.last_manifest_hash.is_none()
+            && self.last_engine_hash.is_none()
+            && self.last_evidence_expires_at_unix_ms.is_none()
             && self.state == RuleHealth::Quarantined
             && self.entered_at_unix_ms == self.updated_at_unix_ms;
         if self.entered_at_unix_ms > self.updated_at_unix_ms
             || (self.sequence == 0 && !valid_initial_shape)
             || (self.sequence > 0 && self.last_evidence_ids.is_empty())
+            || (self.sequence > 0
+                && (self
+                    .last_manifest_hash
+                    .as_deref()
+                    .is_none_or(|hash| !valid_sha256(hash))
+                    || self
+                        .last_engine_hash
+                        .as_deref()
+                        .is_none_or(|hash| !valid_sha256(hash))
+                    || self
+                        .last_evidence_expires_at_unix_ms
+                        .is_none_or(|expires_at| expires_at <= self.updated_at_unix_ms)))
             || self.last_evidence_ids.len() > 2
             || (self.last_evidence_ids.len() == 2
                 && self.last_evidence_ids[0] == self.last_evidence_ids[1])
@@ -372,6 +407,8 @@ mod tests {
     use super::*;
 
     const RULE_HASH: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const MANIFEST_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ENGINE_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const FAILURE_ID: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 
     fn key(region: &str) -> RuleHealthKey {
@@ -391,6 +428,8 @@ mod tests {
         RuleHealthEvent {
             key,
             sequence,
+            manifest_hash: MANIFEST_HASH.to_owned(),
+            engine_hash: ENGINE_HASH.to_owned(),
             observed_at_unix_ms: at,
             expires_at_unix_ms: at + 60_000,
             signal,
@@ -445,7 +484,11 @@ mod tests {
             .unwrap();
         assert_eq!(healthy.state, RuleHealth::Healthy);
         assert_eq!(healthy.consecutive_recovery_passes, 0);
+        assert_eq!(healthy.last_manifest_hash.as_deref(), Some(MANIFEST_HASH));
+        assert_eq!(healthy.last_engine_hash.as_deref(), Some(ENGINE_HASH));
+        assert_eq!(healthy.last_evidence_expires_at_unix_ms, Some(63_000));
         assert_eq!(second.to, RuleHealth::Healthy);
+        assert_eq!(second.evidence_expires_at_unix_ms, 63_000);
     }
 
     #[test]
@@ -614,6 +657,9 @@ mod tests {
             updated_at_unix_ms: 1_000,
             consecutive_recovery_passes: 1,
             consecutive_operational_failures: 0,
+            last_manifest_hash: None,
+            last_engine_hash: None,
+            last_evidence_expires_at_unix_ms: None,
             last_evidence_ids: Vec::new(),
         };
         assert_eq!(
@@ -627,6 +673,22 @@ mod tests {
                     RuleHealthPolicy::default(),
                     2_001,
                 )
+                .unwrap_err(),
+            RuleHealthError::InvalidRecord
+        );
+
+        let initial = RuleHealthRecord::quarantined(key("region-a"), 1_000).unwrap();
+        let (mut invalid_expiry, _) = initial
+            .apply_at(
+                &pass(key("region-a"), 1, 2_000),
+                RuleHealthPolicy::default(),
+                2_001,
+            )
+            .unwrap();
+        invalid_expiry.last_evidence_expires_at_unix_ms = Some(invalid_expiry.updated_at_unix_ms);
+        assert_eq!(
+            invalid_expiry
+                .validate(RuleHealthPolicy::default())
                 .unwrap_err(),
             RuleHealthError::InvalidRecord
         );

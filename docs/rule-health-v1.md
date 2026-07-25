@@ -68,14 +68,17 @@ Each event carries:
 
 - the exact regional key;
 - the next contiguous sequence number;
+- the manifest and executing-engine hashes admitted with the evidence;
 - observation and evidence-expiry timestamps;
 - one content identity for failure evidence, or distinct aggregate and shadow
   identities for acceptance.
 
-The pure state machine rejects mismatched keys, skipped or replayed sequences,
-out-of-order/future/expired evidence, malformed evidence IDs, and invalid
-persisted counters. A persisted record can therefore be validated before an
-operator applies its next event.
+The record retains the latest admitted manifest and engine hashes, evidence
+identities, and evidence expiry. The pure state machine rejects mismatched keys,
+skipped or replayed sequences, out-of-order/future/expired evidence, malformed
+evidence IDs, and invalid persisted counters. A persisted record can therefore
+be validated before an operator applies its next event, and a later promotion
+gate can reject stale or version-mismatched health.
 
 The operator command revalidates source reports and shadow evidence, rebuilds
 the aggregate, validates an optional current record, and emits the next record
