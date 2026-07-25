@@ -91,6 +91,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   candidate regression checks against a last-known-good rule.
 - [Regional Rule Health v1](rule-health-v1.md) — evidence-driven regional
   health, quarantine, recovery, replay rejection, and notification separation.
+- [Signed Rule Promotion v1](rule-promotion-v1.md) — accepted regional evidence,
+  Ed25519 trust policy, activation replay protection, and retained rollback.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

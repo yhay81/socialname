@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: bind accepted evidence, rule-pack hash, region policy,
-and expiry into a signed promotion artifact with last-known-good rollback.
+Next executable item: add manual and scheduled canary workflow templates with
+strict concurrency, request, time, and byte budgets.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -83,12 +83,12 @@ disabled.
 - [x] Add shadow comparison between candidate and last-known-good rules.
 - [x] Add rule-health states and safe `healthy -> degraded -> quarantined ->
       recovering` transitions.
-- [ ] Bind an accepted report, rule-pack hash, region policy, and expiry into a
+- [x] Bind an accepted report, rule-pack hash, region policy, and expiry into a
       signed promotion artifact; verify it before activation and retain a
       last-known-good rollback path.
-- [ ] Ensure only an acceptance report can promote a discovery rule, and that a
+- [x] Ensure only an acceptance report can promote a discovery rule, and that a
       failing report cannot produce an account-state notification.
-- [ ] Add deterministic tests for healthy, blocked, drifting, partial-region,
+- [x] Add deterministic tests for healthy, blocked, drifting, partial-region,
       rollback, and report-tampering cases.
 - [ ] Add manual and scheduled canary workflow templates with strict
       concurrency, request, time, and byte budgets.
@@ -205,6 +205,27 @@ operational failures move `healthy -> degraded -> quarantined`; classification
 failure quarantines immediately. Only healthy permits definitive assertions,
 and every health transition is structurally ineligible for an account-state
 notification.
+
+Promotion-slice evidence:
+
+```console
+cargo test --locked --workspace --all-targets
+# socialname-canary: 45 passed, including strict Ed25519 verification,
+# non-healthy/partial/stale evidence rejection, regional drift and recovery,
+# pack/predecessor mismatch, replay rejection, retained LKG, and rollback
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- canaries promote --help
+cargo run --locked -p socialname-cli -- canaries verify-promotion --help
+```
+
+`socialname.dev/rule-promotion/v1` binds exact accepted regional health,
+candidate and pack hashes, manifest and engine identities, predecessor,
+sequence, and at-most-24-hour expiry under a domain-separated Ed25519
+signature. Verification pins a purpose-specific trust policy before
+activation. Activation recompiles the real pack, retains the complete prior
+validated pack, and preserves its sequence high-water mark across explicit
+rollback. No production key or artifact was fabricated; all representative
+rules remain discovery-only.
 
 Software acceptance gate:
 

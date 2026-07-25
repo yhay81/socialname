@@ -44,6 +44,13 @@ so status does not diverge across design records.
   are required for recovery, two consecutive operational failures quarantine,
   and any classification failure quarantines immediately. Health transitions
   never authorize account-state notifications.
+- Rule promotion is a domain-separated Ed25519 statement over one exact
+  candidate, canonical rule pack, previous pack, manifest, engine, required
+  region set, accepted evidence identities, and at-most-24-hour expiry.
+  Activation revalidates the real pack, enforces a monotonic sequence and exact
+  predecessor, and retains the complete prior validated pack for explicit
+  rollback without lowering the anti-replay high-water mark. Trust policy maps
+  key IDs to public keys so rotation can overlap deliberately.
 
 ## Detailed records
 
@@ -56,6 +63,7 @@ so status does not diverge across design records.
 - [Ultimate goal](ultimate-goal.md)
 - [Execution roadmap](../ROADMAP.md)
 - [Regional rule health](rule-health-v1.md)
+- [Signed rule promotion](rule-promotion-v1.md)
 
 ## Implementation baseline
 
@@ -69,6 +77,7 @@ so status does not diverge across design records.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
 
-The next work is Milestone 1 in `ROADMAP.md`: live-canary and rule-health
-software followed by the local SQLite cache and source-selection policy. The
-first paid monitoring loop follows as Milestone 2.
+The next work is Milestone 1 in `ROADMAP.md`: bounded manual and scheduled
+canary workflow templates, followed by the local SQLite cache and
+source-selection policy. The first paid monitoring loop follows as Milestone
+2.
