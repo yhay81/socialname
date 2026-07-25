@@ -56,9 +56,9 @@ Keys contain a nonempty, duplicate-free subset of at most 16 values from:
 - `data:export`, `data:delete`
 
 Migration `0002_api_key_authentication.sql` enforces the same closed set and
-rejects null or duplicate array entries. Only `workspace:read` has an HTTP
-consumer in this slice. Possessing another scope does not create a route ahead
-of its roadmap item.
+rejects null or duplicate array entries. `workspace:read`, `search:read`, and
+`search:write` now have exact HTTP consumers. Possessing any later scope does
+not create a route ahead of its roadmap item.
 
 ## Operator lifecycle
 
@@ -130,7 +130,9 @@ GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
 
 It must not receive `SELECT` on `api_key_credentials`, membership mutation,
 schema creation, or migration rights. The integration test creates this exact
-kind of login and proves that the credential table remains unreadable.
+kind of login and proves that the credential table remains unreadable. The
+additional column-limited grants for private search are specified in
+[Private search API and ordered event stream](search-api.md).
 
 ## Authentication and RLS flow
 
@@ -187,7 +189,7 @@ bounded database probe shorter than the outer request deadline and returns
 
 The PostgreSQL 18 integration gate covers:
 
-- replay-safe migrations and 30 product tables;
+- replay-safe migrations, 31 product tables, and 26 forced-RLS policies;
 - credential-table and definer-function `PUBLIC` privilege revocation;
 - a real `LOGIN NOSUPERUSER NOBYPASSRLS` runtime role;
 - transaction-local tenant separation for two valid keys;

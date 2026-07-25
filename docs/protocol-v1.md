@@ -38,8 +38,9 @@ confirmation, or delivery state.
 Opaque resource and event IDs accept 1-128 ASCII letters, digits, hyphens, or
 underscores. Site IDs, coarse region classes, SHA-256 rule/evidence digests,
 HTTPS URLs, email destinations, and usernames use their own bounded types and
-validate during deserialization. An `IdempotencyKey` type is available for the
-future `POST /v1/searches` header boundary.
+validate during deserialization. `IdempotencyKey` is the strict redacted value
+accepted by the implemented `POST /v1/searches` header boundary; it is not a
+body or resource field.
 
 Usernames, profile/webhook URLs, and email addresses serialize for their named
 API purpose but use redacted `Debug` implementations. Idempotency keys are also
@@ -91,9 +92,9 @@ validation rejects relabelling.
 `WorkspaceResource` is the response contract for `GET /v1/workspace`. It
 contains the workspace's opaque ID, bounded slug/display name, state, and one
 `AuthenticatedApiKeyResource`. API-key scopes are a closed enum covering
-workspace read and the planned search, watch, notification, export, and
-deletion capabilities. The resource rejects empty or duplicate scope sets and
-invalid public prefixes.
+workspace read, implemented search read/write, and the planned watch,
+notification, export, and deletion capabilities. The resource rejects empty or
+duplicate scope sets and invalid public prefixes.
 
 This DTO represents an already authenticated principal; it does not parse a
 bearer token or grant access. The server separately verifies the token digest,
@@ -106,6 +107,13 @@ does not create that capability.
 `SearchEvent` carries an opaque event ID, search ID, strictly positive sequence,
 emission time, and one tagged payload. This supports SSE resumption and
 database-backed replay without making transport ordering implicit.
+
+The managed endpoint emits each complete JSON object as a named `search_event`,
+uses the event ID as the SSE `id`, and accepts that UUID through
+`Last-Event-ID`. Transport `stream_error` frames contain `ApiErrorResponse` and
+have no persisted ID; they are not `SearchEvent` or a target outcome. The exact
+idempotency, consent, cancellation, and bounded reconnect behavior is specified
+in [Private search API and ordered event stream](search-api.md).
 
 The result variants deliberately remain separate:
 
@@ -198,5 +206,6 @@ field rejection, redaction, selection and execution bounds, consent relations,
 freshness relabelling, result/failure separation, progress consistency, watch
 revision and schedule rules, transition confirmation, shared-only absence,
 write-only notification destinations, delivery state consistency, bounded
-workspace metadata, closed unique API-key scopes, and absence of key
-secret/digest fields.
+workspace metadata, closed unique API-key scopes, absence of key secret/digest
+fields, exact accepted private-search resources, and Cartesian target/progress
+consistency.

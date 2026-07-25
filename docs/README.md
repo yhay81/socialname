@@ -72,7 +72,8 @@ The first vertical slice is implemented in the repository:
 - an operable Axum/Tower modular monolith with loopback-safe defaults, bounded
   requests, database-aware readiness, closed errors, redacted tracing,
   transactional workspace/API-key operator lifecycle, digest-only bearer
-  authentication, forced tenant RLS, and one protected workspace route;
+  authentication, forced tenant RLS, consented idempotent private searches,
+  polling/cancellation, and bounded resumable PostgreSQL-backed SSE;
 - a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache and
   cached-first sources, immutable observation persistence, source-preserving
   refresh streaming, freshness display, cancellation, and explicit
@@ -120,6 +121,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Authenticated private workspaces and API keys](authenticated-workspaces.md)
   — one-time key lifecycle, digest-only authentication, non-owner RLS,
   database-aware readiness, and the first protected route.
+- [Private search API and ordered event stream](search-api.md) — consented
+  idempotent creation, polling/cancellation, append-only events, and bounded
+  resumable SSE without premature worker execution.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

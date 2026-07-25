@@ -2,7 +2,7 @@
 
 Status: **Active**
 
-Last reviewed: 2026-07-25
+Last reviewed: 2026-07-26
 
 Authority: `docs/ultimate-goal.md`
 
@@ -64,9 +64,9 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: implement idempotent private search creation and ordered
-SSE partial-result streaming behind `search:write`, without implementing worker
-execution ahead of its roadmap item.
+Next executable item: add `socialname-worker` with signed-rule-only execution
+and managed-probe SSRF/DNS-rebinding defenses, consuming accepted searches
+without weakening the now-persisted consent and event boundaries.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -462,7 +462,7 @@ derives a trustworthy transition, and delivers one auditable notification.
       searches, jobs, observations, assertion support, watches, transitions,
       notification endpoints, deliveries, consent, lineage, and deletion tasks.
 - [x] Add authenticated private workspaces and hashed, scoped API keys.
-- [ ] Implement idempotent search creation and SSE partial-result streaming.
+- [x] Implement idempotent search creation and SSE partial-result streaming.
 - [ ] Add `socialname-worker` with signed-rule-only execution and managed-probe
       SSRF/DNS-rebinding defenses.
 - [ ] Implement transactional PostgreSQL job claims, leases, retries, and
@@ -482,7 +482,7 @@ Protocol-slice evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-protocol
-# 24 unit tests and 4 public contract tests passed
+# 25 unit tests and 5 public contract tests passed
 cargo clippy --locked -p socialname-protocol --all-targets --all-features -- -D warnings
 ```
 
@@ -505,23 +505,25 @@ Server-runtime evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-server --all-targets
-# 20 library, 2 binary, and 1 PostgreSQL integration test passed
+# 23 library, 2 binary, and 1 PostgreSQL integration test passed
 cargo clippy --locked -p socialname-server --all-targets --all-features -- -D warnings
 cargo build --locked -p socialname-server
 ```
 
 `socialname-server` is an explicit Axum 0.8/Tower 0.5 binary with a
 loopback-only default. It exposes versioned liveness, PostgreSQL-aware
-readiness, and one authenticated `GET /v1/workspace`; search, watch,
-notification, and HTTP administration routes remain absent. Configuration
-bounds the handler deadline, declared/default body size, database acquisition,
-and in-flight work, and rejects invalid values without echoing them. One outer
+readiness, authenticated workspace/search resources, polling, cancellation,
+and bounded ordered SSE; worker, watch, notification, and HTTP administration
+routes remain absent. Configuration bounds the handler deadline,
+declared/default body size, database acquisition, ordinary in-flight work, and
+open SSE bodies, and rejects invalid values without echoing them. One outer
 request guard supplies a closed request ID, protocol JSON errors, no-store and
-nosniff response headers, and method/status/latency-only tracing that never logs
-the URI, headers, body, target, credential, or database URL. Unknown routes,
-unsupported methods, body overflow, invalid content length, authentication
-failure, storage failure, and deadlines cannot become account verdicts. The
-binary drains through injected graceful shutdown, Ctrl-C, and Unix SIGTERM.
+nosniff response headers, and method/status/latency-only tracing that never
+logs the URI, headers, body, target, credential, or database URL. Unknown
+routes, unsupported methods, body overflow, invalid content length,
+authentication/consent failure, storage failure, and deadlines cannot become
+account verdicts. The binary drains through injected graceful shutdown,
+Ctrl-C, and Unix SIGTERM.
 
 PostgreSQL-schema evidence:
 
@@ -529,7 +531,7 @@ PostgreSQL-schema evidence:
 cargo fmt --all -- --check
 cargo run --locked -p socialname-server -- migrate
 cargo test --locked --workspace --all-targets
-# socialname-server: 20 library, 2 binary, and 1 PostgreSQL integration test passed
+# socialname-server: 23 library, 2 binary, and 1 PostgreSQL integration test passed
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-cli -- rules validate
 # validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
@@ -543,7 +545,7 @@ npm run check
 npm run build
 ```
 
-The two embedded SQLx migrations create 30 bounded product tables and 25
+The three embedded SQLx migrations create 31 bounded product tables and 26
 tenant-isolation policies with forced RLS. Composite tenant foreign keys,
 immutable observation and support history, closed observation outcomes,
 transition-specific confirmation bases, exact confirmed-delivery checks,
@@ -554,7 +556,7 @@ database URL, uses one connection with connection/migration deadlines, and
 returns fixed errors without reflecting credentials.
 
 The CI core job runs both the operator command and an integration test against
-`postgres:18-alpine`. The test reapplies both migrations, inventories all
+`postgres:18-alpine`. The test reapplies all three migrations, inventories all
 tables and forced-RLS policies, uses a real non-owner `NOBYPASSRLS` role to
 prove tenant isolation, rejects cross-tenant references and observation
 mutation, suppresses shared-only absence delivery, accepts an independently
@@ -566,7 +568,7 @@ Authenticated-workspace evidence:
 cargo fmt --all -- --check
 cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-protocol -p socialname-server --all-targets
-# protocol: 24 unit + 4 contract; server: 20 library + 2 binary + 1 PostgreSQL
+# protocol: 25 unit + 5 contract; server: 23 library + 2 binary + 1 PostgreSQL
 cargo clippy --locked -p socialname-protocol -p socialname-server --all-targets --all-features -- -D warnings
 ```
 
@@ -586,7 +588,43 @@ under transaction-local forced RLS. The PostgreSQL 18 test proves two-tenant
 isolation, wrong/revoked/expired uniform denial, distinct insufficient-scope
 denial, digest-only persistence, privilege revocation, last-use recording, and
 readiness degradation. `GET /v1/workspace` returns validated nonsecret
-workspace/key metadata; all later private routes remain closed.
+workspace/key metadata; later non-search private routes remain closed.
+
+Private-search/SSE evidence:
+
+```console
+cargo fmt --all -- --check
+cargo run --locked -p socialname-server -- migrate
+cargo test --locked -p socialname-protocol -p socialname-server --all-targets
+# PostgreSQL 18 covers REST creation/poll/cancel and three ordered SSE events
+cargo clippy --locked -p socialname-protocol -p socialname-server --all-targets --all-features -- -D warnings
+```
+
+`POST /v1/searches` requires `search:write`, one redacted idempotency key,
+`remote`/`hybrid`, and an active account consent grant with the exact
+`private_history` or `shared_observation` purpose. The server rejects
+`sync=never` because posting the target already leaves the device. It stores
+only the tenant-scoped idempotency digest; concurrent/exact replay returns the
+original search and changed content conflicts. Requested usernames remain
+distinct from nullable, later site-normalized values.
+
+Creation atomically persists search policy, stable Cartesian targets, and a
+validated `started` event. `GET` polls a validated resource, while idempotent
+`DELETE` cancellation appends one terminal event without pretending to erase
+governed data. Append-only `search_events` enforce tenant/search sequence,
+event JSON identity, target-bound result uniqueness, at most one started and
+finished event, and a 128 KiB payload limit; public terminal reads require the
+finished event.
+
+The SSE endpoint orders by persisted sequence, resumes strictly after a
+same-tenant/search `Last-Event-ID`, rechecks key state and `search:read` during
+polling, distinguishes transport `stream_error` from target outcomes, and
+bounds batch, polling, lifetime, keep-alive, and connection count. The
+PostgreSQL 18 test proves exact/conflicting replay, scope and consent denial,
+target-free errors, two-tenant isolation, digest-only storage, ordered partial
+and terminal replay, resume, append-only rejection, cancellation uniqueness,
+column-limited privileges, and connection-cap recovery. This slice performs no
+probe; accepted searches remain quarantined for the signed worker gate.
 
 Software acceptance gate:
 
@@ -751,3 +789,7 @@ Choose these only when their trigger is measured:
   policy, strict no-network cache execution, promoted-plus-fresh-health gates,
   optional local observation persistence, verdict-specific TTLs, and
   source/freshness-aware human and JSON output.
+- **2026-07-26:** Added consent-bound idempotent managed-search persistence,
+  ordered resumable SSE with mid-stream authorization checks, least-privilege
+  PostgreSQL event storage, and repeatable PostgreSQL 18 boundary tests; kept
+  probing quarantined behind the signed-worker gate.

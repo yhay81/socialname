@@ -2,10 +2,11 @@
 
 `socialname-server` is the operable Axum/Tower process boundary for the managed
 SocialName product. It embeds forward-only PostgreSQL migrations, provides
-explicit workspace/API-key operator commands, and exposes one authenticated
-private workspace read. Search, watch, notification, and other product routes
-remain closed until their ordered roadmap slices add authorization, storage
-use, lineage, and failure behavior end to end.
+explicit workspace/API-key operator commands, exposes authenticated private
+workspace/search resources, and provides ordered SSE replay. Worker execution,
+watch, notification, and other product routes remain closed until their ordered
+roadmap slices add authorization, storage use, lineage, and failure behavior
+end to end.
 
 The server depends on `socialname-protocol`; it does not make the protocol,
 domain, or engine depend on HTTP or persistence.
@@ -66,6 +67,10 @@ The server exposes:
 GET /health/live
 GET /health/ready
 GET /v1/workspace
+POST /v1/searches
+GET /v1/searches/{search_id}
+GET /v1/searches/{search_id}/events
+DELETE /v1/searches/{search_id}
 ```
 
 The two health endpoints return a small `socialname.dev/api/v1` JSON document
@@ -82,11 +87,19 @@ unknown, malformed, revoked, and expired credentials are uniformly
 `unauthenticated`; insufficient scope is `forbidden`; database failure is
 `unavailable`.
 
+The search endpoints require `search:write` for idempotent creation and
+cancellation or `search:read` for polling and SSE. They require an active
+purpose-specific consent grant, keep cross-tenant IDs indistinguishable from
+missing resources, and never start a network probe in the API process.
+PostgreSQL-backed events provide ordered `Last-Event-ID` replay. SSE bodies,
+polling windows, batches, keep-alives, and open connection count are bounded.
+The complete contract is in
+[Private search API and ordered event stream](search-api.md).
+
 Every other path returns a protocol `not_found` response. Unsupported methods
-return a protocol `invalid_request` response. In particular, `/v1/searches`,
-watches, notification endpoints, and HTTP key-administration routes do not
-exist yet, so authentication cannot accidentally make later product
-capabilities available.
+return a protocol `invalid_request` response. Watches, notification endpoints,
+worker control, and HTTP key-administration routes do not exist yet, so
+authentication cannot accidentally make later product capabilities available.
 
 ## Request boundary
 
@@ -145,9 +158,10 @@ cargo run --locked -p socialname-server -- migrate
 The deterministic tests cover default and explicit configuration, secret-free
 configuration errors, every resource bound, hardened/versioned health,
 request-ID regeneration, closed 404/405 errors, typed content-length rejection,
-deadline failure, absence of an unauthenticated `/v1/searches` route, API-key
-parsing/redaction, operator configuration, and graceful shutdown. PostgreSQL CI
-additionally covers migration replay, schema inventory, forced RLS, non-owner
-authentication, workspace isolation, key expiry/revocation/scope, readiness,
-operator lifecycle, evidence immutability, notification safety, and deletion
-lineage.
+deadline failure, closed unimplemented routes, API-key parsing/redaction,
+managed-search validation/header parsing, operator configuration, and graceful
+shutdown. PostgreSQL CI additionally covers migration replay, schema inventory,
+forced RLS, non-owner authentication, workspace/search isolation, key
+expiry/revocation/scope, consent, exact/conflicting idempotency, ordered SSE
+replay, bounded stream capacity, cancellation, readiness, operator lifecycle,
+evidence/event immutability, notification safety, and deletion lineage.

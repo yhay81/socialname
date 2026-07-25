@@ -277,8 +277,9 @@ Initial PostgreSQL tables:
 | `rule_versions` | Per-site compiled rule revisions |
 | `rule_health_records` | Region-specific health and quarantine history |
 | `consent_grants`, `consent_events` | Purpose-specific consent and immutable history |
-| `searches` | User/API search requests and policy |
-| `search_targets` | Expanded username/site work |
+| `searches` | User/API search requests, policy, and idempotency digest |
+| `search_targets` | Stable requested target order and later site-specific normalization |
+| `search_events` | Append-only ordered REST/SSE replay records |
 | `probe_jobs` | Managed execution queue |
 | `probe_job_consumers` | Search/watch consumers of equivalent work |
 | `observations` | Append-only probe results |
@@ -340,9 +341,19 @@ GET  /v1/searches/{search_id}/events
 DELETE /v1/searches/{search_id}
 ```
 
-`POST` accepts an idempotency key and returns immediately. The events endpoint
-uses Server-Sent Events for partial results and state changes. Polling remains
-available for simple clients.
+`POST` requires a tenant-scoped idempotency key and purpose-specific consent,
+persists the exact request/targets plus a `started` event transactionally, and
+returns immediately. Exact replay returns the original search; different
+content under the same key conflicts. Because posting a target already moves it
+off-device, the managed route rejects `sync=never` and accepts only
+`remote`/`hybrid`.
+
+The events endpoint replays append-only PostgreSQL events by explicit sequence,
+uses the SSE event UUID for `Last-Event-ID` resumption, rechecks authorization
+while connected, and bounds each connection. Polling remains available for
+simple clients. `DELETE` is idempotent cancellation and writes one terminal
+event; erasure is a separate governed workflow. See
+[Private search API and ordered event stream](search-api.md).
 
 ### Observation synchronization
 

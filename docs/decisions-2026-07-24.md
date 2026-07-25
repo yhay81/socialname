@@ -97,7 +97,7 @@ so status does not diverge across design records.
   The cache phase is emitted before the local executor starts; cancellation
   after that phase retains cached evidence and prevents the local call. The CLI
   rejects `hybrid` until it has a versioned ordered-event output contract.
-- Public API v1 is an independent, closed `snake_case` wire contract in
+- Public API v1 is an independent, closed wire contract in
   `socialname-protocol`, not direct serialization of mutable domain or app-core
   types. Ordered search events structurally separate definitive observations,
   uncertainty, and operational failure. Cross-field validation binds freshness,
@@ -116,6 +116,14 @@ so status does not diverge across design records.
   forced transaction-local RLS. Operator-only bootstrap, issue, and revoke
   operations are transactional and audited; the one-time secret is never a
   protocol resource or normal log value.
+- Managed search creation rejects `sync=never`, requires `remote`/`hybrid` and
+  an active purpose-specific account consent bound to the API-key membership,
+  and hashes the tenant-scoped idempotency key. Exact replay returns the
+  original search; changed content conflicts. Search events are append-only
+  tenant-RLS records with an explicit per-search sequence and target relation.
+  SSE uses event UUIDs for bounded `Last-Event-ID` replay and rechecks
+  authorization while connected. The API creates/cancels work but cannot probe
+  before the signed worker gate.
 
 ## Detailed records
 
@@ -134,6 +142,7 @@ so status does not diverge across design records.
 - [Modular-monolith server shell](server.md)
 - [PostgreSQL schema and migrations](postgresql-schema.md)
 - [Authenticated private workspaces and API keys](authenticated-workspaces.md)
+- [Private search API and ordered event stream](search-api.md)
 
 ## Implementation baseline
 
@@ -154,8 +163,11 @@ so status does not diverge across design records.
 10. **Done:** Add transactional workspace/API-key operator lifecycle,
     digest-only credential authentication, a non-owner forced-RLS runtime
     boundary, database-aware readiness, and the first private workspace route.
+11. **Done:** Add consented idempotent private-search creation, polling,
+    cancellation, append-only ordered event persistence, and bounded resumable
+    SSE without enabling managed probe execution.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
 work is the first paid monitoring loop in Milestone 2, continuing with
-idempotent search creation and ordered SSE partial-result streaming.
+the signed-rule-only managed worker and its SSRF/DNS-rebinding boundary.
