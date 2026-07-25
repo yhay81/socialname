@@ -10,6 +10,7 @@ members = [
     "crates/socialname-protocol",
     "crates/socialname-rule-compiler",
     "crates/socialname-rule-schema",
+    "crates/socialname-server",
     "crates/socialname-testkit",
 ]
 resolver = "3"
@@ -24,6 +25,7 @@ repository = "https://github.com/yhay81/socialname"
 
 [workspace.dependencies]
 anyhow = "1.0.100"
+axum = "0.8.9"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4.6.4", features = ["derive"] }
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["fast", "zeroize"] }
@@ -63,6 +65,7 @@ tokio = { version = "1.53.1", features = [
     "time",
 ] }
 tokio-util = { version = "0.7.19", features = ["rt"] }
+tower = { version = "0.5.3", features = ["limit", "util"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
 url = { version = "2.5.8", features = ["serde"] }

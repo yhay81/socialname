@@ -1,0 +1,25 @@
+[package]
+name = "socialname-server"
+description = "Axum and Tower modular-monolith server for SocialName"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+axum.workspace = true
+serde.workspace = true
+socialname-protocol = { path = "../socialname-protocol" }
+thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
