@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod source_policy;
+
 use std::{collections::BTreeSet, sync::Arc};
 
 use futures_util::{StreamExt, stream};
@@ -9,6 +11,11 @@ use socialname_engine::{MatcherTrace, ProbeSummary, SearchEngine, SearchResult};
 use socialname_rule_compiler::{CompiledSiteRule, RuleCompiler};
 use socialname_rule_schema::AccountNamespace;
 use tokio_util::sync::CancellationToken;
+
+pub use source_policy::{
+    DEFAULT_MAXIMUM_AGE_MS, DEFAULT_REGION_CLASS, RefreshState, SearchPolicy, SearchRuleHealth,
+    SearchSource, SearchStatus, SyncPolicy,
+};
 
 const MAX_SELECTED_SITES: usize = 64;
 const MAX_USERNAME_BYTES: usize = 256;

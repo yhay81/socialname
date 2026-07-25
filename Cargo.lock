@@ -3888,6 +3888,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "socialname-app-core",
  "socialname-cache",
  "socialname-canary",
  "socialname-domain",

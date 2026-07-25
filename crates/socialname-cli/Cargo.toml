@@ -19,6 +19,7 @@ clap.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+socialname-app-core = { path = "../socialname-app-core" }
 socialname-canary = { path = "../socialname-canary" }
 socialname-cache = { path = "../socialname-cache" }
 socialname-domain = { path = "../socialname-domain" }

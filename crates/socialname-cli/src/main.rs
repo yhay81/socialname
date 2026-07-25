@@ -282,10 +282,10 @@ struct SearchArgs {
     #[arg(long, default_value = "rules/sites")]
     rules_dir: PathBuf,
     /// Select live local probing or strictly offline cache lookup.
-    #[arg(long, value_enum, default_value_t = SearchSource::Local)]
+    #[arg(long, default_value_t = SearchSource::Local)]
     source: SearchSource,
     /// Synchronization is independent of source; only never is implemented.
-    #[arg(long, value_enum, default_value_t = SyncPolicy::Never)]
+    #[arg(long, default_value_t = SyncPolicy::Never)]
     sync: SyncPolicy,
     /// User-controlled SQLite cache path. Required by cache source.
     #[arg(long)]

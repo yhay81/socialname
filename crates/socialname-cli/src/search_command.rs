@@ -1,10 +1,10 @@
-use std::fmt;
-
 use anyhow::{Result, bail};
 use chrono::Utc;
-use clap::ValueEnum;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+pub use socialname_app_core::{
+    RefreshState, SearchPolicy, SearchRuleHealth, SearchSource, SearchStatus, SyncPolicy,
+};
 use socialname_cache::{CacheEligibilityQuery, CacheMetadata, CacheVerdictPolicy, LocalCache};
 use socialname_domain::{
     CollectionProfile, Observation, ObservationId, ProducerKind, ProducerReputation, RuleHealth,
@@ -16,90 +16,6 @@ use socialname_rule_compiler::{CompiledSiteRule, render_url_template};
 const FOUND_TTL_MS: i64 = 24 * 60 * 60 * 1_000;
 const NOT_FOUND_TTL_MS: i64 = 15 * 60 * 1_000;
 const INCONCLUSIVE_TTL_MS: i64 = 5 * 60 * 1_000;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ValueEnum)]
-#[serde(rename_all = "snake_case")]
-pub enum SearchSource {
-    Local,
-    Cache,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ValueEnum)]
-#[serde(rename_all = "snake_case")]
-pub enum SyncPolicy {
-    Never,
-}
-
-impl fmt::Display for SearchSource {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Local => "local",
-            Self::Cache => "cache",
-        })
-    }
-}
-
-impl fmt::Display for SyncPolicy {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("never")
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SearchPolicy {
-    pub source: SearchSource,
-    pub sync: SyncPolicy,
-    pub region_class: String,
-    pub maximum_age_ms: i64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SearchRuleHealth {
-    pub state: RuleHealth,
-    pub evidence_expires_at_unix_ms: Option<i64>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SearchStatus {
-    Complete,
-    CacheMiss,
-    InvalidUsername,
-    RuleNotPromoted,
-    RuleHealthUnavailable,
-    RuleNotHealthy,
-    RuleHealthStale,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RefreshState {
-    Completed,
-    NotRequested,
-}
-
-impl fmt::Display for SearchStatus {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Complete => "complete",
-            Self::CacheMiss => "cache_miss",
-            Self::InvalidUsername => "invalid_username",
-            Self::RuleNotPromoted => "rule_not_promoted",
-            Self::RuleHealthUnavailable => "rule_health_unavailable",
-            Self::RuleNotHealthy => "rule_not_healthy",
-            Self::RuleHealthStale => "rule_health_stale",
-        })
-    }
-}
-
-impl fmt::Display for RefreshState {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Completed => "completed",
-            Self::NotRequested => "not_requested",
-        })
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CacheMetadataOutput {
@@ -392,15 +308,6 @@ async fn local_output(
     }
     output.live_result = Some(result);
     Ok(output)
-}
-
-impl SearchRuleHealth {
-    fn is_fresh_healthy_at(self, now_unix_ms: i64) -> bool {
-        self.state == RuleHealth::Healthy
-            && self
-                .evidence_expires_at_unix_ms
-                .is_some_and(|expires_at| expires_at > now_unix_ms)
-    }
 }
 
 fn base_output(
