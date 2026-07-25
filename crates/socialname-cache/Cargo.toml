@@ -15,8 +15,6 @@ serde_json.workspace = true
 socialname-domain = { path = "../socialname-domain" }
 sqlx.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
 tokio.workspace = true
 
 [lints]

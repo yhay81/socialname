@@ -1,6 +1,10 @@
 #![forbid(unsafe_code)]
 
-use std::{path::Path, str::FromStr, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
+};
 
 use sqlx::{
     SqlitePool,
@@ -10,11 +14,13 @@ use sqlx::{
 
 mod eligibility;
 mod export;
+mod lifecycle;
 mod maintenance;
 mod observation_store;
 
 pub use eligibility::{CacheEligibilityQuery, CacheVerdictPolicy, MAX_ELIGIBLE_OBSERVATIONS};
 pub use export::{CacheExportReport, LOCAL_CACHE_EXPORT_SCHEMA};
+pub use lifecycle::{CacheDeletionReport, RecoveredCache};
 pub use maintenance::{CacheMaintenancePolicy, CacheMaintenanceReport};
 pub use observation_store::{CacheMetadata, CachedObservation, StoreOutcome};
 
@@ -26,21 +32,19 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 #[derive(Clone, Debug)]
 pub struct LocalCache {
     pool: SqlitePool,
+    path: Option<PathBuf>,
 }
 
 impl LocalCache {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, CacheError> {
-        let path = path.as_ref();
-        if path.as_os_str().is_empty() {
-            return Err(CacheError::InvalidPath);
-        }
+        let path = resolve_cache_path(path.as_ref())?;
         let options = SqliteConnectOptions::new()
-            .filename(path)
+            .filename(&path)
             .create_if_missing(true)
             .foreign_keys(true)
             .synchronous(SqliteSynchronous::Full)
             .busy_timeout(Duration::from_secs(5));
-        Self::open_with_options(options, 4).await
+        Self::open_with_options(options, 4, Some(path)).await
     }
 
     pub async fn open_in_memory() -> Result<Self, CacheError> {
@@ -49,38 +53,55 @@ impl LocalCache {
             .foreign_keys(true)
             .synchronous(SqliteSynchronous::Full)
             .busy_timeout(Duration::from_secs(5));
-        Self::open_with_options(options, 1).await
+        Self::open_with_options(options, 1, None).await
     }
 
     async fn open_with_options(
         options: SqliteConnectOptions,
         maximum_connections: u32,
+        path: Option<PathBuf>,
     ) -> Result<Self, CacheError> {
         let pool = SqlitePoolOptions::new()
             .max_connections(maximum_connections)
             .connect_with(options)
             .await?;
+        let cache = Self { pool, path };
+        if let Err(error) = cache.initialize().await {
+            cache.pool.close().await;
+            return Err(error);
+        }
+        Ok(cache)
+    }
 
+    async fn initialize(&self) -> Result<(), CacheError> {
         let application_id: i64 = sqlx::query_scalar("PRAGMA application_id")
-            .fetch_one(&pool)
+            .fetch_one(&self.pool)
             .await?;
         if !matches!(application_id, 0 | CACHE_APPLICATION_ID) {
-            pool.close().await;
             return Err(CacheError::ForeignDatabase { application_id });
         }
         let has_migration_table: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = '_sqlx_migrations'",
         )
-        .fetch_one(&pool)
+        .fetch_one(&self.pool)
         .await?;
+        if application_id == 0 && has_migration_table == 0 {
+            let existing_schema_objects: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+            )
+            .fetch_one(&self.pool)
+            .await?;
+            if existing_schema_objects != 0 {
+                return Err(CacheError::UnrecognizedDatabase);
+            }
+        }
         if has_migration_table == 1 {
             let version: i64 = sqlx::query_scalar(
                 "SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success = TRUE",
             )
-            .fetch_one(&pool)
+            .fetch_one(&self.pool)
             .await?;
             if version > CURRENT_SCHEMA_VERSION {
-                pool.close().await;
                 return Err(CacheError::UnsupportedSchema {
                     found: version,
                     supported: CURRENT_SCHEMA_VERSION,
@@ -89,20 +110,17 @@ impl LocalCache {
         }
 
         let _: String = sqlx::query_scalar("PRAGMA journal_mode = WAL")
-            .fetch_one(&pool)
+            .fetch_one(&self.pool)
             .await?;
-        MIGRATOR.run(&pool).await?;
-        let cache = Self { pool };
-        let schema_version = cache.schema_version().await?;
+        MIGRATOR.run(&self.pool).await?;
+        let schema_version = self.schema_version().await?;
         if schema_version != CURRENT_SCHEMA_VERSION {
-            cache.pool.close().await;
             return Err(CacheError::UnsupportedSchema {
                 found: schema_version,
                 supported: CURRENT_SCHEMA_VERSION,
             });
         }
-        cache.check_integrity().await?;
-        Ok(cache)
+        self.check_integrity().await
     }
 
     pub async fn schema_version(&self) -> Result<i64, CacheError> {
@@ -115,10 +133,26 @@ impl LocalCache {
     }
 
     pub async fn check_integrity(&self) -> Result<(), CacheError> {
-        let result: String = sqlx::query_scalar("PRAGMA quick_check")
+        let result: String = sqlx::query_scalar("PRAGMA integrity_check")
             .fetch_one(&self.pool)
             .await?;
         if result != "ok" {
+            return Err(CacheError::IntegrityCheckFailed);
+        }
+        let foreign_key_violations: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")
+                .fetch_one(&self.pool)
+                .await?;
+        let observations_without_metadata: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM local_observations AS o
+             LEFT JOIN observation_cache_metadata AS m
+                 ON m.observation_id = o.observation_id
+             WHERE m.observation_id IS NULL",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if foreign_key_violations != 0 || observations_without_metadata != 0 {
             return Err(CacheError::IntegrityCheckFailed);
         }
         Ok(())
@@ -137,6 +171,8 @@ pub enum CacheError {
         "refusing to open a SQLite database owned by another application (id {application_id})"
     )]
     ForeignDatabase { application_id: i64 },
+    #[error("refusing to adopt a nonempty SQLite database without SocialName ownership")]
+    UnrecognizedDatabase,
     #[error("local cache schema {found} is not supported; expected {supported}")]
     UnsupportedSchema { found: i64, supported: i64 },
     #[error("local cache integrity check failed")]
@@ -163,10 +199,44 @@ pub enum CacheError {
     ExportSerialization(#[from] serde_json::Error),
     #[error("failed to remove an incomplete local cache export")]
     ExportCleanup(#[source] std::io::Error),
+    #[error("the requested cache recovery is not needed")]
+    RecoveryNotRequired,
+    #[error("the operation requires a file-backed local cache")]
+    FileBackedCacheRequired,
+    #[error("failed to quarantine the corrupt local cache")]
+    RecoveryQuarantine(#[source] std::io::Error),
+    #[error("failed to restore the original cache after recovery failed")]
+    RecoveryRollback(#[source] std::io::Error),
+    #[error("complete cache deletion stopped after removing {removed_files} files")]
+    DeletionIncomplete {
+        removed_files: usize,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("local cache database operation failed")]
     Database(#[from] sqlx::Error),
     #[error("local cache migration failed")]
     Migration(#[from] sqlx::migrate::MigrateError),
+}
+
+fn resolve_cache_path(path: &Path) -> Result<PathBuf, CacheError> {
+    if path.as_os_str().is_empty() {
+        return Err(CacheError::InvalidPath);
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    if absolute.exists() {
+        return Ok(std::fs::canonicalize(&absolute)?);
+    }
+    if let (Some(parent), Some(file_name)) = (absolute.parent(), absolute.file_name())
+        && parent.exists()
+    {
+        return Ok(std::fs::canonicalize(parent)?.join(file_name));
+    }
+    Ok(absolute)
 }
 
 #[cfg(test)]

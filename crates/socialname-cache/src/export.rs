@@ -294,7 +294,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_export_removes_only_its_new_partial_file() {
+    async fn invalid_cache_creates_no_partial_export() {
         let cache = LocalCache::open_in_memory().await.unwrap();
         let expected = observation("orphan", 1_000);
         cache.store_observation(&expected, 1_001).await.unwrap();
@@ -307,9 +307,7 @@ mod tests {
 
         assert!(matches!(
             cache.export_jsonl(export.path(), 3_000).await.unwrap_err(),
-            CacheError::InvalidStoredObservation {
-                field: "observation_cache_metadata"
-            }
+            CacheError::IntegrityCheckFailed
         ));
         assert!(!export.path().exists());
     }
