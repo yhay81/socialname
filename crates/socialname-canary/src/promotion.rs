@@ -418,6 +418,7 @@ fn bind_healthy_regions(
     request: &PromotionBuildRequest<'_>,
 ) -> Result<(String, String, BTreeMap<String, PromotionRegionEvidence>), PromotionError> {
     let mut regions = BTreeMap::new();
+    let mut shadow_evidence_ids = BTreeSet::new();
     let mut manifest_hash = None;
     let mut engine_hash = None;
 
@@ -467,6 +468,9 @@ fn bind_healthy_regions(
             aggregate_evidence_id: record.last_evidence_ids[0].clone(),
             shadow_evidence_id: record.last_evidence_ids[1].clone(),
         };
+        if !shadow_evidence_ids.insert(evidence.shadow_evidence_id.clone()) {
+            return Err(PromotionError::RegionPolicyMismatch);
+        }
         if regions
             .insert(record.key.region.clone(), evidence)
             .is_some()
@@ -630,7 +634,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use socialname_domain::{RuleHealthKey, SiteId};
+    use socialname_domain::{
+        RuleClassificationFailure, RuleHealthEvent, RuleHealthKey, RuleHealthSignal, SiteId,
+    };
 
     use super::*;
 
@@ -660,6 +666,11 @@ mod tests {
     }
 
     fn health(candidate: &CompiledSiteRule, region: &str, sequence: u64) -> RuleHealthRecord {
+        let region_marker = if region == "region-a" {
+            0x1_000_u64
+        } else {
+            0x2_000_u64
+        };
         RuleHealthRecord {
             key: RuleHealthKey {
                 site_id: SiteId::new("github"),
@@ -677,7 +688,7 @@ mod tests {
             last_evidence_expires_at_unix_ms: Some(EXPIRES_AT + 1_000),
             last_evidence_ids: vec![
                 format!("{:064x}", 0x100_u64 + sequence),
-                format!("{:064x}", 0x200_u64 + sequence),
+                format!("{:064x}", region_marker + sequence),
             ],
         }
     }
@@ -991,5 +1002,145 @@ mod tests {
                 .unwrap_err(),
             PromotionError::PreviousPackMismatch
         );
+    }
+
+    #[test]
+    fn multi_region_drift_blocks_promotion_until_recovery_and_rollback_stays_available() {
+        let key = signing_key();
+        let first_candidate = candidate("last known good");
+        let first_pack = pack(&first_candidate);
+        let first_envelope = build(&key, &first_candidate, &first_pack, None, 1);
+        let first = PromotionVerifier::new()
+            .validate_at(
+                &first_envelope,
+                &policy(&key, &first_candidate, &first_pack, None, 0),
+                ISSUED_AT + 1,
+            )
+            .unwrap();
+        let mut registry = PromotionActivationRegistry::new("github").unwrap();
+        registry
+            .activate(&first, &first_pack, &first_candidate, ISSUED_AT + 2)
+            .unwrap();
+
+        let next_candidate = candidate("candidate with measured update");
+        let next_pack = pack(&next_candidate);
+        let region_a = health(&next_candidate, "region-a", 2);
+        let region_b = health(&next_candidate, "region-b", 2);
+        let drift = RuleHealthEvent {
+            key: region_b.key.clone(),
+            sequence: 3,
+            manifest_hash: MANIFEST_HASH.to_owned(),
+            engine_hash: ENGINE_HASH.to_owned(),
+            observed_at_unix_ms: ISSUED_AT - 900,
+            expires_at_unix_ms: EXPIRES_AT + 1_000,
+            signal: RuleHealthSignal::ClassificationFailure {
+                evidence_id: "3".repeat(64),
+                failure: RuleClassificationFailure::VerdictRegression,
+            },
+        };
+        let (quarantined_b, transition) = region_b
+            .apply_at(
+                &drift,
+                RuleHealthPolicy::default(),
+                drift.observed_at_unix_ms + 1,
+            )
+            .unwrap();
+        assert_eq!(transition.to, RuleHealth::Quarantined);
+        assert_eq!(
+            PromotionBuilder::new()
+                .build(
+                    &key,
+                    PromotionBuildRequest {
+                        sequence: 2,
+                        candidate: &next_candidate,
+                        rule_pack: &next_pack,
+                        previous_rule_pack_hash: Some(&first_pack.content_hash),
+                        health_records: &[region_a.clone(), quarantined_b.clone()],
+                        required_regions: &regions(),
+                        issued_at_unix_ms: ISSUED_AT,
+                        expires_at_unix_ms: EXPIRES_AT,
+                    },
+                )
+                .unwrap_err(),
+            PromotionError::HealthNotAccepted
+        );
+
+        let first_recovery = RuleHealthEvent {
+            key: quarantined_b.key.clone(),
+            sequence: 4,
+            manifest_hash: MANIFEST_HASH.to_owned(),
+            engine_hash: ENGINE_HASH.to_owned(),
+            observed_at_unix_ms: ISSUED_AT - 800,
+            expires_at_unix_ms: EXPIRES_AT + 1_000,
+            signal: RuleHealthSignal::AcceptancePassed {
+                aggregate_evidence_id: "4".repeat(64),
+                shadow_evidence_id: "5".repeat(64),
+            },
+        };
+        let (recovering_b, _) = quarantined_b
+            .apply_at(
+                &first_recovery,
+                RuleHealthPolicy::default(),
+                first_recovery.observed_at_unix_ms + 1,
+            )
+            .unwrap();
+        let second_recovery = RuleHealthEvent {
+            key: recovering_b.key.clone(),
+            sequence: 5,
+            manifest_hash: MANIFEST_HASH.to_owned(),
+            engine_hash: ENGINE_HASH.to_owned(),
+            observed_at_unix_ms: ISSUED_AT - 700,
+            expires_at_unix_ms: EXPIRES_AT + 1_000,
+            signal: RuleHealthSignal::AcceptancePassed {
+                aggregate_evidence_id: "6".repeat(64),
+                shadow_evidence_id: "7".repeat(64),
+            },
+        };
+        let (healthy_b, _) = recovering_b
+            .apply_at(
+                &second_recovery,
+                RuleHealthPolicy::default(),
+                second_recovery.observed_at_unix_ms + 1,
+            )
+            .unwrap();
+        assert_eq!(healthy_b.state, RuleHealth::Healthy);
+
+        let next_envelope = PromotionBuilder::new()
+            .build(
+                &key,
+                PromotionBuildRequest {
+                    sequence: 2,
+                    candidate: &next_candidate,
+                    rule_pack: &next_pack,
+                    previous_rule_pack_hash: Some(&first_pack.content_hash),
+                    health_records: &[region_a, healthy_b],
+                    required_regions: &regions(),
+                    issued_at_unix_ms: ISSUED_AT,
+                    expires_at_unix_ms: EXPIRES_AT,
+                },
+            )
+            .unwrap();
+        let next = PromotionVerifier::new()
+            .validate_at(
+                &next_envelope,
+                &policy(
+                    &key,
+                    &next_candidate,
+                    &next_pack,
+                    Some(&first_pack.content_hash),
+                    1,
+                ),
+                ISSUED_AT + 3,
+            )
+            .unwrap();
+        registry
+            .activate(&next, &next_pack, &next_candidate, ISSUED_AT + 4)
+            .unwrap();
+        registry.rollback().unwrap();
+        assert_eq!(
+            registry.active().unwrap().rule_pack().content_hash,
+            first_pack.content_hash
+        );
+        assert_eq!(registry.highest_sequence(), 2);
     }
 }
