@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use chrono::Utc;
 use serde::Serialize;
-use socialname_app_core::local_observation_from_result;
+use socialname_app_core::{LocalObservationProducer, local_observation_from_result};
 pub use socialname_app_core::{
     RefreshState, SearchPolicy, SearchRuleHealth, SearchSource, SearchStatus, SyncPolicy,
 };
@@ -335,8 +335,14 @@ fn observation_from_result(
     observed_at_unix_ms: i64,
     rule_health_green: bool,
 ) -> Result<Option<Observation>> {
-    local_observation_from_result(result, region_class, observed_at_unix_ms, rule_health_green)
-        .map_err(Into::into)
+    local_observation_from_result(
+        result,
+        region_class,
+        observed_at_unix_ms,
+        rule_health_green,
+        LocalObservationProducer::Cli,
+    )
+    .map_err(Into::into)
 }
 
 #[cfg(test)]

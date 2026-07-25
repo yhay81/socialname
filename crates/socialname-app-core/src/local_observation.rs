@@ -11,11 +11,18 @@ const FOUND_TTL_MS: i64 = 24 * 60 * 60 * 1_000;
 const NOT_FOUND_TTL_MS: i64 = 15 * 60 * 1_000;
 const INCONCLUSIVE_TTL_MS: i64 = 5 * 60 * 1_000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalObservationProducer {
+    Cli,
+    Desktop,
+}
+
 pub fn local_observation_from_result(
     result: &SearchResult,
     region_class: &str,
     observed_at_unix_ms: i64,
     rule_health_green: bool,
+    producer: LocalObservationProducer,
 ) -> Result<Option<Observation>, AppCoreError> {
     let ttl_ms = match result.classification.verdict {
         Verdict::Found => FOUND_TTL_MS,
@@ -48,7 +55,10 @@ pub fn local_observation_from_result(
         region: region_class.to_owned(),
         network_group: "local-network".to_owned(),
         independence_group: "local-installation".to_owned(),
-        producer_kind: ProducerKind::LocalCli,
+        producer_kind: match producer {
+            LocalObservationProducer::Cli => ProducerKind::LocalCli,
+            LocalObservationProducer::Desktop => ProducerKind::LocalDesktop,
+        },
         producer_reputation: ProducerReputation::New,
         collection_profile: CollectionProfile::LocalOnly,
         rule_hash: result.rule_hash.clone(),
@@ -105,19 +115,36 @@ mod tests {
 
     #[test]
     fn verdict_ttls_remain_distinct() {
-        let found = local_observation_from_result(&result(Verdict::Found), "local", 1_000, true)
-            .unwrap()
-            .unwrap();
-        let not_found =
-            local_observation_from_result(&result(Verdict::NotFound), "local", 1_000, true)
-                .unwrap()
-                .unwrap();
-        let inconclusive =
-            local_observation_from_result(&result(Verdict::Inconclusive), "local", 1_000, false)
-                .unwrap()
-                .unwrap();
+        let found = local_observation_from_result(
+            &result(Verdict::Found),
+            "local",
+            1_000,
+            true,
+            LocalObservationProducer::Desktop,
+        )
+        .unwrap()
+        .unwrap();
+        let not_found = local_observation_from_result(
+            &result(Verdict::NotFound),
+            "local",
+            1_000,
+            true,
+            LocalObservationProducer::Desktop,
+        )
+        .unwrap()
+        .unwrap();
+        let inconclusive = local_observation_from_result(
+            &result(Verdict::Inconclusive),
+            "local",
+            1_000,
+            false,
+            LocalObservationProducer::Desktop,
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(found.expires_at_unix_ms, 86_401_000);
+        assert_eq!(found.producer_kind, ProducerKind::LocalDesktop);
         assert_eq!(not_found.expires_at_unix_ms, 901_000);
         assert_eq!(inconclusive.expires_at_unix_ms, 301_000);
         assert!(!inconclusive.rule_health_green);
@@ -126,9 +153,15 @@ mod tests {
     #[test]
     fn invalid_input_is_not_persisted() {
         assert!(
-            local_observation_from_result(&result(Verdict::InvalidUsername), "local", 1_000, false)
-                .unwrap()
-                .is_none()
+            local_observation_from_result(
+                &result(Verdict::InvalidUsername),
+                "local",
+                1_000,
+                false,
+                LocalObservationProducer::Desktop,
+            )
+            .unwrap()
+            .is_none()
         );
     }
 }

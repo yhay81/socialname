@@ -21,7 +21,7 @@ use socialname_rule_compiler::{CompiledSiteRule, RuleCompiler, render_url_templa
 use socialname_rule_schema::AccountNamespace;
 use tokio_util::sync::CancellationToken;
 
-pub use local_observation::local_observation_from_result;
+pub use local_observation::{LocalObservationProducer, local_observation_from_result};
 pub use source_policy::{
     DEFAULT_MAXIMUM_AGE_MS, DEFAULT_REGION_CLASS, RefreshState, SearchPolicy, SearchRuleHealth,
     SearchSource, SearchStatus, SyncPolicy,
@@ -497,6 +497,7 @@ impl AppCore {
             now_unix_ms,
             rule.source.metadata.enabled
                 && health.is_some_and(|health| health.is_fresh_healthy_at(now_unix_ms)),
+            LocalObservationProducer::Desktop,
         )? {
             let metadata = if let Some(cache) = &self.cache {
                 cache

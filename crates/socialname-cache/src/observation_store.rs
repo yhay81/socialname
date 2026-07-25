@@ -375,6 +375,7 @@ fn parse_evidence_class(value: &str) -> Result<EvidenceClass, CacheError> {
 const fn producer_kind_name(value: ProducerKind) -> &'static str {
     match value {
         ProducerKind::LocalCli => "local_cli",
+        ProducerKind::LocalDesktop => "local_desktop",
         ProducerKind::SharedCli => "shared_cli",
         ProducerKind::ManagedWorker => "managed_worker",
         ProducerKind::CanaryWorker => "canary_worker",
@@ -384,6 +385,7 @@ const fn producer_kind_name(value: ProducerKind) -> &'static str {
 fn parse_producer_kind(value: &str) -> Result<ProducerKind, CacheError> {
     match value {
         "local_cli" => Ok(ProducerKind::LocalCli),
+        "local_desktop" => Ok(ProducerKind::LocalDesktop),
         "shared_cli" => Ok(ProducerKind::SharedCli),
         "managed_worker" => Ok(ProducerKind::ManagedWorker),
         "canary_worker" => Ok(ProducerKind::CanaryWorker),
@@ -469,7 +471,8 @@ mod tests {
     #[tokio::test]
     async fn persists_and_reads_complete_observation_and_metadata() {
         let cache = LocalCache::open_in_memory().await.unwrap();
-        let expected = observation("observation-round-trip", Verdict::Inconclusive);
+        let mut expected = observation("observation-round-trip", Verdict::Inconclusive);
+        expected.producer_kind = ProducerKind::LocalDesktop;
 
         assert_eq!(
             cache.store_observation(&expected, 1_001).await.unwrap(),

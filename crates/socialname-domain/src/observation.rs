@@ -94,6 +94,7 @@ impl EvidenceClass {
 #[serde(rename_all = "snake_case")]
 pub enum ProducerKind {
     LocalCli,
+    LocalDesktop,
     SharedCli,
     ManagedWorker,
     CanaryWorker,

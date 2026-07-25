@@ -194,7 +194,10 @@ pub fn derive_assertion(
     } else if support.iter().any(|observation| {
         observation.is_managed()
             || observation.producer_reputation.quorum_eligible()
-            || observation.producer_kind == ProducerKind::LocalCli
+            || matches!(
+                observation.producer_kind,
+                ProducerKind::LocalCli | ProducerKind::LocalDesktop
+            )
     }) {
         AssertionQuality::SingleVantage
     } else {
