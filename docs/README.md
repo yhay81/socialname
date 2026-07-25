@@ -95,6 +95,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   Ed25519 trust policy, activation replay protection, and retained rollback.
 - [Canary workflow operations](canary-workflows.md) — disabled-by-default
   manual and scheduled managed-vantage templates with fixed budgets.
+- [Local cache](local-cache.md) — embedded SQLite migrations, database
+  ownership, immutable observations, and fail-closed opening behavior.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
@@ -130,10 +132,8 @@ These terms have distinct meanings and should not be used interchangeably:
 The current milestone is **Trustworthy local product**. The canonical task
 breakdown and acceptance evidence live in [`ROADMAP.md`](../ROADMAP.md):
 
-1. Implement live-canary manifests, execution, aggregation, rule health,
-   quarantine, shadow comparison, and report validation.
-2. Add the local SQLite observation cache and explicit source/freshness policy
-   to CLI and desktop.
+1. Complete the local SQLite observation cache.
+2. Add explicit source and freshness policy to CLI and desktop.
 
 Infrastructure, pricing, scale, and community-network choices remain deferred
 until their roadmap trigger is measured.

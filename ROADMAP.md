@@ -64,7 +64,7 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add `socialname-cache` with embedded SQLite migrations.
+Next executable item: persist immutable local observations and cache metadata.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -263,7 +263,7 @@ External evidence gate:
 
 ### 1B. Local cache and source policy
 
-- [ ] Add `socialname-cache` with embedded SQLite migrations.
+- [x] Add `socialname-cache` with embedded SQLite migrations.
 - [ ] Persist immutable local observations and cache metadata, not just the
       latest boolean result.
 - [ ] Key eligibility by normalized username, site, region class, rule hash,
@@ -286,6 +286,22 @@ Software acceptance gate:
 - Cached results are never represented as live.
 - Default execution remains local with no network call to SocialName.
 - Cache corruption or migration failure cannot silently produce a verdict.
+
+Migration-slice evidence:
+
+```console
+cargo test --locked -p socialname-cache
+# 5 passed: initialization, idempotent reopen, foreign/future/corrupt refusal,
+# immutable rows, and explicit deletion
+cargo clippy --locked -p socialname-cache --all-targets --all-features -- -D warnings
+```
+
+`socialname-cache` embeds schema v1 into the binary and identifies its database
+with a dedicated SQLite application ID. It refuses foreign, future, and corrupt
+databases before producing a cache handle, applies migrations idempotently,
+enables WAL only after ownership/version preflight, and preserves complete
+immutable observation fields separately from mutable cache metadata. This
+slice does not yet write domain observations or select cached results.
 
 ## Milestone 2 — First paid monitoring loop
 
@@ -460,3 +476,7 @@ Choose these only when their trigger is measured:
   initialization, contiguous evidence sequencing, bounded two-pass recovery,
   operational degradation, immediate classification quarantine, persisted
   record validation, and health-only notification semantics.
+- **2026-07-25:** Added `socialname-cache` with embedded SQLite migrations,
+  explicit database ownership, fail-closed foreign/future/corrupt handling,
+  immutable observation rows, separate access metadata, and deterministic
+  initialization and migration tests.

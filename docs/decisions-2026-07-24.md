@@ -51,6 +51,12 @@ so status does not diverge across design records.
   predecessor, and retains the complete prior validated pack for explicit
   rollback without lowering the anti-replay high-water mark. Trust policy maps
   key IDs to public keys so rotation can overlap deliberately.
+- The local cache is a SocialName-identified SQLite database with embedded
+  forward migrations. It refuses foreign application IDs, newer successful
+  migration versions, and integrity failures instead of treating them as an
+  empty cache. Observations are immutable; mutable access metadata is a
+  separate child record, while explicit deletion remains available for
+  pruning and complete local deletion.
 
 ## Detailed records
 
@@ -64,6 +70,7 @@ so status does not diverge across design records.
 - [Execution roadmap](../ROADMAP.md)
 - [Regional rule health](rule-health-v1.md)
 - [Signed rule promotion](rule-promotion-v1.md)
+- [Local cache](local-cache.md)
 
 ## Implementation baseline
 
@@ -77,7 +84,6 @@ so status does not diverge across design records.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
 
-The next work is Milestone 1 in `ROADMAP.md`: bounded manual and scheduled
-canary workflow templates, followed by the local SQLite cache and
-source-selection policy. The first paid monitoring loop follows as Milestone
-2.
+The next work is Milestone 1 in `ROADMAP.md`: persist domain observations in
+the local SQLite cache, then implement cache eligibility and source-selection
+policy. The first paid monitoring loop follows as Milestone 2.
