@@ -92,6 +92,11 @@ so status does not diverge across design records.
 - Cache schema v2 distinguishes `local_cli` and `local_desktop` producer
   lineage. The v1-to-v2 migration rebuilds the constrained table while
   preserving immutable observations and access metadata.
+- Desktop cached-first execution uses requested source `hybrid` while preserving
+  the actual `cache` or `local` origin on each emitted result and observation.
+  The cache phase is emitted before the local executor starts; cancellation
+  after that phase retains cached evidence and prevents the local call. The CLI
+  rejects `hybrid` until it has a versioned ordered-event output contract.
 
 ## Detailed records
 
@@ -119,6 +124,7 @@ so status does not diverge across design records.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
 
-The next work is Milestone 1 in `ROADMAP.md`: stream eligible cached observations
-before an explicitly labelled local refresh without relabelling either source.
-The first paid monitoring loop follows as Milestone 2.
+Milestone 1's repository-completable software gate is done. Its external live
+rule evidence remains pending and all affected rules stay disabled. The next
+work is the first paid monitoring loop in Milestone 2, beginning with versioned
+protocol DTOs.

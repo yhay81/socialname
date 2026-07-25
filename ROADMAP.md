@@ -58,14 +58,14 @@ rules remain discovery-only pending live evidence.
 
 ## Milestone 1 — Trustworthy local product
 
-Status: **Current**
+Status: **Software gate complete; external evidence pending**
 
 Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: stream eligible cached observations before an explicitly
-labelled local refresh.
+Next executable item: add `socialname-protocol` for the versioned Milestone 2
+API, event, error, source, freshness, watch, transition, and notification DTOs.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -276,9 +276,9 @@ External evidence gate:
       and machine-readable CLI output.
 - [x] Expose the same cache/source policy through `socialname-app-core` and the
       desktop application.
-- [ ] Stream an eligible cached result immediately while clearly marking any
+- [x] Stream an eligible cached result immediately while clearly marking any
       subsequent local refresh.
-- [ ] Add deterministic cache-hit, stale, rule-change, negative-TTL,
+- [x] Add deterministic cache-hit, stale, rule-change, negative-TTL,
       cancellation, pruning, migration, and deletion tests.
 
 Software acceptance gate:
@@ -363,8 +363,9 @@ CLI-source-slice evidence:
 
 ```console
 cargo test --locked -p socialname-cli
-# 5 passed: default local/never parsing, explicit cache mode, unsupported sync
-# rejection, no-engine cache hit/miss/health/promotion paths, and verdict TTLs
+# 6 passed: default local/never parsing, explicit cache mode, unsupported sync
+# and hybrid rejection, no-engine cache hit/miss/health/promotion paths, and
+# verdict TTLs
 cargo clippy --locked -p socialname-cli --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-cli -- search --help
 # source values: local, cache; sync values: never
@@ -391,8 +392,9 @@ cargo test --locked -p socialname-domain -p socialname-cache \
   -p socialname-app-core -p socialname-cli
 # socialname-cache: 31 passed, including data-preserving schema-v1-to-v2
 # migration and local_cli/local_desktop producer round trips
-# socialname-app-core: 11 passed, including no-probe discovery status and a
-# complete multi-observation offline cache hit
+# socialname-app-core: 13 passed, including no-probe discovery status, a
+# complete multi-observation offline cache hit, cached-first ordering, and
+# cancellation before local refresh
 cargo clippy --locked -p socialname-domain -p socialname-cache \
   -p socialname-app-core -p socialname-cli --all-targets --all-features \
   -- -D warnings
@@ -413,6 +415,37 @@ mode and cannot become a verdict. Local remains the default; cache never falls
 through to a probe. No production promotion or health evidence is embedded, so
 all repository rules remain safely `rule_not_promoted`. Schema v2 distinguishes
 desktop producer lineage while preserving schema-v1 observations and metadata.
+
+Cached-first/final software-gate evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+```
+
+Desktop `hybrid` emits one cache phase before invoking the local executor and
+then replaces it with a separately labelled local-refresh phase. The result
+envelope distinguishes requested mode from each event and observation's actual
+`cache` or `local` origin. A dropped event channel after the cache phase is
+checked before executor invocation, so cancellation retains cached evidence
+without starting a probe. Runtime cache failure is a typed non-verdict phase.
+CLI `hybrid` is rejected until the CLI has a versioned event-stream contract;
+its supported `local` and `cache` behavior is unchanged.
+
+The cache suite deterministically covers exact hits, stale observations, rule
+hash changes, verdict-specific negative TTL, pruning, the data-preserving
+schema-v1-to-v2 migration, and complete database/sidecar deletion. App-core
+adds the cache-before-local and cancellation paths. Together these satisfy the
+1B software gate without weakening the still-pending external live-rule gate.
 
 ## Milestone 2 — First paid monitoring loop
 
@@ -492,8 +525,8 @@ Status: **Planned**
 - [ ] Publish stable versioned REST/JSON and SSE contracts.
 - [ ] Add batch search, polling, webhooks, idempotency, quotas, usage records,
       and service-level reporting.
-- [ ] Implement `remote` and `hybrid` modes in CLI and desktop with visible,
-      independent sync policies.
+- [ ] Implement `remote` and remote-assisted source combinations in CLI and
+      desktop with visible, independent sync policies.
 - [ ] Add private cloud history, exports, API examples, and integration SDK
       generation only where it reduces real adoption friction.
 - [ ] Add plan entitlements and billing boundaries without coupling billing to

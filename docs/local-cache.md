@@ -4,8 +4,8 @@ The local cache is a user-controlled SQLite database for immutable SocialName
 observations and cache-management metadata. It is an optional local product
 component: opening or using it does not contact a SocialName service. It can
 persist and read domain observations and is integrated with the CLI and
-desktop application's explicit local/cache source policy. Cached-first refresh
-streaming and synchronization beyond `never` are not implemented yet.
+desktop application's explicit source policy. Desktop cached-first refresh
+streaming is implemented; synchronization beyond `never` is not.
 
 ## Ownership and opening policy
 
@@ -106,9 +106,9 @@ error rather than silent truncation. A successful hit transaction increments
 access count and advances last-access time for every returned observation.
 Misses and failed or oversized queries do not touch metadata.
 
-This API establishes safe cache eligibility only. Later source-policy work
-must label cached data as cached, derive any current interpretation from the
-observation set, and decide whether to refresh locally.
+This API establishes safe cache eligibility only. The application core labels
+cached data as cached, preserves the complete observation set, and decides
+whether a requested desktop `hybrid` search should refresh locally.
 
 ## Maintenance and size limits
 
@@ -210,13 +210,20 @@ Cache output has no `live_result`; local output includes the engine result and
 the time-bounded observation. Cached observations are never labelled live, and
 cache mode does not imply a refresh.
 
+The shared source type also contains `hybrid`, but the CLI rejects that value.
+Its current result boundary produces one terminal envelope and cannot truthfully
+stream a cached phase followed by a local phase. CLI cached-first support
+therefore waits for a versioned event-stream contract instead of collapsing the
+two sources into one result.
+
 ## Desktop source and cache boundary
 
 The Tauri shell resolves a fixed application-local
 `observations.sqlite3` path, creates only its containing application directory,
 and gives `socialname-app-core` the validated cache handle. The React webview
-can select `local` or `cache` and can set the bounded region/maximum-age policy,
-but it receives no database path and has no filesystem or database capability.
+can select `local`, `cache`, or cached-first `hybrid` and can set the bounded
+region/maximum-age policy, but it receives no database path and has no
+filesystem or database capability.
 
 `local` remains the default and records non-invalid results with
 `local_desktop` producer lineage. `cache` remains offline and uses the same
@@ -225,6 +232,17 @@ eligibility checks as the CLI. A site result contains a complete observation
 set and a separate optional live result. The UI therefore labels cached data,
 shows observed time and expiry for every observation, and does not collapse
 conflicting cached observations into one apparent current truth.
+
+`hybrid` emits a cache phase before the local executor is invoked, with
+`refresh=pending`, and then emits a separately labelled local phase with
+`refresh=completed`. The envelope records both the requested `hybrid` mode and
+each result or observation's actual `cache` or `local` origin. The local phase
+retains the cached observation set alongside its separately represented live
+result. If the event receiver closes after the cache phase, app-core checks
+cancellation before invoking the local executor, retaining cached evidence
+without starting the probe. Cache initialization or lookup failure is an
+explicit non-verdict cache phase and never silently becomes a miss or a live
+result.
 
 Cache initialization failure is reported by `get_app_info`; the UI disables
 cache selection while local probing remains available. The failure does not
@@ -277,3 +295,7 @@ pruning, count and logical-byte limits, metadata cascade, deterministic export,
 overwrite refusal, integrity failure, corrupt-byte quarantine, healthy,
 foreign, unowned, and future recovery refusal, Windows close/retry behavior,
 and complete database/sidecar deletion.
+
+App-core tests additionally cover a complete offline hit, cache-before-local
+event ordering, preservation of cached and local lineage in the refresh phase,
+and cancellation after the cache phase with zero local-executor calls.

@@ -78,8 +78,8 @@ The implemented desktop slice supports:
 - selecting and filtering sites;
 - explicit opt-in before discovery-only rules can execute;
 - fully local probes with a maximum of eight concurrent sites;
-- an explicit choice between `local` probing and strictly offline `cache`
-  lookup, both with `sync=never`;
+- an explicit choice among `local` probing, strictly offline `cache` lookup,
+  and cached-first `hybrid`, all with `sync=never`;
 - immutable local observations with distinct `local_desktop` producer lineage;
 - cache eligibility bound to exact target, region, rule hash, promoted rule,
   fresh healthy rule evidence, expiry, and requested maximum age;
@@ -99,6 +99,14 @@ repository rules remain discovery-only and offline cache lookup reports
 `rule_not_promoted`. This preserves the external live-acceptance gate instead of
 turning stored discovery observations into trusted cached results.
 
+In `hybrid`, app-core emits the cache phase before invoking the local executor.
+The UI marks that phase as cached and refreshing, then replaces the site card
+with a separately labelled local refresh while retaining every cached
+observation and its origin. Requested mode and actual event origin are distinct.
+If the event channel closes after the cached phase, app-core checks cancellation
+before the local call so the cached evidence remains completed without starting
+a probe.
+
 ## Platform policy
 
 Windows packaging initially uses a per-user NSIS installer and Tauri's default
@@ -114,11 +122,9 @@ silently simulated by development builds.
 
 ## Next desktop slices
 
-1. Add cached-first `hybrid` streaming with the cached result emitted before a
-   separately labelled local refresh.
-2. Add authenticated private synchronization as a separate consented action.
-3. Add watches, transition history, and notification configuration against the
+1. Add authenticated private synchronization as a separate consented action.
+2. Add watches, transition history, and notification configuration against the
    central API.
-4. Add narrowly validated profile opening and export commands rather than
+3. Add narrowly validated profile opening and export commands rather than
    generic webview capabilities.
-5. Add component tests, IPC contract generation, and signed release pipelines.
+4. Add component tests, IPC contract generation, and signed release pipelines.

@@ -144,6 +144,14 @@ refresh it. The API must distinguish `provisional`, `refreshing`, and `final for
 requested policy`; it must not imply that Internet state is ever permanently
 final.
 
+The local desktop implementation makes this concrete with a requested `hybrid`
+mode and actual per-event `cache` or `local` origins. It emits the cache phase
+before invoking the local executor, labels the refresh as pending, and then
+emits a completed local-refresh phase without discarding the cached observation
+set. Cancellation after the first phase is checked before executor invocation.
+The CLI rejects `hybrid` until its output boundary can express the same ordered
+event contract.
+
 ## Observation and assertion model
 
 ### Observation
