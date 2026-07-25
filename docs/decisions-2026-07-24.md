@@ -83,6 +83,15 @@ so status does not diverge across design records.
   to a probe, and requires both a promoted rule and fresh exact regional health
   evidence. Human and JSON envelopes identify source, freshness, health, rule,
   and refresh state.
+- `socialname-app-core` is the shared local/cache policy boundary for CLI and
+  desktop. Its result envelope keeps the complete cached observation set
+  separate from an optional live result. The Tauri shell resolves the
+  application-local database path and reports cache availability; the webview
+  receives neither a path nor filesystem/database capabilities. Cache opening
+  failure disables cache mode without disabling an independent local probe.
+- Cache schema v2 distinguishes `local_cli` and `local_desktop` producer
+  lineage. The v1-to-v2 migration rebuilds the constrained table while
+  preserving immutable observations and access metadata.
 
 ## Detailed records
 
@@ -110,7 +119,6 @@ so status does not diverge across design records.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
 
-The next work is Milestone 1 in `ROADMAP.md`: expose the same cache/source
-policy through `socialname-app-core` and desktop, then stream cached-first local
-refreshes without relabelling their source. The first paid monitoring loop
-follows as Milestone 2.
+The next work is Milestone 1 in `ROADMAP.md`: stream eligible cached observations
+before an explicitly labelled local refresh without relabelling either source.
+The first paid monitoring loop follows as Milestone 2.

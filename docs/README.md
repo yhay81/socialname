@@ -66,8 +66,9 @@ The first vertical slice is implemented in the repository:
 - a user-controlled SQLite observation cache with typed persistence,
   freshness/health eligibility, bounded maintenance, explicit export,
   quarantine recovery, and complete local deletion;
-- a Tauri 2 Windows/macOS desktop slice with local streaming and explicit
-  research-mode consent.
+- a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache
+  sources, immutable observation persistence, freshness display, local
+  streaming, and explicit research-mode consent.
 
 `cargo test --workspace --all-targets` verifies the slice without Internet
 access. Live canaries are intentionally a separate acceptance gate.
@@ -135,10 +136,10 @@ These terms have distinct meanings and should not be used interchangeably:
 The current milestone is **Trustworthy local product**. The canonical task
 breakdown and acceptance evidence live in [`ROADMAP.md`](../ROADMAP.md):
 
-1. Expose cache/source/freshness policy through `socialname-app-core` and the
-   desktop application.
-2. Stream eligible cached observations before an explicitly labelled local
+1. Stream eligible cached observations before an explicitly labelled local
    refresh.
+2. Complete the remaining deterministic cancellation and cross-layer cache
+   policy tests.
 
 Infrastructure, pricing, scale, and community-network choices remain deferred
 until their roadmap trigger is measured.

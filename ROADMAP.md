@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: expose the cache/source policy through
-`socialname-app-core` and the desktop application.
+Next executable item: stream eligible cached observations before an explicitly
+labelled local refresh.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -274,7 +274,7 @@ External evidence gate:
 - [x] Add CLI `local` and `cache` modes plus independent `sync=never`.
 - [x] Show source, observed time, expiry, rule hash, and refresh state in normal
       and machine-readable CLI output.
-- [ ] Expose the same cache/source policy through `socialname-app-core` and the
+- [x] Expose the same cache/source policy through `socialname-app-core` and the
       desktop application.
 - [ ] Stream an eligible cached result immediately while clearly marking any
       subsequent local refresh.
@@ -297,12 +297,12 @@ cargo test --locked -p socialname-cache
 cargo clippy --locked -p socialname-cache --all-targets --all-features -- -D warnings
 ```
 
-`socialname-cache` embeds schema v1 into the binary and identifies its database
-with a dedicated SQLite application ID. It refuses foreign, future, and corrupt
-databases before producing a cache handle, applies migrations idempotently,
-enables WAL only after ownership/version preflight, and preserves complete
-immutable observation fields separately from mutable cache metadata. This
-slice does not yet select cached results.
+The initial cache slice embedded schema v1 and identified its database with a
+dedicated SQLite application ID; schema v2 now adds desktop producer lineage.
+Opening refuses foreign, future, and corrupt databases before producing a cache
+handle, applies migrations idempotently, enables WAL only after
+ownership/version preflight, and preserves complete immutable observation
+fields separately from mutable cache metadata.
 
 Persistence-slice evidence:
 
@@ -383,6 +383,36 @@ live results and expose sync, status, refresh, promotion, health, rule hash,
 observed time, expiry, evidence, and region. Optional local persistence uses
 verdict-specific 24-hour found, 15-minute not-found, and 5-minute inconclusive
 TTLs; invalid usernames are not stored.
+
+App-core/desktop-source-slice evidence:
+
+```console
+cargo test --locked -p socialname-domain -p socialname-cache \
+  -p socialname-app-core -p socialname-cli
+# socialname-cache: 31 passed, including data-preserving schema-v1-to-v2
+# migration and local_cli/local_desktop producer round trips
+# socialname-app-core: 11 passed, including no-probe discovery status and a
+# complete multi-observation offline cache hit
+cargo clippy --locked -p socialname-domain -p socialname-cache \
+  -p socialname-app-core -p socialname-cli --all-targets --all-features \
+  -- -D warnings
+cargo test --locked -p socialname-app-core -p socialname-desktop
+cd apps/desktop
+npm run check
+npm run build
+```
+
+`socialname-app-core` now owns the closed `local|cache` source and `sync=never`
+policy types used by CLI and desktop. Its site-level result envelope keeps the
+full eligible cached observation set separate from an optional live result and
+reports source, status, refresh, promotion, regional health, observed time,
+expiry, and exact rule identity. The Tauri shell resolves and opens a fixed
+application-local cache without exposing its path or filesystem/database
+capabilities to the webview. Cache initialization failure disables only cache
+mode and cannot become a verdict. Local remains the default; cache never falls
+through to a probe. No production promotion or health evidence is embedded, so
+all repository rules remain safely `rule_not_promoted`. Schema v2 distinguishes
+desktop producer lineage while preserving schema-v1 observations and metadata.
 
 ## Milestone 2 — First paid monitoring loop
 

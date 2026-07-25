@@ -22,8 +22,11 @@ The system must:
 ```mermaid
 flowchart LR
     User["CLI user"] --> CLI["SocialName CLI"]
+    DesktopUser["Desktop user"] --> Desktop["Tauri desktop"]
     CLI --> LocalDB["Local SQLite cache"]
+    Desktop --> LocalDB
     CLI --> Engine["Rust probe engine"]
+    Desktop --> Engine
     Engine --> Sites["Public sites"]
 
     CLI --> API["Cloud API"]
@@ -57,16 +60,17 @@ microservice for each box.
 
 ### Client plane
 
-The CLI owns:
+The CLI and desktop shell depend on `socialname-app-core`, which owns:
 
-- Command parsing and output.
 - Rule-pack verification and local fallback.
-- Local SQLite observation cache.
 - Query planning for local/cache/hybrid modes.
 - Local probe execution.
 - Explicit synchronization policy.
 - Machine-readable event streaming.
 
+Each application owns its presentation and command boundary. The native desktop
+shell, not its webview, resolves and opens the local SQLite observation cache.
+The CLI owns command parsing, filesystem arguments, and normal/JSON output.
 The core engine must not import CLI, database, or cloud-API concerns.
 
 ### Control plane
@@ -126,7 +130,7 @@ Inputs:
 
 For each `(normalized username, site, region class, rule hash)` key:
 
-1. Check the local cache when called from the CLI.
+1. Check the local cache when called from an eligible local client.
 2. Check eligible private and shared assertions.
 3. Reject observations produced by unhealthy or superseded rules.
 4. Determine whether freshness requirements are satisfied.

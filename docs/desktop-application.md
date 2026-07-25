@@ -40,6 +40,7 @@ than avoiding a small presentation runtime.
 flowchart LR
     UI["React presentation"] -->|"typed Tauri commands"| Shell["Tauri command shell"]
     Shell --> Core["socialname-app-core"]
+    Core --> Cache["socialname-cache"]
     Core --> Engine["socialname-engine"]
     Engine --> Sites["Selected public sites"]
     Core -->|"ordered Channel events"| UI
@@ -63,7 +64,13 @@ The command shell validates bounded search identifiers. The application core
 validates usernames, selected site count, known site IDs, and explicit research
 mode before executing. Dropped event channels cancel the corresponding search.
 
-## First vertical slice
+The shell resolves its application-local data directory and opens
+`observations.sqlite3`. The path is never sent to the webview. If directory
+creation, ownership validation, migration, or integrity checking fails,
+`get_app_info` reports cache mode unavailable while independent local probing
+remains available. A cache lookup never falls through to the engine.
+
+## Implemented local product slice
 
 The implemented desktop slice supports:
 
@@ -71,15 +78,26 @@ The implemented desktop slice supports:
 - selecting and filtering sites;
 - explicit opt-in before discovery-only rules can execute;
 - fully local probes with a maximum of eight concurrent sites;
+- an explicit choice between `local` probing and strictly offline `cache`
+  lookup, both with `sync=never`;
+- immutable local observations with distinct `local_desktop` producer lineage;
+- cache eligibility bound to exact target, region, rule hash, promoted rule,
+  fresh healthy rule evidence, expiry, and requested maximum age;
+- a site-level result envelope that keeps the full cached observation set
+  separate from an optional live result;
+- visible source, refresh state, observed time, expiry, region, rule hash, and
+  rule-health state;
 - ordered streaming of results and matcher evidence;
 - cancellation while retaining completed results;
 - dark and light system themes;
 - reduced-motion and keyboard-focus behavior;
-- a visible `local execution / not synchronized` state.
+- a visible source and `not synchronized` state.
 
-It deliberately does not yet persist results, authenticate, synchronize
-observations, or call the central server. This keeps the first privacy claim
-literal and makes later cache/private/shared modes additive.
+It does not authenticate, synchronize observations, or call the central server.
+No production rule-health record or signed promoted pack is bundled, so all ten
+repository rules remain discovery-only and offline cache lookup reports
+`rule_not_promoted`. This preserves the external live-acceptance gate instead of
+turning stored discovery observations into trusted cached results.
 
 ## Platform policy
 
@@ -96,8 +114,8 @@ silently simulated by development builds.
 
 ## Next desktop slices
 
-1. Add the SQLite observation cache and explicit `cache`, `local`, `cloud`, and
-   `hybrid` source policies.
+1. Add cached-first `hybrid` streaming with the cached result emitted before a
+   separately labelled local refresh.
 2. Add authenticated private synchronization as a separate consented action.
 3. Add watches, transition history, and notification configuration against the
    central API.

@@ -3,9 +3,9 @@
 The local cache is a user-controlled SQLite database for immutable SocialName
 observations and cache-management metadata. It is an optional local product
 component: opening or using it does not contact a SocialName service. It can
-persist and read domain observations and is integrated with the CLI's explicit
-local/cache source policy. Desktop integration, cached-first refresh streaming,
-and synchronization beyond `never` are not implemented yet.
+persist and read domain observations and is integrated with the CLI and
+desktop application's explicit local/cache source policy. Cached-first refresh
+streaming and synchronization beyond `never` are not implemented yet.
 
 ## Ownership and opening policy
 
@@ -32,6 +32,12 @@ an account-state result. Reopening a current database is migration-idempotent.
 Migration SQL is forced to LF in `.gitattributes`, and the crate build script
 tracks the migration directory so embedded migration hashes cannot drift
 silently after an SQL edit.
+
+Schema v2 adds distinct `local_desktop` producer lineage alongside `local_cli`.
+Its forward migration rebuilds the constrained observation table and preserves
+both immutable observations and cache access metadata. A deterministic test
+creates a real schema-v1 database, inserts an observation and metadata, opens it
+with the current binary, and verifies the v2 round trip.
 
 ## Schema boundary
 
@@ -204,6 +210,28 @@ Cache output has no `live_result`; local output includes the engine result and
 the time-bounded observation. Cached observations are never labelled live, and
 cache mode does not imply a refresh.
 
+## Desktop source and cache boundary
+
+The Tauri shell resolves a fixed application-local
+`observations.sqlite3` path, creates only its containing application directory,
+and gives `socialname-app-core` the validated cache handle. The React webview
+can select `local` or `cache` and can set the bounded region/maximum-age policy,
+but it receives no database path and has no filesystem or database capability.
+
+`local` remains the default and records non-invalid results with
+`local_desktop` producer lineage. `cache` remains offline and uses the same
+promotion, exact rule/region health, expiry, maximum-age, and definitive-verdict
+eligibility checks as the CLI. A site result contains a complete observation
+set and a separate optional live result. The UI therefore labels cached data,
+shows observed time and expiry for every observation, and does not collapse
+conflicting cached observations into one apparent current truth.
+
+Cache initialization failure is reported by `get_app_info`; the UI disables
+cache selection while local probing remains available. The failure does not
+become a cache miss or verdict. The repository embeds no production promotion
+or regional health record, so its discovery-only rules remain
+`rule_not_promoted` in desktop cache mode.
+
 ## Privacy and failure behavior
 
 Normalized usernames and public identifiers are sensitive local product data.
@@ -230,11 +258,16 @@ must keep their destructive confirmation and source/sync policy visible.
 ```console
 cargo test --locked -p socialname-cache
 cargo clippy --locked -p socialname-cache --all-targets --all-features -- -D warnings
+cargo test --locked -p socialname-app-core -p socialname-desktop
+cd apps/desktop
+npm run check
+npm run build
 ```
 
 The deterministic tests cover first initialization, schema ownership and
-integrity, idempotent reopen, foreign and future database refusal, corrupt
-input, complete domain round trips, exact replay, immutable-ID conflict,
+integrity, idempotent reopen, the data-preserving schema-v1-to-v2 migration,
+foreign and future database refusal, corrupt input, complete domain round trips
+including CLI/desktop producer lineage, exact replay, immutable-ID conflict,
 transaction rollback, missing metadata, observation immutability, and deletion
 for later pruning. Eligibility tests cover exact hits, target/site/region/rule
 misses, current and captured rule health, verdict filtering, expiry, maximum
