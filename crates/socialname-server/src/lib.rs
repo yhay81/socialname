@@ -1,7 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod api_key;
+mod auth;
 mod config;
 mod database;
+mod workspace;
+mod workspace_operator;
 
 use std::{
     future::Future,
@@ -10,7 +14,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -19,7 +23,7 @@ use axum::{
     extract::{DefaultBodyLimit, Request, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
-        header::{CACHE_CONTROL, CONTENT_LENGTH},
+        header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, WWW_AUTHENTICATE},
     },
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -27,9 +31,10 @@ use axum::{
 };
 use serde::Serialize;
 use socialname_protocol::{
-    ApiError, ApiErrorCode, ApiErrorResponse, ProtocolVersion, RequestId, Validate, ValidationCode,
-    ValidationErrors,
+    ApiError, ApiErrorCode, ApiErrorResponse, ApiKeyScope, ProtocolVersion, RequestId, Validate,
+    ValidationCode, ValidationErrors,
 };
+use sqlx::PgPool;
 use tower::{ServiceBuilder, limit::ConcurrencyLimitLayer};
 use tracing::Instrument;
 
@@ -38,7 +43,14 @@ pub use config::{
     ServerConfig,
 };
 pub use database::{
-    DATABASE_URL_ENV, DatabaseError, MIGRATOR, migrate_database, migrate_database_from_env,
+    DATABASE_URL_ENV, DatabaseError, MIGRATOR, RUNTIME_DATABASE_URL_ENV,
+    connect_runtime_database_from_env, migrate_database, migrate_database_from_env,
+};
+pub use workspace_operator::{
+    API_KEY_EXPIRES_AT_ENV, API_KEY_ID_ENV, API_KEY_SCOPES_ENV, IssuedApiKey, MEMBERSHIP_ID_ENV,
+    MEMBERSHIP_SUBJECT_ENV, WORKSPACE_DISPLAY_NAME_ENV, WORKSPACE_ID_ENV, WORKSPACE_SLUG_ENV,
+    WorkspaceOperatorError, bootstrap_workspace_from_env, issue_api_key_from_env,
+    revoke_api_key_from_env,
 };
 
 const X_REQUEST_ID: &str = "x-request-id";
@@ -47,13 +59,15 @@ const X_CONTENT_TYPE_OPTIONS: &str = "x-content-type-options";
 #[derive(Clone)]
 struct ServerState {
     config: ServerConfig,
+    database: PgPool,
     request_sequence: Arc<AtomicU64>,
 }
 
 impl ServerState {
-    fn new(config: ServerConfig) -> Self {
+    fn new(config: ServerConfig, database: PgPool) -> Self {
         Self {
             config,
+            database,
             request_sequence: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -70,6 +84,7 @@ impl ServerState {
 enum HealthStatus {
     Live,
     Ready,
+    NotReady,
 }
 
 #[derive(Debug, Serialize)]
@@ -80,17 +95,35 @@ struct HealthResponse {
     status: HealthStatus,
 }
 
-pub fn build_router(config: ServerConfig) -> Router {
+#[derive(Clone)]
+struct ProtectedRouteState {
+    server: ServerState,
+    required_scope: ApiKeyScope,
+}
+
+pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
+    let state = ServerState::new(config, database);
+    let protected_routes = Router::new()
+        .route("/v1/workspace", get(workspace_resource))
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::WorkspaceRead,
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
+        .merge(protected_routes)
         .fallback(not_found)
-        .method_not_allowed_fallback(method_not_allowed);
-    apply_runtime_layers(routes, config)
+        .method_not_allowed_fallback(method_not_allowed)
+        .with_state(state.clone());
+    apply_runtime_layers(routes, state)
 }
 
-fn apply_runtime_layers(routes: Router, config: ServerConfig) -> Router {
-    let state = ServerState::new(config.clone());
+fn apply_runtime_layers(routes: Router, state: ServerState) -> Router {
+    let config = state.config.clone();
     routes.layer(
         ServiceBuilder::new()
             .layer(middleware::from_fn_with_state(state, request_guard))
@@ -102,12 +135,13 @@ fn apply_runtime_layers(routes: Router, config: ServerConfig) -> Router {
 pub async fn serve<F>(
     listener: tokio::net::TcpListener,
     config: ServerConfig,
+    database: PgPool,
     shutdown: F,
 ) -> io::Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    axum::serve(listener, build_router(config))
+    axum::serve(listener, build_router(config, database))
         .with_graceful_shutdown(shutdown)
         .await
 }
@@ -121,13 +155,107 @@ async fn live() -> Json<HealthResponse> {
     })
 }
 
-async fn ready() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        schema: ProtocolVersion::ApiV1,
-        service: "socialname-server",
-        version: env!("CARGO_PKG_VERSION"),
-        status: HealthStatus::Ready,
-    })
+async fn ready(State(state): State<ServerState>) -> Response {
+    let database_timeout = (state.config.request_timeout() / 2).min(Duration::from_secs(1));
+    let available = tokio::time::timeout(
+        database_timeout,
+        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&state.database),
+    )
+    .await
+    .is_ok_and(|result| matches!(result, Ok(1)));
+    let status = if available {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let health_status = if available {
+        HealthStatus::Ready
+    } else {
+        HealthStatus::NotReady
+    };
+    (
+        status,
+        Json(HealthResponse {
+            schema: ProtocolVersion::ApiV1,
+            service: "socialname-server",
+            version: env!("CARGO_PKG_VERSION"),
+            status: health_status,
+        }),
+    )
+        .into_response()
+}
+
+async fn workspace_resource(
+    State(state): State<ServerState>,
+    Extension(request_id): Extension<RequestId>,
+    Extension(principal): Extension<auth::AuthenticatedPrincipal>,
+) -> Response {
+    match workspace::load_workspace(&state.database, &principal).await {
+        Ok(resource) => Json(resource).into_response(),
+        Err(workspace::WorkspaceLoadError::Unauthenticated) => unauthenticated_response(request_id),
+        Err(workspace::WorkspaceLoadError::Unavailable) => api_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            request_id,
+            standard_api_error(ApiErrorCode::Unavailable, true),
+        ),
+    }
+}
+
+async fn authenticate_request(
+    State(state): State<ProtectedRouteState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let request_id = request
+        .extensions()
+        .get::<RequestId>()
+        .cloned()
+        .unwrap_or_else(|| state.server.next_request_id());
+    match auth::authenticate(
+        &state.server.database,
+        request.headers(),
+        state.required_scope,
+    )
+    .await
+    {
+        Ok(principal) => {
+            request.headers_mut().remove(AUTHORIZATION);
+            request.extensions_mut().insert(principal);
+            next.run(request).await
+        }
+        Err(auth::AuthenticationError::InvalidCredential) => unauthenticated_response(request_id),
+        Err(auth::AuthenticationError::Forbidden) => api_error_response(
+            StatusCode::FORBIDDEN,
+            request_id,
+            standard_api_error(ApiErrorCode::Forbidden, false),
+        ),
+        Err(auth::AuthenticationError::Unavailable) => api_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            request_id,
+            standard_api_error(ApiErrorCode::Unavailable, true),
+        ),
+    }
+}
+
+fn unauthenticated_response(request_id: RequestId) -> Response {
+    let mut response = api_error_response(
+        StatusCode::UNAUTHORIZED,
+        request_id,
+        standard_api_error(ApiErrorCode::Unauthenticated, false),
+    );
+    response
+        .headers_mut()
+        .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+    response
+}
+
+fn standard_api_error(code: ApiErrorCode, retryable: bool) -> ApiError {
+    ApiError {
+        code,
+        retryable,
+        retry_after_ms: None,
+        violations: Vec::new(),
+    }
 }
 
 async fn not_found(Extension(request_id): Extension<RequestId>) -> Response {
@@ -270,6 +398,7 @@ mod tests {
         routing::get,
     };
     use socialname_protocol::{API_V1_SCHEMA, ApiErrorResponse, Validate};
+    use sqlx::{PgPool, postgres::PgPoolOptions};
     use tower::ServiceExt;
 
     use super::*;
@@ -284,6 +413,12 @@ mod tests {
         .unwrap()
     }
 
+    fn test_database() -> PgPool {
+        PgPoolOptions::new()
+            .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+            .expect("static test database URL is valid")
+    }
+
     async fn json_body(response: Response) -> serde_json::Value {
         let bytes = to_bytes(response.into_body(), 64 * 1_024).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
@@ -291,7 +426,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_is_versioned_hardened_and_request_identified() {
-        let response = build_router(test_config(Duration::from_secs(1)))
+        let response = build_router(test_config(Duration::from_secs(1)), test_database())
             .oneshot(
                 Request::builder()
                     .uri("/health/live")
@@ -322,7 +457,7 @@ mod tests {
                 "invalid_request",
             ),
         ] {
-            let response = build_router(test_config(Duration::from_secs(1)))
+            let response = build_router(test_config(Duration::from_secs(1)), test_database())
                 .oneshot(
                     Request::builder()
                         .method(method)
@@ -349,7 +484,7 @@ mod tests {
             ("4097", StatusCode::PAYLOAD_TOO_LARGE),
             ("invalid", StatusCode::BAD_REQUEST),
         ] {
-            let response = build_router(test_config(Duration::from_secs(1)))
+            let response = build_router(test_config(Duration::from_secs(1)), test_database())
                 .oneshot(
                     Request::builder()
                         .uri("/health/live")
@@ -369,7 +504,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_inbound_request_id_is_not_reflected() {
-        let response = build_router(test_config(Duration::from_secs(1)))
+        let response = build_router(test_config(Duration::from_secs(1)), test_database())
             .oneshot(
                 Request::builder()
                     .uri("/missing")
@@ -400,7 +535,9 @@ mod tests {
             )
             .fallback(not_found)
             .method_not_allowed_fallback(method_not_allowed);
-        let response = apply_runtime_layers(routes, test_config(Duration::from_millis(100)))
+        let config = test_config(Duration::from_millis(100));
+        let state = ServerState::new(config, test_database());
+        let response = apply_runtime_layers(routes, state)
             .oneshot(Request::builder().uri("/slow").body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -417,9 +554,12 @@ mod tests {
         let listener = tokio::net::TcpListener::bind(config.bind_address())
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), serve(listener, config, async {}))
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            serve(listener, config, test_database(), async {}),
+        )
+        .await
+        .unwrap()
+        .unwrap();
     }
 }

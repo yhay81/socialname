@@ -4059,8 +4059,11 @@ name = "socialname-server"
 version = "0.2.0"
 dependencies = [
  "axum",
+ "hex",
+ "rand 0.10.2",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "socialname-protocol",
  "sqlx",
  "thiserror 2.0.19",
@@ -4068,6 +4071,8 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4204,6 +4209,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -4236,6 +4242,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sqlx-core",
+ "sqlx-mysql",
  "sqlx-postgres",
  "sqlx-sqlite",
  "syn 2.0.119",
@@ -4274,6 +4281,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.8.7",
  "rsa",
+ "serde",
  "sha1",
  "sha2 0.10.9",
  "smallvec",
@@ -4281,6 +4289,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.19",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -4318,6 +4327,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.19",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -4343,6 +4353,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]

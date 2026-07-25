@@ -1,9 +1,22 @@
-use std::env;
+use std::{env, net::SocketAddr, time::Duration};
 
-use socialname_server::migrate_database;
+use axum::{
+    body::{Body, to_bytes},
+    http::{
+        Request, StatusCode,
+        header::{AUTHORIZATION, WWW_AUTHENTICATE},
+    },
+    response::Response,
+};
+use sha2::{Digest, Sha256};
+use socialname_protocol::{ApiErrorCode, ApiErrorResponse, Validate, WorkspaceResource};
+use socialname_server::{ServerConfig, build_router, migrate_database};
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
+use tower::ServiceExt;
+use uuid::Uuid;
 
 const TEST_DATABASE_URL_ENV: &str = "SOCIALNAME_TEST_DATABASE_URL";
+const TEST_APPLICATION_DATABASE_URL_ENV: &str = "SOCIALNAME_TEST_APPLICATION_DATABASE_URL";
 
 #[tokio::test]
 async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
@@ -22,11 +35,14 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
 
     assert_schema_inventory(&pool).await;
     install_fixtures(&pool).await;
+    install_api_key_fixtures(&pool).await;
+    assert_api_key_scope_constraints(&pool).await;
     assert_tenant_isolation(&pool).await;
     assert_cross_tenant_references_are_rejected(&pool).await;
     assert_observations_are_immutable(&pool).await;
     assert_transition_and_delivery_safety(&pool).await;
     assert_deletion_deadlines_and_receipts(&pool).await;
+    assert_authenticated_workspace_boundary(&pool).await;
 
     pool.close().await;
 }
@@ -36,7 +52,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
         r#"
         WITH required(name) AS (
             VALUES
-                ('tenants'), ('memberships'), ('api_keys'), ('clients'), ('sites'),
+                ('tenants'), ('memberships'), ('api_keys'), ('api_key_credentials'),
+                ('clients'), ('sites'),
                 ('rule_packs'), ('rule_versions'), ('rule_health_records'),
                 ('consent_grants'), ('consent_events'), ('searches'), ('search_targets'),
                 ('watches'), ('watch_targets'), ('probe_jobs'), ('probe_job_consumers'),
@@ -54,7 +71,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 29);
+    assert_eq!(required_tables, 30);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -78,7 +95,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
          WHERE table_schema = 'public' \
-         AND ((table_name = 'api_keys' AND column_name IN ('secret', 'token', 'plaintext')) \
+         AND ((table_name = 'api_keys' \
+               AND column_name IN ('key_prefix', 'secret_hash', 'secret', 'token', 'plaintext')) \
            OR (table_name = 'notification_endpoints' \
                AND column_name IN ('destination', 'email', 'url')))",
     )
@@ -306,17 +324,154 @@ async fn install_fixtures(pool: &PgPool) {
     .unwrap();
 }
 
+async fn install_api_key_fixtures(pool: &PgPool) {
+    for fixture in [
+        ApiKeyFixture {
+            id: "00000000-0000-0000-0000-0000000000b1",
+            tenant_id: "00000000-0000-0000-0000-000000000001",
+            membership_id: "00000000-0000-0000-0000-000000000011",
+            prefix: "aaaaaaaaaaaaaaaa",
+            secret_byte: 0x11,
+            scopes: &["workspace:read"],
+            state: "active",
+            expires_at_unix_ms: None,
+        },
+        ApiKeyFixture {
+            id: "00000000-0000-0000-0000-0000000000b2",
+            tenant_id: "00000000-0000-0000-0000-000000000002",
+            membership_id: "00000000-0000-0000-0000-000000000012",
+            prefix: "bbbbbbbbbbbbbbbb",
+            secret_byte: 0x22,
+            scopes: &["workspace:read"],
+            state: "active",
+            expires_at_unix_ms: None,
+        },
+        ApiKeyFixture {
+            id: "00000000-0000-0000-0000-0000000000b3",
+            tenant_id: "00000000-0000-0000-0000-000000000001",
+            membership_id: "00000000-0000-0000-0000-000000000011",
+            prefix: "cccccccccccccccc",
+            secret_byte: 0x33,
+            scopes: &["search:read"],
+            state: "active",
+            expires_at_unix_ms: None,
+        },
+        ApiKeyFixture {
+            id: "00000000-0000-0000-0000-0000000000b4",
+            tenant_id: "00000000-0000-0000-0000-000000000001",
+            membership_id: "00000000-0000-0000-0000-000000000011",
+            prefix: "dddddddddddddddd",
+            secret_byte: 0x44,
+            scopes: &["workspace:read"],
+            state: "revoked",
+            expires_at_unix_ms: None,
+        },
+        ApiKeyFixture {
+            id: "00000000-0000-0000-0000-0000000000b5",
+            tenant_id: "00000000-0000-0000-0000-000000000001",
+            membership_id: "00000000-0000-0000-0000-000000000011",
+            prefix: "eeeeeeeeeeeeeeee",
+            secret_byte: 0x55,
+            scopes: &["workspace:read"],
+            state: "active",
+            expires_at_unix_ms: Some(1_767_312_000_000),
+        },
+    ] {
+        let id = Uuid::parse_str(fixture.id).unwrap();
+        let tenant_id = Uuid::parse_str(fixture.tenant_id).unwrap();
+        let membership_id = Uuid::parse_str(fixture.membership_id).unwrap();
+        let scopes = fixture
+            .scopes
+            .iter()
+            .map(|scope| (*scope).to_owned())
+            .collect::<Vec<_>>();
+        sqlx::query(
+            "INSERT INTO api_keys (\
+                id, tenant_id, created_by_membership_id, scopes, state, created_at, \
+                expires_at, revoked_at\
+             ) VALUES (\
+                $1, $2, $3, $4, $5, '2026-01-01T00:00:00Z', \
+                CASE WHEN $6::bigint IS NULL THEN NULL \
+                     ELSE to_timestamp($6::double precision / 1000.0) END, \
+                CASE WHEN $5 = 'revoked' THEN '2026-01-02T00:00:00Z'::timestamptz \
+                     ELSE NULL END\
+             )",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .bind(membership_id)
+        .bind(scopes)
+        .bind(fixture.state)
+        .bind(fixture.expires_at_unix_ms)
+        .execute(pool)
+        .await
+        .unwrap();
+        let hash = Sha256::digest([fixture.secret_byte; 32]);
+        sqlx::query(
+            "INSERT INTO api_key_credentials \
+             (key_prefix, tenant_id, api_key_id, secret_hash, created_at) \
+             VALUES ($1, $2, $3, $4, '2026-01-01T00:00:00Z')",
+        )
+        .bind(fixture.prefix)
+        .bind(tenant_id)
+        .bind(id)
+        .bind(&hash[..])
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+struct ApiKeyFixture {
+    id: &'static str,
+    tenant_id: &'static str,
+    membership_id: &'static str,
+    prefix: &'static str,
+    secret_byte: u8,
+    scopes: &'static [&'static str],
+    state: &'static str,
+    expires_at_unix_ms: Option<i64>,
+}
+
+async fn assert_api_key_scope_constraints(pool: &PgPool) {
+    let duplicate_scope = sqlx::query(
+        "INSERT INTO api_keys (\
+            id, tenant_id, created_by_membership_id, scopes, created_at\
+         ) VALUES (\
+            '00000000-0000-0000-0000-0000000000bf', \
+            '00000000-0000-0000-0000-000000000001', \
+            '00000000-0000-0000-0000-000000000011', \
+            ARRAY['workspace:read', 'workspace:read'], \
+            '2026-01-01T00:00:00Z'\
+         )",
+    )
+    .execute(pool)
+    .await
+    .unwrap_err();
+    assert_database_code(duplicate_scope, "23514");
+}
+
 async fn assert_tenant_isolation(pool: &PgPool) {
     pool.execute(sqlx::raw_sql(
         r#"
         DO $$
         BEGIN
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'socialname_migration_test_app') THEN
-                CREATE ROLE socialname_migration_test_app NOLOGIN;
+                CREATE ROLE socialname_migration_test_app
+                    LOGIN PASSWORD 'socialname-test-password'
+                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
             END IF;
         END
         $$;
+        ALTER ROLE socialname_migration_test_app
+            LOGIN PASSWORD 'socialname-test-password'
+            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        GRANT USAGE ON SCHEMA public TO socialname_migration_test_app;
         GRANT SELECT, INSERT ON tenants, memberships TO socialname_migration_test_app;
+        GRANT SELECT ON api_keys TO socialname_migration_test_app;
+        GRANT UPDATE (last_used_at) ON api_keys TO socialname_migration_test_app;
+        GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
+            TO socialname_migration_test_app;
         "#,
     ))
     .await
@@ -353,6 +508,35 @@ async fn assert_tenant_isolation(pool: &PgPool) {
     .unwrap_err();
     assert_database_code(error, "42501");
     transaction.rollback().await.unwrap();
+
+    let can_read_credentials: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            'socialname_migration_test_app', 'api_key_credentials', 'SELECT'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(!can_read_credentials);
+
+    let can_update_last_used: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'api_keys', 'last_used_at', 'UPDATE'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let can_update_scopes: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'api_keys', 'scopes', 'UPDATE'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(can_update_last_used);
+    assert!(!can_update_scopes);
 }
 
 async fn assert_cross_tenant_references_are_rejected(pool: &PgPool) {
@@ -533,6 +717,130 @@ async fn assert_deletion_deadlines_and_receipts(pool: &PgPool) {
     ))
     .await
     .unwrap();
+}
+
+async fn assert_authenticated_workspace_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+
+    let ready_response = server_request(&application_pool, "/health/ready", None).await;
+    assert_eq!(ready_response.status(), StatusCode::OK);
+    assert_eq!(json_body(ready_response).await["status"], "ready");
+
+    let missing = server_request(&application_pool, "/v1/workspace", None).await;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(missing.headers()[WWW_AUTHENTICATE], "Bearer");
+    assert_api_error(missing, ApiErrorCode::Unauthenticated).await;
+
+    let wrong_secret = api_key_token("aaaaaaaaaaaaaaaa", 0xff);
+    let invalid = server_request(&application_pool, "/v1/workspace", Some(&wrong_secret)).await;
+    assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+    assert_api_error(invalid, ApiErrorCode::Unauthenticated).await;
+
+    let insufficient_scope = api_key_token("cccccccccccccccc", 0x33);
+    let forbidden = server_request(
+        &application_pool,
+        "/v1/workspace",
+        Some(&insufficient_scope),
+    )
+    .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert_api_error(forbidden, ApiErrorCode::Forbidden).await;
+
+    let tenant_one_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let tenant_one =
+        server_request(&application_pool, "/v1/workspace", Some(&tenant_one_token)).await;
+    assert_eq!(tenant_one.status(), StatusCode::OK);
+    let tenant_one_json = json_body(tenant_one).await;
+    let tenant_one_resource: WorkspaceResource =
+        serde_json::from_value(tenant_one_json.clone()).unwrap();
+    assert!(tenant_one_resource.validate().is_ok());
+    assert_eq!(tenant_one_resource.slug, "tenant-one");
+    assert_eq!(
+        tenant_one_resource.authenticated_api_key.key_prefix,
+        "aaaaaaaaaaaaaaaa"
+    );
+    let serialized = tenant_one_json.to_string();
+    assert!(!serialized.contains(&tenant_one_token));
+    assert!(!serialized.contains("secret"));
+    assert!(!serialized.contains("hash"));
+
+    let tenant_two_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let tenant_two =
+        server_request(&application_pool, "/v1/workspace", Some(&tenant_two_token)).await;
+    assert_eq!(tenant_two.status(), StatusCode::OK);
+    let tenant_two_resource: WorkspaceResource =
+        serde_json::from_value(json_body(tenant_two).await).unwrap();
+    assert_eq!(tenant_two_resource.slug, "tenant-two");
+    assert_ne!(
+        tenant_one_resource.workspace_id,
+        tenant_two_resource.workspace_id
+    );
+
+    for token in [
+        api_key_token("dddddddddddddddd", 0x44),
+        api_key_token("eeeeeeeeeeeeeeee", 0x55),
+    ] {
+        let response = server_request(&application_pool, "/v1/workspace", Some(&token)).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_api_error(response, ApiErrorCode::Unauthenticated).await;
+    }
+
+    let last_used_recorded: bool = sqlx::query_scalar(
+        "SELECT last_used_at IS NOT NULL FROM api_keys \
+         WHERE id = '00000000-0000-0000-0000-0000000000b1'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(last_used_recorded);
+
+    let closed_pool = application_pool.clone();
+    application_pool.close().await;
+    let not_ready = server_request(&closed_pool, "/health/ready", None).await;
+    assert_eq!(not_ready.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(json_body(not_ready).await["status"], "not_ready");
+}
+
+async fn server_request(pool: &PgPool, uri: &str, token: Option<&str>) -> Response {
+    let mut request = Request::builder().uri(uri);
+    if let Some(token) = token {
+        request = request.header(AUTHORIZATION, format!("Bearer {token}"));
+    }
+    build_router(test_server_config(), pool.clone())
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+fn test_server_config() -> ServerConfig {
+    ServerConfig::new(
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        Duration::from_secs(1),
+        4_096,
+        8,
+    )
+    .unwrap()
+}
+
+fn api_key_token(prefix: &str, secret_byte: u8) -> String {
+    format!("snk_v1_{prefix}_{}", hex::encode([secret_byte; 32]))
+}
+
+async fn json_body(response: Response) -> serde_json::Value {
+    let bytes = to_bytes(response.into_body(), 64 * 1_024).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn assert_api_error(response: Response, expected: ApiErrorCode) {
+    let error: ApiErrorResponse = serde_json::from_value(json_body(response).await).unwrap();
+    assert_eq!(error.error.code, expected);
+    assert!(error.validate().is_ok());
 }
 
 fn assert_database_code(error: sqlx::Error, expected: &str) {

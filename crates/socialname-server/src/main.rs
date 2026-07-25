@@ -1,6 +1,9 @@
 use std::{env, error::Error, ffi::OsString, future};
 
-use socialname_server::{ServerConfig, migrate_database_from_env};
+use socialname_server::{
+    ServerConfig, bootstrap_workspace_from_env, connect_runtime_database_from_env,
+    issue_api_key_from_env, migrate_database_from_env, revoke_api_key_from_env,
+};
 use thiserror::Error;
 use tracing_subscriber::EnvFilter;
 
@@ -10,16 +13,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match command_from_args(env::args_os())? {
         Command::Serve => run_server().await?,
         Command::Migrate => migrate_database_from_env().await?,
+        Command::BootstrapWorkspace => {
+            bootstrap_workspace_from_env()
+                .await?
+                .write_once_to_stdout()?;
+        }
+        Command::IssueApiKey => {
+            issue_api_key_from_env().await?.write_once_to_stdout()?;
+        }
+        Command::RevokeApiKey => {
+            let api_key_id = revoke_api_key_from_env().await?;
+            println!("api_key_id={api_key_id}");
+            println!("state=revoked");
+        }
     }
     Ok(())
 }
 
 async fn run_server() -> Result<(), Box<dyn Error>> {
     let config = ServerConfig::from_env()?;
+    let database = connect_runtime_database_from_env().await?;
     let listener = tokio::net::TcpListener::bind(config.bind_address()).await?;
     let local_address = listener.local_addr()?;
     tracing::info!(bind_address = %local_address, "socialname server listening");
-    socialname_server::serve(listener, config, shutdown_signal()).await?;
+    socialname_server::serve(listener, config, database, shutdown_signal()).await?;
     Ok(())
 }
 
@@ -27,10 +44,15 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
 enum Command {
     Serve,
     Migrate,
+    BootstrapWorkspace,
+    IssueApiKey,
+    RevokeApiKey,
 }
 
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-#[error("expected no arguments or exactly `migrate`")]
+#[error(
+    "expected no arguments or one of `migrate`, `bootstrap-workspace`, `issue-api-key`, or `revoke-api-key`"
+)]
 struct CommandError;
 
 fn command_from_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, CommandError> {
@@ -39,6 +61,11 @@ fn command_from_args(args: impl IntoIterator<Item = OsString>) -> Result<Command
     match (args.next(), args.next()) {
         (None, None) => Ok(Command::Serve),
         (Some(argument), None) if argument == "migrate" => Ok(Command::Migrate),
+        (Some(argument), None) if argument == "bootstrap-workspace" => {
+            Ok(Command::BootstrapWorkspace)
+        }
+        (Some(argument), None) if argument == "issue-api-key" => Ok(Command::IssueApiKey),
+        (Some(argument), None) if argument == "revoke-api-key" => Ok(Command::RevokeApiKey),
         _ => Err(CommandError),
     }
 }
@@ -94,12 +121,16 @@ mod tests {
     }
 
     #[test]
-    fn no_subcommand_serves_and_exact_migrate_runs_migrations() {
+    fn exact_supported_commands_are_closed() {
         assert_eq!(command_from_args(args(&["server"])), Ok(Command::Serve));
-        assert_eq!(
-            command_from_args(args(&["server", "migrate"])),
-            Ok(Command::Migrate)
-        );
+        for (name, expected) in [
+            ("migrate", Command::Migrate),
+            ("bootstrap-workspace", Command::BootstrapWorkspace),
+            ("issue-api-key", Command::IssueApiKey),
+            ("revoke-api-key", Command::RevokeApiKey),
+        ] {
+            assert_eq!(command_from_args(args(&["server", name])), Ok(expected));
+        }
     }
 
     #[test]

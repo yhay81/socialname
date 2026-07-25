@@ -1,20 +1,23 @@
 use std::{env, time::Duration};
 
-use sqlx::{migrate::Migrator, postgres::PgPoolOptions};
+use sqlx::{PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use thiserror::Error;
 
 pub const DATABASE_URL_ENV: &str = "SOCIALNAME_DATABASE_URL";
+pub const RUNTIME_DATABASE_URL_ENV: &str = "SOCIALNAME_SERVER_DATABASE_URL";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MIGRATION_TIMEOUT: Duration = Duration::from_secs(60);
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+const RUNTIME_MAXIMUM_CONNECTIONS: u32 = 16;
 
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 pub enum DatabaseError {
-    #[error("{DATABASE_URL_ENV} is required to run database migrations")]
-    MissingUrl,
-    #[error("{DATABASE_URL_ENV} must contain valid Unicode")]
-    InvalidUrlEncoding,
+    #[error("{0} is required")]
+    MissingUrl(&'static str),
+    #[error("{0} must contain valid Unicode")]
+    InvalidUrlEncoding(&'static str),
     #[error("database connection timed out")]
     ConnectionTimedOut,
     #[error("database connection failed")]
@@ -26,27 +29,21 @@ pub enum DatabaseError {
 }
 
 pub async fn migrate_database_from_env() -> Result<(), DatabaseError> {
-    let database_url = env::var(DATABASE_URL_ENV).map_err(|error| match error {
-        env::VarError::NotPresent => DatabaseError::MissingUrl,
-        env::VarError::NotUnicode(_) => DatabaseError::InvalidUrlEncoding,
-    })?;
+    let database_url = database_url_from_env(DATABASE_URL_ENV)?;
     migrate_database(&database_url).await
+}
+
+pub async fn connect_runtime_database_from_env() -> Result<PgPool, DatabaseError> {
+    let database_url = database_url_from_env(RUNTIME_DATABASE_URL_ENV)?;
+    connect_database(&database_url, RUNTIME_MAXIMUM_CONNECTIONS).await
 }
 
 pub async fn migrate_database(database_url: &str) -> Result<(), DatabaseError> {
     if database_url.is_empty() {
-        return Err(DatabaseError::MissingUrl);
+        return Err(DatabaseError::MissingUrl(DATABASE_URL_ENV));
     }
 
-    let pool = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        PgPoolOptions::new()
-            .max_connections(1)
-            .connect(database_url),
-    )
-    .await
-    .map_err(|_| DatabaseError::ConnectionTimedOut)?
-    .map_err(|_| DatabaseError::ConnectionFailed)?;
+    let pool = connect_database(database_url, 1).await?;
 
     let migration_result = tokio::time::timeout(MIGRATION_TIMEOUT, MIGRATOR.run(&pool))
         .await
@@ -56,6 +53,37 @@ pub async fn migrate_database(database_url: &str) -> Result<(), DatabaseError> {
     migration_result
 }
 
+pub(crate) async fn connect_database(
+    database_url: &str,
+    maximum_connections: u32,
+) -> Result<PgPool, DatabaseError> {
+    if database_url.is_empty() {
+        return Err(DatabaseError::MissingUrl(DATABASE_URL_ENV));
+    }
+    tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        PgPoolOptions::new()
+            .max_connections(maximum_connections)
+            .acquire_timeout(ACQUIRE_TIMEOUT)
+            .connect(database_url),
+    )
+    .await
+    .map_err(|_| DatabaseError::ConnectionTimedOut)?
+    .map_err(|_| DatabaseError::ConnectionFailed)
+}
+
+pub(crate) fn database_url_from_env(variable: &'static str) -> Result<String, DatabaseError> {
+    let value = env::var(variable).map_err(|error| match error {
+        env::VarError::NotPresent => DatabaseError::MissingUrl(variable),
+        env::VarError::NotUnicode(_) => DatabaseError::InvalidUrlEncoding(variable),
+    })?;
+    if value.is_empty() {
+        Err(DatabaseError::MissingUrl(variable))
+    } else {
+        Ok(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,7 +91,7 @@ mod tests {
     #[tokio::test]
     async fn empty_database_url_is_rejected_without_echoing_it() {
         let error = migrate_database("").await.unwrap_err();
-        assert_eq!(error, DatabaseError::MissingUrl);
+        assert_eq!(error, DatabaseError::MissingUrl(DATABASE_URL_ENV));
         assert!(!error.to_string().contains("postgres"));
     }
 

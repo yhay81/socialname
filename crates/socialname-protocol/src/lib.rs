@@ -7,14 +7,16 @@ mod schema;
 mod search;
 mod transition;
 mod watch;
+mod workspace;
 
 pub use common::{
-    API_V1_SCHEMA, ConsentGrantId, DefinitiveVerdict, DeliveryErrorCode, EmailAddress, EventId,
-    EvidenceClass, EvidenceDigest, Freshness, FreshnessState, HttpsUrl, IdempotencyKey,
+    API_V1_SCHEMA, ApiKeyId, ConsentGrantId, DefinitiveVerdict, DeliveryErrorCode, EmailAddress,
+    EventId, EvidenceClass, EvidenceDigest, Freshness, FreshnessState, HttpsUrl, IdempotencyKey,
     IdentifierError, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
     ObservationId, ProtocolVersion, RegionClass, RequestId, ResultSource, RuleHash,
     RuleHealthStatus, SearchId, SearchMode, SiteId, SyncPolicy, Target, TargetSelection,
     TransitionId, Username, Validate, ValidationCode, ValidationErrors, ValidationIssue, WatchId,
+    WorkspaceId,
 };
 pub use error::{ApiError, ApiErrorCode, ApiErrorResponse, FieldViolation};
 pub use notification::{
@@ -35,4 +37,7 @@ pub use transition::{
 pub use watch::{
     ProbeBudget, WatchCreateRequest, WatchPatchRequest, WatchResource, WatchSchedule, WatchState,
     WatchStateUpdate,
+};
+pub use workspace::{
+    ApiKeyScope, ApiKeyState, AuthenticatedApiKeyResource, WorkspaceResource, WorkspaceState,
 };
