@@ -19,11 +19,14 @@ use socialname_canary::{
     PromotionVerifier, ValidatedCanaryReport,
 };
 use socialname_domain::{RuleHealthPolicy, RuleHealthRecord};
-use socialname_engine::SearchEngine;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_testkit::verify_fixtures;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
+
+mod search_command;
+
+use search_command::{SearchPolicy, SearchRuleHealth, SearchSource, SyncPolicy};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -44,7 +47,7 @@ enum Command {
     Canaries(Box<CanaryArgs>),
     /// Verify deterministic response fixtures against the rule pack.
     Fixtures(FixtureArgs),
-    /// Run one private local probe using the shared Rust engine.
+    /// Search one site using an explicit local or cache source.
     Search(SearchArgs),
 }
 
@@ -278,6 +281,22 @@ struct SearchArgs {
     site: String,
     #[arg(long, default_value = "rules/sites")]
     rules_dir: PathBuf,
+    /// Select live local probing or strictly offline cache lookup.
+    #[arg(long, value_enum, default_value_t = SearchSource::Local)]
+    source: SearchSource,
+    /// Synchronization is independent of source; only never is implemented.
+    #[arg(long, value_enum, default_value_t = SyncPolicy::Never)]
+    sync: SyncPolicy,
+    /// User-controlled SQLite cache path. Required by cache source.
+    #[arg(long)]
+    cache_path: Option<PathBuf>,
+    /// Exact regional rule-health record used for cache eligibility.
+    #[arg(long)]
+    rule_health_record: Option<PathBuf>,
+    #[arg(long, default_value = "local")]
+    region_class: String,
+    #[arg(long, default_value_t = 86_400_000)]
+    maximum_age_ms: i64,
     /// Permit a live probe for a rule that is still discovery-only.
     #[arg(long)]
     allow_disabled: bool,
@@ -996,27 +1015,69 @@ async fn run_search(arguments: SearchArgs) -> Result<()> {
         .iter()
         .find(|rule| rule.source.id == arguments.site)
         .with_context(|| format!("unknown site {:?}", arguments.site))?;
-    if !rule.source.metadata.enabled && !arguments.allow_disabled {
+    if arguments.source == SearchSource::Local
+        && !rule.source.metadata.enabled
+        && !arguments.allow_disabled
+    {
         bail!(
             "site {:?} is discovery-only; pass --allow-disabled to probe explicitly",
             arguments.site
         );
     }
 
-    let result = SearchEngine::new()?.search(rule, &arguments.username).await;
-    if arguments.json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        println!(
-            "{}\t{:?}\t{:?}\t{}",
-            result.site_id,
-            result.classification.verdict,
-            result.classification.evidence_class,
-            result.profile_url.as_deref().unwrap_or("-")
-        );
-        if let Some(reason) = result.classification.inconclusive_reason {
-            println!("reason\t{reason:?}");
+    let health = arguments
+        .rule_health_record
+        .as_deref()
+        .map(load_rule_health_record)
+        .transpose()?
+        .map(|record| {
+            record.validate(RuleHealthPolicy::default())?;
+            if record.key.site_id.as_str() != rule.source.id
+                || record.key.rule_hash != rule.rule_hash
+                || record.key.region != arguments.region_class
+            {
+                bail!("rule-health record does not match the selected site, rule hash, and region");
+            }
+            Ok(SearchRuleHealth {
+                state: record.state,
+                evidence_expires_at_unix_ms: record.last_evidence_expires_at_unix_ms,
+            })
+        })
+        .transpose()?;
+    let cache = match arguments.cache_path.as_deref() {
+        Some(path) if arguments.source == SearchSource::Cache && !path.exists() => None,
+        Some(path) => Some(
+            socialname_cache::LocalCache::open(path)
+                .await
+                .context("failed to open the local observation cache")?,
+        ),
+        None if arguments.source == SearchSource::Cache => {
+            bail!("cache source requires --cache-path")
         }
+        None => None,
+    };
+    let execution = search_command::execute_search(
+        rule,
+        &arguments.username,
+        SearchPolicy {
+            source: arguments.source,
+            sync: arguments.sync,
+            region_class: arguments.region_class,
+            maximum_age_ms: arguments.maximum_age_ms,
+        },
+        health,
+        cache.as_ref(),
+        || socialname_engine::SearchEngine::new().map_err(Into::into),
+    )
+    .await;
+    if let Some(cache) = cache {
+        cache.close().await;
+    }
+    let output = execution?;
+    if arguments.json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("{}", output.human());
     }
     Ok(())
 }
@@ -1053,4 +1114,61 @@ fn initialize_tracing() {
         .with_target(false)
         .compact()
         .init();
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn search_defaults_to_local_with_sync_never() {
+        let cli =
+            Cli::try_parse_from(["socialname", "search", "octocat", "--site", "github"]).unwrap();
+        let Command::Search(arguments) = cli.command else {
+            panic!("expected search command");
+        };
+        assert_eq!(arguments.source, SearchSource::Local);
+        assert_eq!(arguments.sync, SyncPolicy::Never);
+        assert!(arguments.cache_path.is_none());
+    }
+
+    #[test]
+    fn cache_source_is_explicit_and_unknown_sync_is_rejected() {
+        let cli = Cli::try_parse_from([
+            "socialname",
+            "search",
+            "octocat",
+            "--site",
+            "github",
+            "--source",
+            "cache",
+            "--sync",
+            "never",
+            "--cache-path",
+            "cache.sqlite3",
+        ])
+        .unwrap();
+        let Command::Search(arguments) = cli.command else {
+            panic!("expected search command");
+        };
+        assert_eq!(arguments.source, SearchSource::Cache);
+        assert_eq!(arguments.sync, SyncPolicy::Never);
+        assert_eq!(
+            arguments.cache_path.as_deref(),
+            Some(Path::new("cache.sqlite3"))
+        );
+
+        assert!(
+            Cli::try_parse_from([
+                "socialname",
+                "search",
+                "octocat",
+                "--site",
+                "github",
+                "--sync",
+                "private",
+            ])
+            .is_err()
+        );
+    }
 }

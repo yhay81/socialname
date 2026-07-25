@@ -17,12 +17,15 @@ anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
 hex.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 socialname-canary = { path = "../socialname-canary" }
+socialname-cache = { path = "../socialname-cache" }
 socialname-domain = { path = "../socialname-domain" }
 socialname-engine = { path = "../socialname-engine" }
 socialname-rule-compiler = { path = "../socialname-rule-compiler" }
 socialname-testkit = { path = "../socialname-testkit" }
+sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
