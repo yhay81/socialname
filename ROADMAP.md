@@ -64,9 +64,9 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add authenticated private workspaces and hashed, scoped
-API keys over the PostgreSQL tenant boundary without implementing search routes
-ahead of their roadmap item.
+Next executable item: implement idempotent private search creation and ordered
+SSE partial-result streaming behind `search:write`, without implementing worker
+execution ahead of its roadmap item.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -461,7 +461,7 @@ derives a trustworthy transition, and delivers one auditable notification.
 - [x] Add PostgreSQL migrations for tenants, credentials, sites, rule versions,
       searches, jobs, observations, assertion support, watches, transitions,
       notification endpoints, deliveries, consent, lineage, and deletion tasks.
-- [ ] Add authenticated private workspaces and hashed, scoped API keys.
+- [x] Add authenticated private workspaces and hashed, scoped API keys.
 - [ ] Implement idempotent search creation and SSE partial-result streaming.
 - [ ] Add `socialname-worker` with signed-rule-only execution and managed-probe
       SSRF/DNS-rebinding defenses.
@@ -482,12 +482,12 @@ Protocol-slice evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-protocol
-# 21 unit tests and 4 public contract tests passed
+# 24 unit tests and 4 public contract tests passed
 cargo clippy --locked -p socialname-protocol --all-targets --all-features -- -D warnings
 ```
 
 `socialname-protocol` owns the independent
-`socialname.dev/api/v1` snake-case wire contract and Draft 2020-12 schema roots.
+`socialname.dev/api/v1` closed wire contract and Draft 2020-12 schema roots.
 It does not serialize mutable domain or app-core types directly. Search events
 separate definitive observations, uncertainty, and operational failure; actual
 source and derived freshness remain explicit. Requests are bounded, reject
@@ -500,28 +500,28 @@ delivery construction only from a validated confirmed transition. Watch
 schedule, budget, retention, revision, and next-run relations are deterministic
 and validated without arbitrary cron or code.
 
-Server-shell evidence:
+Server-runtime evidence:
 
 ```console
 cargo fmt --all -- --check
-cargo test --locked -p socialname-server
-# 10 passed: configuration, bounds, health, error boundary, deadline, and shutdown
+cargo test --locked -p socialname-server --all-targets
+# 20 library, 2 binary, and 1 PostgreSQL integration test passed
 cargo clippy --locked -p socialname-server --all-targets --all-features -- -D warnings
 cargo build --locked -p socialname-server
 ```
 
 `socialname-server` is an explicit Axum 0.8/Tower 0.5 binary with a
-loopback-only default. It exposes only versioned liveness/readiness documents;
-search, watch, notification, authentication, and persistence routes remain
-absent. Configuration bounds the handler deadline, declared/default body size,
+loopback-only default. It exposes versioned liveness, PostgreSQL-aware
+readiness, and one authenticated `GET /v1/workspace`; search, watch,
+notification, and HTTP administration routes remain absent. Configuration
+bounds the handler deadline, declared/default body size, database acquisition,
 and in-flight work, and rejects invalid values without echoing them. One outer
 request guard supplies a closed request ID, protocol JSON errors, no-store and
 nosniff response headers, and method/status/latency-only tracing that never logs
-the URI, headers, body, or target. Unknown routes, unsupported methods, body
-overflow, invalid content length, and deadlines cannot become account verdicts.
-The binary drains through injected graceful shutdown, Ctrl-C, and Unix SIGTERM.
-Readiness is dependency-free for this shell and must become PostgreSQL-aware in
-the next authenticated-workspace slice before a private route is exposed.
+the URI, headers, body, target, credential, or database URL. Unknown routes,
+unsupported methods, body overflow, invalid content length, authentication
+failure, storage failure, and deadlines cannot become account verdicts. The
+binary drains through injected graceful shutdown, Ctrl-C, and Unix SIGTERM.
 
 PostgreSQL-schema evidence:
 
@@ -529,7 +529,7 @@ PostgreSQL-schema evidence:
 cargo fmt --all -- --check
 cargo run --locked -p socialname-server -- migrate
 cargo test --locked --workspace --all-targets
-# socialname-server: 12 library, 2 binary, and 1 PostgreSQL integration test passed
+# socialname-server: 20 library, 2 binary, and 1 PostgreSQL integration test passed
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-cli -- rules validate
 # validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
@@ -543,24 +543,50 @@ npm run check
 npm run build
 ```
 
-The embedded SQLx migration creates 29 bounded product tables and 25
+The two embedded SQLx migrations create 30 bounded product tables and 25
 tenant-isolation policies with forced RLS. Composite tenant foreign keys,
 immutable observation and support history, closed observation outcomes,
 transition-specific confirmation bases, exact confirmed-delivery checks,
 encrypted notification destinations, ordered deletion deadlines, receipts,
 lineage, and HMAC-only suppression tokens preserve the trust and privacy
-boundaries before routes exist. A separate `migrate` command requires an
-explicit database URL, uses one connection with connection/migration deadlines,
-and returns fixed errors without reflecting credentials.
+boundaries. A separate `migrate` command requires an explicit schema-owner
+database URL, uses one connection with connection/migration deadlines, and
+returns fixed errors without reflecting credentials.
 
 The CI core job runs both the operator command and an integration test against
-`postgres:18-alpine`. The test reapplies the migration, inventories all tables
-and forced-RLS policies, uses a real non-owner role to prove tenant isolation,
-rejects cross-tenant references and observation mutation, suppresses
-shared-only absence delivery, accepts an independently confirmed delivery, and
-checks deletion deadlines, receipts, and lineage. The HTTP shell still exposes
-no authentication or product persistence route; database-aware readiness is an
-acceptance condition of the next authenticated-workspace slice.
+`postgres:18-alpine`. The test reapplies both migrations, inventories all
+tables and forced-RLS policies, uses a real non-owner `NOBYPASSRLS` role to
+prove tenant isolation, rejects cross-tenant references and observation
+mutation, suppresses shared-only absence delivery, accepts an independently
+confirmed delivery, and checks deletion deadlines, receipts, and lineage.
+
+Authenticated-workspace evidence:
+
+```console
+cargo fmt --all -- --check
+cargo run --locked -p socialname-server -- migrate
+cargo test --locked -p socialname-protocol -p socialname-server --all-targets
+# protocol: 24 unit + 4 contract; server: 20 library + 2 binary + 1 PostgreSQL
+cargo clippy --locked -p socialname-protocol -p socialname-server --all-targets --all-features -- -D warnings
+```
+
+API keys have an independent 64-bit CSPRNG prefix and 256-bit CSPRNG secret.
+Only a SHA-256 digest is stored in the restricted global lookup; the presented
+key is one-time output and redacted from ordinary formatting and errors. A
+closed, duplicate-free scope set is enforced by protocol validation and
+PostgreSQL. Transactional operator commands create an owner workspace, issue
+keys only for active owner/administrator memberships, revoke keys, and append
+audit events without leaving partial state.
+
+The runtime uses a separate non-owner role with no direct credential-table
+access and column-limited update permission for `api_keys.last_used_at`.
+Authentication performs only the prefix/digest lookup before the tenant is
+known, then rechecks active tenant, key state, expiry, and exact route scope
+under transaction-local forced RLS. The PostgreSQL 18 test proves two-tenant
+isolation, wrong/revoked/expired uniform denial, distinct insufficient-scope
+denial, digest-only persistence, privilege revocation, last-use recording, and
+readiness degradation. `GET /v1/workspace` returns validated nonsecret
+workspace/key metadata; all later private routes remain closed.
 
 Software acceptance gate:
 

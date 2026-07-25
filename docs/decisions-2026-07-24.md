@@ -107,8 +107,15 @@ so status does not diverge across design records.
 - The modular-monolith server starts as a separate Axum/Tower binary with a
   loopback-only default, bounded deadline/body/concurrency, target-free request
   tracing, closed protocol errors, hardened health responses, and graceful
-  shutdown. No search, watch, notification, authentication, or persistence
-  route exists until its ordered slice supplies the complete boundary.
+  shutdown. A product route does not exist until its ordered slice supplies the
+  complete authentication, authorization, persistence, and failure boundary.
+- API keys use an independent 64-bit public prefix and 256-bit CSPRNG secret;
+  only SHA-256 secret digests are stored. Authentication performs a restricted
+  global digest lookup because the tenant is not yet known, then rechecks
+  active key, expiry, scope, and tenant through a non-owner connection under
+  forced transaction-local RLS. Operator-only bootstrap, issue, and revoke
+  operations are transactional and audited; the one-time secret is never a
+  protocol resource or normal log value.
 
 ## Detailed records
 
@@ -126,6 +133,7 @@ so status does not diverge across design records.
 - [Public protocol v1](protocol-v1.md)
 - [Modular-monolith server shell](server.md)
 - [PostgreSQL schema and migrations](postgresql-schema.md)
+- [Authenticated private workspaces and API keys](authenticated-workspaces.md)
 
 ## Implementation baseline
 
@@ -143,8 +151,11 @@ so status does not diverge across design records.
 8. **Done:** Add the bounded Axum/Tower modular-monolith process shell.
 9. **Done:** Add the embedded PostgreSQL schema, forced tenant RLS, lineage,
    deletion, and real PostgreSQL 18 migration gate.
+10. **Done:** Add transactional workspace/API-key operator lifecycle,
+    digest-only credential authentication, a non-owner forced-RLS runtime
+    boundary, database-aware readiness, and the first private workspace route.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
 work is the first paid monitoring loop in Milestone 2, continuing with
-authenticated private workspaces and hashed scoped API keys.
+idempotent search creation and ordered SSE partial-result streaming.

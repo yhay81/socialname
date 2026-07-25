@@ -26,7 +26,8 @@ API schema version; it is not silently treated as an additive v1 change.
 - predictable API errors;
 - watch creation, revision-checked patching, and watch resources;
 - transitions;
-- notification endpoint creation/resources and delivery state.
+- notification endpoint creation/resources and delivery state;
+- authenticated private-workspace resources and API-key scope metadata.
 
 Runtime `Validate` checks supplement JSON Schema where a rule relates multiple
 fields, such as freshness classification, progress totals, consent, transition
@@ -46,6 +47,10 @@ redacted. Validation and API errors report a field plus a closed code without
 echoing the rejected value. The protocol contains no complete HTTP body, cookie,
 credential, response excerpt, network-group identifier, or unrelated profile
 data.
+
+The protocol intentionally contains no API-key bearer token or secret digest.
+Workspace resources expose only the authenticated key's opaque ID, public
+prefix, closed scopes, state, and optional expiry.
 
 HTTPS parsing proves only bounded syntax, a host, and the absence of embedded
 credentials. It does not authorize a webhook or profile destination. The server
@@ -80,6 +85,21 @@ Actual result source is distinct from requested mode:
 `Freshness` records observed, expiry, evaluation, and maximum-age timestamps.
 Its `current`, `stale`, or `expired` state is derived from those values and
 validation rejects relabelling.
+
+## Authenticated workspace
+
+`WorkspaceResource` is the response contract for `GET /v1/workspace`. It
+contains the workspace's opaque ID, bounded slug/display name, state, and one
+`AuthenticatedApiKeyResource`. API-key scopes are a closed enum covering
+workspace read and the planned search, watch, notification, export, and
+deletion capabilities. The resource rejects empty or duplicate scope sets and
+invalid public prefixes.
+
+This DTO represents an already authenticated principal; it does not parse a
+bearer token or grant access. The server separately verifies the token digest,
+active/nonexpired key state, exact route scope, active tenant, and
+transaction-local tenant RLS. A scope whose route has not been implemented
+does not create that capability.
 
 ## Ordered search events
 
@@ -177,4 +197,6 @@ Unit and public integration tests cover exact v1 JSON, schema roots, unknown
 field rejection, redaction, selection and execution bounds, consent relations,
 freshness relabelling, result/failure separation, progress consistency, watch
 revision and schedule rules, transition confirmation, shared-only absence,
-write-only notification destinations, and delivery state consistency.
+write-only notification destinations, delivery state consistency, bounded
+workspace metadata, closed unique API-key scopes, and absence of key
+secret/digest fields.

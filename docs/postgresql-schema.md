@@ -2,9 +2,10 @@
 
 The managed SocialName data model starts as one PostgreSQL source of truth.
 Migration `0001_initial.sql` creates the storage needed by the ordered
-Milestone 2 monitoring loop while leaving authentication, search routes, job
-claims, assertion recomputation, and delivery workers closed for their own
-vertical slices.
+Milestone 2 monitoring loop. Migration `0002_api_key_authentication.sql` adds
+the restricted credential lookup needed by the authenticated private-workspace
+slice. Search routes, job claims, assertion recomputation, and delivery workers
+remain closed for their own vertical slices.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -31,13 +32,13 @@ credential must not be used by request handlers or workers. This initial
 migration is forward-only; destructive rollback is an explicit reviewed
 migration plus restore plan, not an automatic down script.
 
-## Initial tables
+## Product tables
 
-The migration creates 29 product tables:
+The migrations create 30 product tables:
 
 | Boundary | Tables |
 | --- | --- |
-| Tenant and credentials | `tenants`, `memberships`, `api_keys`, `clients` |
+| Tenant and credentials | `tenants`, `memberships`, `api_keys`, `api_key_credentials`, `clients` |
 | Site and rules | `sites`, `rule_packs`, `rule_versions`, `rule_health_records` |
 | Consent | `consent_grants`, `consent_events` |
 | Interactive work | `searches`, `search_targets` |
@@ -57,7 +58,7 @@ forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
 
-RLS is defense in depth, not authentication. Every future application
+RLS is defense in depth, not authentication. Every application
 transaction must:
 
 1. authenticate and authorize the caller before database access;
@@ -66,18 +67,35 @@ transaction must:
 4. keep all tenant work inside the same transaction and connection.
 
 Connection-level tenant state must never be allowed to leak through a pool.
-The authenticated-workspace slice must test this contract before exposing the
-first private route. The migration test uses a real non-owner role and proves
-that one tenant cannot read or insert another tenant row.
+The authenticated-workspace route implements this contract. Its integration
+test uses a real `LOGIN NOSUPERUSER NOBYPASSRLS` non-owner role and proves that
+one tenant cannot read or insert another tenant row.
 
 Tenant-owned relationships use composite `(tenant_id, id)` foreign keys where
 the referenced resource is tenant-scoped. This prevents a globally unique UUID
 from being used to smuggle a cross-tenant relationship past RLS.
 
+## Credential lookup boundary
+
+Authentication starts before the tenant ID is known, so
+`api_key_credentials` is intentionally outside tenant RLS. It stores only a
+64-bit public prefix, a SHA-256 digest of an independently generated 256-bit
+secret, and the tenant/key IDs. It contains no presented key, scope, target, or
+workspace display data.
+
+All `PUBLIC` table privileges are revoked. The runtime role has no direct
+access. A `SECURITY DEFINER` function with a fixed `pg_catalog` search path and
+qualified table reference performs exact prefix/digest comparison and returns
+only tenant/key IDs. `PUBLIC` execution is also revoked; deployment grants only
+that function to the non-owner runtime role. Active tenant, key state, expiry,
+and scopes are then rechecked in an ordinary transaction under forced tenant
+RLS. See [Authenticated private workspaces and API keys](authenticated-workspaces.md)
+for the complete request and operator contract.
+
 ## Trust and privacy constraints
 
-- API credentials store a bounded prefix plus a 32-byte secret hash, never the
-  presented key.
+- API credentials store a bounded public prefix plus a 32-byte secret digest
+  separately from tenant-RLS metadata, never the presented key.
 - Notification destinations store ciphertext, a destination hash, and an
   encryption-key identifier. No plaintext destination column exists.
 - Search sync outside `never` requires an explicit consent grant. Consent
@@ -124,14 +142,17 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migration twice, inventories all 29 tables and 25
-forced-RLS policies, and verifies non-owner tenant isolation, composite
+It applies the embedded migrations twice, inventories all 30 tables and 25
+forced-RLS policies, and verifies restricted credential privileges, closed
+unique scopes, non-owner authentication and tenant isolation, composite
 cross-tenant foreign keys, immutable observations, transition confirmation
 bases, shared-only notification suppression, valid confirmed delivery,
 ordered deletion deadlines, receipts, and lineage. Tests skip only when
 `SOCIALNAME_TEST_DATABASE_URL` is absent; the CI job always supplies it.
 
-The HTTP shell still opens no product database connection because no
-authenticated persistence route exists. Readiness remains shell readiness
-until the authenticated-workspace slice introduces required database access;
-that slice must make readiness storage-aware before exposing private routes.
+The HTTP process uses the separate `SOCIALNAME_SERVER_DATABASE_URL` runtime
+credential. Startup requires a database connection, readiness is
+PostgreSQL-aware, and the first private route always authenticates and sets a
+transaction-local tenant before reading product data. The schema-owner
+`SOCIALNAME_DATABASE_URL` remains limited to migration and explicit
+workspace/key operator commands.

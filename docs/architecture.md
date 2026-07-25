@@ -269,7 +269,8 @@ Initial PostgreSQL tables:
 | --- | --- |
 | `tenants` | Users and team workspaces |
 | `memberships` | Roles and workspace access |
-| `api_keys` | Hashed API credentials and scopes |
+| `api_keys` | Tenant-RLS API-key scopes, lifecycle, and audit metadata |
+| `api_key_credentials` | Restricted public-prefix and secret-digest lookup |
 | `clients` | Authenticated CLI installations and consent state |
 | `sites` | Stable site identity and metadata |
 | `rule_packs` | Published pack metadata, hashes, and rollout state |
@@ -314,6 +315,21 @@ Deletion must remove derived assertions when their supporting private
 observations are deleted.
 
 ## API shape
+
+### Authentication and workspace
+
+```http
+GET /v1/workspace
+```
+
+The first implemented private route accepts a strict bearer API key, performs
+digest lookup without exposing the credential table, then rechecks active
+tenant, key expiry/state, and `workspace:read` under a non-owner,
+transaction-local forced-RLS connection. It returns workspace and nonsecret
+authenticated-key metadata only. Bootstrap, key rotation, and revocation are
+explicit audited operator commands rather than unauthenticated HTTP routes.
+The complete boundary is specified in
+[Authenticated private workspaces and API keys](authenticated-workspaces.md).
 
 ### Search
 

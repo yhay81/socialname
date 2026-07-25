@@ -68,10 +68,11 @@ The first vertical slice is implemented in the repository:
   quarantine recovery, and complete local deletion;
 - an independent public API v1 crate with closed search/SSE, error,
   source/freshness, watch, transition-confirmation, notification endpoint, and
-  delivery DTOs plus generated JSON Schema roots;
-- an operable Axum/Tower modular-monolith shell with loopback-safe defaults,
-  bounded requests, versioned health, closed errors, redacted tracing, and
-  graceful shutdown but no unauthenticated product routes;
+  delivery and authenticated-workspace DTOs plus generated JSON Schema roots;
+- an operable Axum/Tower modular monolith with loopback-safe defaults, bounded
+  requests, database-aware readiness, closed errors, redacted tracing,
+  transactional workspace/API-key operator lifecycle, digest-only bearer
+  authentication, forced tenant RLS, and one protected workspace route;
 - a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache and
   cached-first sources, immutable observation persistence, source-preserving
   refresh streaming, freshness display, cancellation, and explicit
@@ -116,6 +117,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [PostgreSQL schema and migrations](postgresql-schema.md) — embedded migration
   operation, tenant RLS, evidence and notification constraints, deletion
   lineage, and PostgreSQL 18 verification.
+- [Authenticated private workspaces and API keys](authenticated-workspaces.md)
+  — one-time key lifecycle, digest-only authentication, non-owner RLS,
+  database-aware readiness, and the first protected route.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
