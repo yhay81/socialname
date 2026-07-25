@@ -451,7 +451,7 @@ mod tests {
             last_manifest_hash: Some(MANIFEST_HASH.to_owned()),
             last_engine_hash: Some(ENGINE_HASH.to_owned()),
             last_evidence_expires_at_unix_ms: Some(event.expires_at_unix_ms),
-            last_evidence_ids: vec!["7".repeat(64)],
+            last_evidence_ids: vec!["7".repeat(64), "8".repeat(64)],
         }
     }
 

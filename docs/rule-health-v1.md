@@ -74,11 +74,14 @@ Each event carries:
   identities for acceptance.
 
 The record retains the latest admitted manifest and engine hashes, evidence
-identities, and evidence expiry. The pure state machine rejects mismatched keys,
-skipped or replayed sequences, out-of-order/future/expired evidence, malformed
-evidence IDs, and invalid persisted counters. A persisted record can therefore
-be validated before an operator applies its next event, and a later promotion
-gate can reject stale or version-mismatched health.
+identities, and evidence expiry. Healthy and recovering records must retain the
+distinct aggregate and shadow identities from acceptance; degraded and
+quarantined records retain the single failure identity that produced their
+latest state. The pure state machine rejects mismatched keys, skipped or
+replayed sequences, out-of-order/future/expired evidence, malformed evidence
+IDs, and invalid persisted counters. A persisted record can therefore be
+validated before an operator applies its next event, and a later promotion gate
+can reject stale, failed, or version-mismatched health.
 
 The operator command revalidates source reports and shadow evidence, rebuilds
 the aggregate, validates an optional current record, and emits the next record

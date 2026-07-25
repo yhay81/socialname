@@ -303,9 +303,18 @@ impl RuleHealthRecord {
             && self.last_evidence_expires_at_unix_ms.is_none()
             && self.state == RuleHealth::Quarantined
             && self.entered_at_unix_ms == self.updated_at_unix_ms;
+        let evidence_count_valid = if self.sequence == 0 {
+            true
+        } else {
+            match self.state {
+                RuleHealth::Healthy | RuleHealth::Recovering => self.last_evidence_ids.len() == 2,
+                RuleHealth::Degraded | RuleHealth::Quarantined => self.last_evidence_ids.len() == 1,
+            }
+        };
         if self.entered_at_unix_ms > self.updated_at_unix_ms
             || (self.sequence == 0 && !valid_initial_shape)
             || (self.sequence > 0 && self.last_evidence_ids.is_empty())
+            || !evidence_count_valid
             || (self.sequence > 0
                 && (self
                     .last_manifest_hash
@@ -688,6 +697,24 @@ mod tests {
         invalid_expiry.last_evidence_expires_at_unix_ms = Some(invalid_expiry.updated_at_unix_ms);
         assert_eq!(
             invalid_expiry
+                .validate(RuleHealthPolicy::default())
+                .unwrap_err(),
+            RuleHealthError::InvalidRecord
+        );
+
+        let initial = RuleHealthRecord::quarantined(key("region-a"), 1_000).unwrap();
+        let (mut fabricated_healthy, _) = initial
+            .apply_at(
+                &pass(key("region-a"), 1, 2_000),
+                RuleHealthPolicy::default(),
+                2_001,
+            )
+            .unwrap();
+        fabricated_healthy.state = RuleHealth::Healthy;
+        fabricated_healthy.consecutive_recovery_passes = 0;
+        fabricated_healthy.last_evidence_ids.truncate(1);
+        assert_eq!(
+            fabricated_healthy
                 .validate(RuleHealthPolicy::default())
                 .unwrap_err(),
             RuleHealthError::InvalidRecord
