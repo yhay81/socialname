@@ -9,9 +9,11 @@ use sqlx::{
 };
 
 mod eligibility;
+mod maintenance;
 mod observation_store;
 
 pub use eligibility::{CacheEligibilityQuery, CacheVerdictPolicy, MAX_ELIGIBLE_OBSERVATIONS};
+pub use maintenance::{CacheMaintenancePolicy, CacheMaintenanceReport};
 pub use observation_store::{CacheMetadata, CachedObservation, StoreOutcome};
 
 pub const CACHE_APPLICATION_ID: i64 = 1_397_637_453;
@@ -149,6 +151,10 @@ pub enum CacheError {
     TooManyEligibleObservations { maximum: usize },
     #[error("stored cache access count cannot be incremented")]
     AccessCountOverflow,
+    #[error("cache maintenance policy is invalid: {field}")]
+    InvalidMaintenancePolicy { field: &'static str },
+    #[error("cache maintenance did not reach its configured limits")]
+    MaintenanceLimitNotReached,
     #[error("local cache database operation failed")]
     Database(#[from] sqlx::Error),
     #[error("local cache migration failed")]
