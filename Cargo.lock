@@ -3844,6 +3844,9 @@ dependencies = [
 name = "socialname-cache"
 version = "0.2.0"
 dependencies = [
+ "futures-util",
+ "serde",
+ "serde_json",
  "socialname-domain",
  "sqlx",
  "thiserror 2.0.19",

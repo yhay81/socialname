@@ -9,10 +9,12 @@ use sqlx::{
 };
 
 mod eligibility;
+mod export;
 mod maintenance;
 mod observation_store;
 
 pub use eligibility::{CacheEligibilityQuery, CacheVerdictPolicy, MAX_ELIGIBLE_OBSERVATIONS};
+pub use export::{CacheExportReport, LOCAL_CACHE_EXPORT_SCHEMA};
 pub use maintenance::{CacheMaintenancePolicy, CacheMaintenanceReport};
 pub use observation_store::{CacheMetadata, CachedObservation, StoreOutcome};
 
@@ -155,6 +157,12 @@ pub enum CacheError {
     InvalidMaintenancePolicy { field: &'static str },
     #[error("cache maintenance did not reach its configured limits")]
     MaintenanceLimitNotReached,
+    #[error("local cache file operation failed")]
+    Io(#[from] std::io::Error),
+    #[error("local cache export serialization failed")]
+    ExportSerialization(#[from] serde_json::Error),
+    #[error("failed to remove an incomplete local cache export")]
+    ExportCleanup(#[source] std::io::Error),
     #[error("local cache database operation failed")]
     Database(#[from] sqlx::Error),
     #[error("local cache migration failed")]

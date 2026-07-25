@@ -9,6 +9,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 socialname-domain = { path = "../socialname-domain" }
 sqlx.workspace = true
 thiserror.workspace = true
