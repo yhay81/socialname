@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod database;
 
 use std::{
     future::Future,
@@ -35,6 +36,9 @@ use tracing::Instrument;
 pub use config::{
     BIND_ENV, ConfigError, MAXIMUM_BODY_BYTES_ENV, MAXIMUM_IN_FLIGHT_ENV, REQUEST_TIMEOUT_ENV,
     ServerConfig,
+};
+pub use database::{
+    DATABASE_URL_ENV, DatabaseError, MIGRATOR, migrate_database, migrate_database_from_env,
 };
 
 const X_REQUEST_ID: &str = "x-request-id";

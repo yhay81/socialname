@@ -12,6 +12,7 @@ repository.workspace = true
 axum.workspace = true
 serde.workspace = true
 socialname-protocol = { path = "../socialname-protocol" }
+sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower.workspace = true

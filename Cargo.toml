@@ -53,6 +53,7 @@ sha2 = "0.10.9"
 sqlx = { version = "0.8.6", default-features = false, features = [
     "macros",
     "migrate",
+    "postgres",
     "runtime-tokio",
     "sqlite",
 ] }
