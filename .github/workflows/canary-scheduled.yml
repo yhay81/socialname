@@ -1,0 +1,150 @@
+name: Scheduled canaries
+
+on:
+  schedule:
+    - cron: "17 */12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Validate schedule policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      enabled: ${{ steps.schedule.outputs.enabled }}
+      targets: ${{ steps.schedule.outputs.targets }}
+
+    steps:
+      - name: Validate non-sensitive target matrix
+        id: schedule
+        env:
+          CANARY_ENABLED: ${{ vars.SOCIALNAME_CANARY_ENABLED }}
+          TARGETS_JSON: ${{ vars.SOCIALNAME_CANARY_SCHEDULE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CANARY_ENABLED" != "true" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "targets=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$TARGETS_JSON" ]]; then
+            echo "::error::SOCIALNAME_CANARY_SCHEDULE is required when canaries are enabled"
+            exit 1
+          fi
+          jq -e '
+            type == "array"
+            and length > 0
+            and length <= 64
+            and all(.[];
+              (keys | sort) == ["environment", "region", "runner_label", "site"]
+              and all(.site, .region, .runner_label, .environment;
+                type == "string"
+                and test("^[a-z0-9][a-z0-9-]{0,63}$")
+              )
+            )
+            and ([.[] | "\(.site)/\(.region)"] | unique | length) == length
+          ' <<< "$TARGETS_JSON" >/dev/null
+          echo "targets=$(jq -c . <<< "$TARGETS_JSON")" >> "$GITHUB_OUTPUT"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+  canary:
+    name: Canary (${{ matrix.target.site }} / ${{ matrix.target.region }})
+    needs: prepare
+    if: ${{ needs.prepare.outputs.enabled == 'true' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        target: ${{ fromJSON(needs.prepare.outputs.targets) }}
+    runs-on: [self-hosted, linux, "${{ matrix.target.runner_label }}"]
+    timeout-minutes: 10
+    environment:
+      name: ${{ matrix.target.environment }}
+    concurrency:
+      group: canary-${{ matrix.target.site }}-${{ matrix.target.region }}
+      cancel-in-progress: false
+    env:
+      SITE: ${{ matrix.target.site }}
+      REGION: ${{ matrix.target.region }}
+      MAX_REQUESTS: "64"
+      MAX_CONCURRENCY: "4"
+      MAX_ELAPSED_MS: "120000"
+      MAX_RESPONSE_BYTES: "16777216"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Materialize approved manifest
+        id: manifest
+        shell: bash
+        env:
+          CANARY_MANIFEST_B64: ${{ secrets.SOCIALNAME_CANARY_MANIFEST_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CANARY_MANIFEST_B64" ]]; then
+            echo "::error::Protected environment lacks SOCIALNAME_CANARY_MANIFEST_B64"
+            exit 1
+          fi
+          manifest_dir="$RUNNER_TEMP/socialname-canary-manifests"
+          manifest_path="$manifest_dir/$SITE.yaml"
+          mkdir -p "$manifest_dir"
+          printf '%s' "$CANARY_MANIFEST_B64" | base64 --decode > "$manifest_path"
+          chmod 600 "$manifest_path"
+          echo "directory=$manifest_dir" >> "$GITHUB_OUTPUT"
+          echo "path=$manifest_path" >> "$GITHUB_OUTPUT"
+
+      - name: Validate accepted manifest against the exact rule
+        shell: bash
+        run: >-
+          cargo run --locked -p socialname-cli -- canaries validate
+          --rules-dir rules/sites
+          --manifests-dir "${{ steps.manifest.outputs.directory }}"
+
+      - name: Run privacy-bounded canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.canary-output"
+          cargo run --locked -p socialname-cli -- canaries run \
+            --site "$SITE" \
+            --region "$REGION" \
+            --rules-dir rules/sites \
+            --manifests-dir "${{ steps.manifest.outputs.directory }}" \
+            --max-requests "$MAX_REQUESTS" \
+            --max-concurrency "$MAX_CONCURRENCY" \
+            --max-elapsed-ms "$MAX_ELAPSED_MS" \
+            --max-response-bytes "$MAX_RESPONSE_BYTES" \
+            --allow-live \
+            --json > "$GITHUB_WORKSPACE/.canary-output/canary-report.json"
+
+      - name: Upload minimized report
+        if: ${{ always() && hashFiles('.canary-output/canary-report.json') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: canary-${{ matrix.target.site }}-${{ matrix.target.region }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .canary-output/canary-report.json
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Remove temporary evidence
+        if: ${{ always() }}
+        shell: bash
+        env:
+          MANIFEST_PATH: ${{ steps.manifest.outputs.path }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${MANIFEST_PATH:-}" ]]; then
+            rm -f -- "$MANIFEST_PATH"
+          fi
+          rm -f -- "$GITHUB_WORKSPACE/.canary-output/canary-report.json"
+          rmdir -- "$GITHUB_WORKSPACE/.canary-output" 2>/dev/null || true

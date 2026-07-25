@@ -9,6 +9,8 @@ mod report;
 mod runner;
 mod schema;
 mod shadow;
+#[cfg(test)]
+mod workflow_contract;
 
 pub use aggregate::{
     CANARY_AGGREGATE_V1, CanaryAcceptanceAggregate, CanaryAcceptanceDisposition,

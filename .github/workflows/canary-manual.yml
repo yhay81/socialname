@@ -1,0 +1,151 @@
+name: Manual canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: Accepted Site Rule and canary manifest ID
+        required: true
+        type: string
+      region:
+        description: Coarse managed-region label recorded in the report
+        required: true
+        type: string
+      runner_label:
+        description: Self-hosted runner label proving the declared vantage
+        required: true
+        type: string
+      environment:
+        description: Protected environment holding the approved manifest secret
+        required: true
+        type: environment
+      acknowledge_live:
+        description: Send bounded public requests to the third-party site
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Validate dispatch policy
+    if: ${{ vars.SOCIALNAME_CANARY_ENABLED == 'true' && inputs.acknowledge_live }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      ready: ${{ steps.validate.outputs.ready }}
+
+    steps:
+      - name: Validate non-sensitive labels
+        id: validate
+        env:
+          SITE: ${{ inputs.site }}
+          REGION: ${{ inputs.region }}
+          RUNNER_LABEL: ${{ inputs.runner_label }}
+          ENVIRONMENT_NAME: ${{ inputs.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          label_pattern='^[a-z0-9][a-z0-9-]{0,63}$'
+          for value in "$SITE" "$REGION" "$RUNNER_LABEL" "$ENVIRONMENT_NAME"; do
+            if [[ ! "$value" =~ $label_pattern ]]; then
+              echo "::error::Canary labels must match $label_pattern"
+              exit 1
+            fi
+          done
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+  canary:
+    name: Canary (${{ inputs.site }} / ${{ inputs.region }})
+    needs: prepare
+    if: ${{ needs.prepare.outputs.ready == 'true' }}
+    runs-on: [self-hosted, linux, "${{ inputs.runner_label }}"]
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.environment }}
+    concurrency:
+      group: canary-${{ inputs.site }}-${{ inputs.region }}
+      cancel-in-progress: false
+    env:
+      SITE: ${{ inputs.site }}
+      REGION: ${{ inputs.region }}
+      MAX_REQUESTS: "64"
+      MAX_CONCURRENCY: "4"
+      MAX_ELAPSED_MS: "120000"
+      MAX_RESPONSE_BYTES: "16777216"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Materialize approved manifest
+        id: manifest
+        shell: bash
+        env:
+          CANARY_MANIFEST_B64: ${{ secrets.SOCIALNAME_CANARY_MANIFEST_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CANARY_MANIFEST_B64" ]]; then
+            echo "::error::Protected environment lacks SOCIALNAME_CANARY_MANIFEST_B64"
+            exit 1
+          fi
+          manifest_dir="$RUNNER_TEMP/socialname-canary-manifests"
+          manifest_path="$manifest_dir/$SITE.yaml"
+          mkdir -p "$manifest_dir"
+          printf '%s' "$CANARY_MANIFEST_B64" | base64 --decode > "$manifest_path"
+          chmod 600 "$manifest_path"
+          echo "directory=$manifest_dir" >> "$GITHUB_OUTPUT"
+          echo "path=$manifest_path" >> "$GITHUB_OUTPUT"
+
+      - name: Validate accepted manifest against the exact rule
+        shell: bash
+        run: >-
+          cargo run --locked -p socialname-cli -- canaries validate
+          --rules-dir rules/sites
+          --manifests-dir "${{ steps.manifest.outputs.directory }}"
+
+      - name: Run privacy-bounded canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.canary-output"
+          cargo run --locked -p socialname-cli -- canaries run \
+            --site "$SITE" \
+            --region "$REGION" \
+            --rules-dir rules/sites \
+            --manifests-dir "${{ steps.manifest.outputs.directory }}" \
+            --max-requests "$MAX_REQUESTS" \
+            --max-concurrency "$MAX_CONCURRENCY" \
+            --max-elapsed-ms "$MAX_ELAPSED_MS" \
+            --max-response-bytes "$MAX_RESPONSE_BYTES" \
+            --allow-live \
+            --json > "$GITHUB_WORKSPACE/.canary-output/canary-report.json"
+
+      - name: Upload minimized report
+        if: ${{ always() && hashFiles('.canary-output/canary-report.json') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: canary-${{ inputs.site }}-${{ inputs.region }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .canary-output/canary-report.json
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Remove temporary evidence
+        if: ${{ always() }}
+        shell: bash
+        env:
+          MANIFEST_PATH: ${{ steps.manifest.outputs.path }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${MANIFEST_PATH:-}" ]]; then
+            rm -f -- "$MANIFEST_PATH"
+          fi
+          rm -f -- "$GITHUB_WORKSPACE/.canary-output/canary-report.json"
+          rmdir -- "$GITHUB_WORKSPACE/.canary-output" 2>/dev/null || true
