@@ -4,6 +4,7 @@ mod aggregate;
 mod compiler;
 mod error;
 mod health;
+mod promotion;
 mod report;
 mod runner;
 mod schema;
@@ -17,6 +18,12 @@ pub use aggregate::{
 pub use compiler::{CanaryManifestCompiler, CompiledCanaryManifest};
 pub use error::{CanaryManifestError, CanaryManifestErrors};
 pub use health::{CanaryHealthAssessor, CanaryHealthError};
+pub use promotion::{
+    ActivatedPromotion, ED25519_ALGORITHM, PROMOTION_V1, PromotionActivationRegistry,
+    PromotionBuildRequest, PromotionBuilder, PromotionEnvelope, PromotionError,
+    PromotionRegionEvidence, PromotionSigningKey, PromotionTrustPolicy, PromotionV1,
+    PromotionVerifier, ValidatedPromotion,
+};
 pub use report::{
     CANARY_REPORT_V1, CanaryLatencySummary, CanaryRatio, CanaryReportBuilder, CanaryReportEnvelope,
     CanaryReportError, CanaryReportPolicy, CanaryReportSummary, CanaryReportV1,

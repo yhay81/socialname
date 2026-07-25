@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 chrono.workspace = true
+ed25519-dalek.workspace = true
 futures-util.workspace = true
 hex.workspace = true
 rand.workspace = true
