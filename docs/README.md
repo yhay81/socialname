@@ -113,6 +113,9 @@ access. Live canaries are intentionally a separate acceptance gate.
   delivery contracts.
 - [Modular-monolith server shell](server.md) — process configuration, health,
   request bounds, error and logging boundaries, and graceful shutdown.
+- [PostgreSQL schema and migrations](postgresql-schema.md) — embedded migration
+  operation, tenant RLS, evidence and notification constraints, deletion
+  lineage, and PostgreSQL 18 verification.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

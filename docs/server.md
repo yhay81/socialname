@@ -2,9 +2,11 @@
 
 `socialname-server` is the operable Axum/Tower process boundary for the managed
 SocialName product. The current shell deliberately contains no search, watch,
-notification, authentication, or persistence route. Those capabilities remain
-closed until their ordered roadmap slices add authorization, storage, lineage,
-and failure behavior end to end.
+notification, authentication, or persistence route. It also embeds the
+forward-only PostgreSQL migrations and exposes them through a separate
+`migrate` subcommand. Product routes remain closed until their ordered roadmap
+slices add authorization, storage use, lineage, and failure behavior end to
+end.
 
 The server depends on `socialname-protocol`; it does not make the protocol,
 domain, or engine depend on HTTP or persistence.
@@ -36,6 +38,21 @@ cargo run --locked -p socialname-server
 No SocialName service is started by ordinary CLI or desktop execution. The
 server is a separate explicit binary.
 
+## Database migration command
+
+Migration is an explicit operator action:
+
+```powershell
+$env:SOCIALNAME_DATABASE_URL = "postgres://USER:PASSWORD@HOST:5432/DATABASE"
+cargo run --locked -p socialname-server -- migrate
+```
+
+There is no database URL default. Connection and migration work is bounded,
+uses one connection, and returns fixed error classes that do not echo the URL
+or credentials. The schema, RLS application contract, migration ownership, and
+PostgreSQL 18 integration gate are documented in
+[PostgreSQL schema and migration boundary](postgresql-schema.md).
+
 ## Current HTTP surface
 
 The shell exposes only:
@@ -47,9 +64,11 @@ GET /health/ready
 
 Both return a small `socialname.dev/api/v1` JSON document with service name,
 crate version, and `live` or `ready` status. `ready` currently means that the
-dependency-free shell is accepting requests. The later PostgreSQL slice must
-make readiness depend on required storage without changing liveness into a
-dependency check.
+dependency-free shell is accepting requests. The HTTP process does not open a
+product database connection before an authenticated persistence route exists.
+The authenticated-workspace slice must make readiness depend on required
+storage before exposing that route, without changing liveness into a dependency
+check.
 
 Every other path returns a protocol `not_found` response. Unsupported methods
 return a protocol `invalid_request` response. In particular,
@@ -103,10 +122,14 @@ cargo fmt --all -- --check
 cargo test --locked -p socialname-server
 cargo clippy --locked -p socialname-server --all-targets --all-features -- -D warnings
 cargo build --locked -p socialname-server
+# With SOCIALNAME_DATABASE_URL and SOCIALNAME_TEST_DATABASE_URL set:
+cargo run --locked -p socialname-server -- migrate
 ```
 
 The deterministic tests cover default and explicit configuration, secret-free
 configuration errors, every resource bound, hardened/versioned health,
 request-ID regeneration, closed 404/405 errors, typed content-length rejection,
 deadline failure, absence of an unauthenticated `/v1/searches` route, and
-graceful shutdown without external dependencies.
+graceful shutdown without external dependencies. PostgreSQL CI additionally
+covers migration replay, schema inventory, forced RLS, tenant isolation,
+evidence immutability, notification safety, and deletion lineage.

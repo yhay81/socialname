@@ -64,9 +64,9 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add PostgreSQL migrations for the ordered Milestone 2
-managed data model without implementing authentication or search routes ahead
-of their roadmap items.
+Next executable item: add authenticated private workspaces and hashed, scoped
+API keys over the PostgreSQL tenant boundary without implementing search routes
+ahead of their roadmap item.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -458,7 +458,7 @@ derives a trustworthy transition, and delivers one auditable notification.
 - [x] Add `socialname-protocol` for versioned API, event, error, source,
       freshness, watch, transition, and notification DTOs.
 - [x] Add a Rust modular-monolith `socialname-server` using Axum/Tower.
-- [ ] Add PostgreSQL migrations for tenants, credentials, sites, rule versions,
+- [x] Add PostgreSQL migrations for tenants, credentials, sites, rule versions,
       searches, jobs, observations, assertion support, watches, transitions,
       notification endpoints, deliveries, consent, lineage, and deletion tasks.
 - [ ] Add authenticated private workspaces and hashed, scoped API keys.
@@ -521,7 +521,46 @@ the URI, headers, body, or target. Unknown routes, unsupported methods, body
 overflow, invalid content length, and deadlines cannot become account verdicts.
 The binary drains through injected graceful shutdown, Ctrl-C, and Unix SIGTERM.
 Readiness is dependency-free for this shell and must become PostgreSQL-aware in
-the next storage slice.
+the next authenticated-workspace slice before a private route is exposed.
+
+PostgreSQL-schema evidence:
+
+```console
+cargo fmt --all -- --check
+cargo run --locked -p socialname-server -- migrate
+cargo test --locked --workspace --all-targets
+# socialname-server: 12 library, 2 binary, and 1 PostgreSQL integration test passed
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+```
+
+The embedded SQLx migration creates 29 bounded product tables and 25
+tenant-isolation policies with forced RLS. Composite tenant foreign keys,
+immutable observation and support history, closed observation outcomes,
+transition-specific confirmation bases, exact confirmed-delivery checks,
+encrypted notification destinations, ordered deletion deadlines, receipts,
+lineage, and HMAC-only suppression tokens preserve the trust and privacy
+boundaries before routes exist. A separate `migrate` command requires an
+explicit database URL, uses one connection with connection/migration deadlines,
+and returns fixed errors without reflecting credentials.
+
+The CI core job runs both the operator command and an integration test against
+`postgres:18-alpine`. The test reapplies the migration, inventories all tables
+and forced-RLS policies, uses a real non-owner role to prove tenant isolation,
+rejects cross-tenant references and observation mutation, suppresses
+shared-only absence delivery, accepts an independently confirmed delivery, and
+checks deletion deadlines, receipts, and lineage. The HTTP shell still exposes
+no authentication or product persistence route; database-aware readiness is an
+acceptance condition of the next authenticated-workspace slice.
 
 Software acceptance gate:
 

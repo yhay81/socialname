@@ -274,22 +274,31 @@ Initial PostgreSQL tables:
 | `sites` | Stable site identity and metadata |
 | `rule_packs` | Published pack metadata, hashes, and rollout state |
 | `rule_versions` | Per-site compiled rule revisions |
-| `rule_health` | Region-specific health and quarantine history |
+| `rule_health_records` | Region-specific health and quarantine history |
+| `consent_grants`, `consent_events` | Purpose-specific consent and immutable history |
 | `searches` | User/API search requests and policy |
 | `search_targets` | Expanded username/site work |
 | `probe_jobs` | Managed execution queue |
+| `probe_job_consumers` | Search/watch consumers of equivalent work |
 | `observations` | Append-only probe results |
 | `assertions` | Materialized current interpretation |
+| `assertion_support` | Observation support and conflict lineage |
 | `watches` | Monitoring configuration |
 | `watch_targets` | Expanded monitored targets |
 | `transitions` | Durable meaningful state changes |
+| `transition_basis` | Observations supporting a transition |
 | `notification_endpoints` | Email/webhook destinations |
 | `notification_deliveries` | Delivery attempts and deduplication |
 | `audit_events` | Security and administrative audit |
+| `data_lineage_edges` | Withdrawal and recomputation lineage |
+| `deletion_requests`, `deletion_tasks`, `deletion_receipts` | Deadline-bound erasure workflow |
+| `suppression_tokens` | HMAC-only reingestion suppression |
 
 The large tables should use time-based partitioning only after observed volume
 justifies it. PostgreSQL remains the source of truth for the first production
-stage.
+stage. The implemented constraints, forced tenant RLS contract, migration
+command, and PostgreSQL 18 verification are specified in
+[PostgreSQL schema and migration boundary](postgresql-schema.md).
 
 ### Data retention classes
 

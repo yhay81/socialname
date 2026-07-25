@@ -125,6 +125,7 @@ so status does not diverge across design records.
 - [Local cache](local-cache.md)
 - [Public protocol v1](protocol-v1.md)
 - [Modular-monolith server shell](server.md)
+- [PostgreSQL schema and migrations](postgresql-schema.md)
 
 ## Implementation baseline
 
@@ -140,8 +141,10 @@ so status does not diverge across design records.
 7. **Done:** Add the independent public protocol v1 DTO and JSON Schema
    boundary.
 8. **Done:** Add the bounded Axum/Tower modular-monolith process shell.
+9. **Done:** Add the embedded PostgreSQL schema, forced tenant RLS, lineage,
+   deletion, and real PostgreSQL 18 migration gate.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
-work is the first paid monitoring loop in Milestone 2, continuing with the
-PostgreSQL schema and lineage slice.
+work is the first paid monitoring loop in Milestone 2, continuing with
+authenticated private workspaces and hashed scoped API keys.
