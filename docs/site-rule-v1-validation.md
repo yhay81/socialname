@@ -194,6 +194,8 @@ cannot produce both definitive states.
 - **Done:** Generated JSON Schema for `socialname.dev/site/v1`.
 - **Done:** Deterministic canonical rule-pack hashing.
 - **Done:** Thirty deterministic minimized responses with matcher traces.
+- **Done:** Independent typed `socialname.dev/canary-manifest/v1` source,
+  semantic validation, JSON Schema, and canonical hashing.
 - **Next:** A live canary runner with per-site and per-region budgets.
 - **Next:** A report showing precision, conclusive coverage, latency, bytes,
   response classes, and conflicts.

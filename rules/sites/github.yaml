@@ -58,13 +58,6 @@ classification:
           op: equals
           value: Not Found
   otherwise: inconclusive
-canary:
-  found: [github, octocat]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 32
-      attempts: 3
 metadata:
   enabled: false
   enabled_regions: []

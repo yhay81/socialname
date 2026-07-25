@@ -2,12 +2,14 @@
 
 `sites/` contains strict, human-reviewed YAML source. `fixtures/` contains
 minimal offline response examples that prove classification behavior without
-contacting third-party services.
+contacting third-party services. `canaries/` is the separate, time-bounded
+acceptance-control boundary; it is empty until real reviewed evidence exists.
 
 Validate both:
 
 ```console
 cargo run -p socialname-cli -- rules validate
+cargo run -p socialname-cli -- canaries validate
 cargo run -p socialname-cli -- fixtures
 ```
 

@@ -157,21 +157,6 @@ impl RuleCompiler {
             errors.push(CompileError::ConditionTooComplex);
         }
 
-        if let Ok(regex) = &username_regex {
-            for canary in &source.canary.found {
-                let normalized = match source.username.normalization {
-                    socialname_rule_schema::UsernameNormalization::Preserve => canary.to_owned(),
-                    socialname_rule_schema::UsernameNormalization::Lowercase => {
-                        canary.to_lowercase()
-                    }
-                };
-                if !regex.is_match(&normalized) {
-                    errors.push(CompileError::InvalidPositiveCanary(canary.clone()));
-                }
-            }
-            validate_negative_generator(&source, regex, &mut errors);
-        }
-
         if !errors.is_empty() {
             return Err(CompileErrors(errors));
         }
@@ -620,31 +605,6 @@ fn validate_body_length(value: &BodyLengthCondition, errors: &mut Vec<CompileErr
     }
 }
 
-fn validate_negative_generator(
-    source: &SiteRuleSource,
-    regex: &Regex,
-    errors: &mut Vec<CompileError>,
-) {
-    let generator = &source.canary.not_found.generator;
-    if generator.length < 8 || generator.length > 63 || generator.attempts == 0 {
-        errors.push(CompileError::InvalidNegativeGenerator);
-        return;
-    }
-    let alphabet_probe = match generator.alphabet {
-        socialname_rule_schema::NegativeAlphabet::LowercaseAlnum => "snv1probe9f4d2c7b6a1e",
-        socialname_rule_schema::NegativeAlphabet::Lowercase => "snvprobelongname",
-    };
-    let mut candidate: String = alphabet_probe
-        .chars()
-        .cycle()
-        .take(generator.length)
-        .collect();
-    candidate.push_str(&generator.suffix);
-    if !regex.is_match(&candidate) {
-        errors.push(CompileError::InvalidNegativeGenerator);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,13 +654,6 @@ classification:
       probe: profile
       in: [404]
   otherwise: inconclusive
-canary:
-  found: [alice]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 24
-      attempts: 3
 metadata:
   enabled: true
   tags: [test]

@@ -1,0 +1,23 @@
+[package]
+name = "socialname-canary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace = true
+hex.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+socialname-rule-compiler = { path = "../socialname-rule-compiler" }
+thiserror.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

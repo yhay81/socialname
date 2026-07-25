@@ -47,13 +47,6 @@ classification:
       probe: profile
       in: [404]
   otherwise: inconclusive
-canary:
-  found: [npm]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 40
-      attempts: 3
 metadata:
   enabled: false
   enabled_regions: []

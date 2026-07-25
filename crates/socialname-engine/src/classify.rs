@@ -512,12 +512,6 @@ classification:
     status:
       probe: api
       in: [404]
-canary:
-  found: [alice]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 24
 metadata:
   enabled: true
 "#;

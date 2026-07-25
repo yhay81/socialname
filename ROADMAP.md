@@ -64,14 +64,15 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: define the typed positive/negative canary manifest.
+Next executable item: implement the bounded canary runner using the production
+engine.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
 
 ### 1A. Live canary software
 
-- [ ] Define typed positive/negative canary manifests separate from site rules.
+- [x] Define typed positive/negative canary manifests separate from site rules.
 - [ ] Implement a bounded canary runner using the production engine.
 - [ ] Emit a versioned report containing rule/engine hash, declared vantage,
       precision, conclusive coverage, latency, bytes, response classes, and
@@ -91,6 +92,25 @@ disabled.
       rollback, and report-tampering cases.
 - [ ] Add manual and scheduled canary workflow templates with strict
       concurrency, request, time, and byte budgets.
+
+Manifest-slice evidence:
+
+```console
+cargo test --locked --workspace --all-targets
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+```
+
+The independent `socialname.dev/canary-manifest/v1` validator enforces five
+reviewed positive controls, five or more generated negatives, expiry, unique
+normalized identifiers, HTTPS review evidence, minimum generator entropy, and
+compatibility with the compiled site username policy. No production manifests
+were fabricated; the external review gate remains pending.
 
 Software acceptance gate:
 
@@ -284,3 +304,7 @@ Choose these only when their trigger is measured:
   external evidence gates, marked the Rust foundation complete, and selected
   live canary software plus the local cache/source policy as the current
   milestone.
+- **2026-07-25:** Added independent typed canary manifests with strict temporal,
+  review, entropy, duplication, and site-policy validation; retained an empty
+  production manifest set so all ten rules remain discovery-only pending real
+  external evidence.

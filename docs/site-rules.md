@@ -149,16 +149,6 @@ classification:
           value: Not Found
   otherwise: inconclusive
 
-canary:
-  found:
-    - octocat
-    - github
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 30
-      attempts: 3
-
 metadata:
   enabled: false
   tags: [developer, source-code, api]
@@ -178,7 +168,6 @@ struct SiteRuleSource {
     username: UsernamePolicy,
     probes: Vec<ProbeSource>,
     classification: ClassificationSource,
-    canary: CanaryPolicy,
     metadata: SiteMetadata,
 }
 
@@ -409,31 +398,33 @@ Do not store:
 - Complete bodies by default.
 - Arbitrary debug dumps from client uploads.
 
-## Canary policy
+## Canary manifests
 
-### Positive canaries
+Canary controls do not live in a site rule. They use the independent,
+time-bounded `socialname.dev/canary-manifest/v1` format described in
+[`canary-manifest-v1.md`](canary-manifest-v1.md). This keeps acceptance inputs
+stable while a candidate and last-known-good rule are compared.
 
-Use more than one stable public account where possible:
+Positive controls include at least five reviewed stable public accounts:
 
 - An official platform account.
 - A project-controlled account.
 - A long-lived, highly stable account.
 
-The rule records the username, not copied response content.
+The manifest records the normalized username, control kind, review time, and an
+HTTPS evidence reference, not copied response content.
 
-### Negative canaries
+Negative controls are generated at execution time from a typed, bounded
+generator in the manifest:
 
-Fixed “unlikely” usernames can later be registered. Prefer a per-site generator:
+- at least five candidates;
+- at least 64 bits of random input;
+- conformance with the compiled site's username and normalization policy;
+- a bounded number of collision attempts.
 
-- Conforms to the username policy.
-- Uses enough entropy for the namespace.
-- Avoids reserved prefixes and moderation triggers.
-- Performs several attempts.
-
-If the site does not have a safely generatable negative namespace, the rule
-must declare a reviewed alternative.
-
-### Regional health
+If a site does not have a safely generatable negative namespace, Canary
+Manifest v1 is not compatible with that site and must be revised through a
+reviewed schema change rather than an arbitrary escape hatch.
 
 Canary results are stored per managed region. A site can be:
 

@@ -64,10 +64,6 @@ pub enum CompileError {
     InvalidBodyLength,
     #[error("invalid classification template {0:?}")]
     InvalidIdentityTemplate(String),
-    #[error("positive canary {0:?} does not satisfy the username policy")]
-    InvalidPositiveCanary(String),
-    #[error("negative canary generator is incompatible with the username policy")]
-    InvalidNegativeGenerator,
     #[error("failed to read rule {path}: {message}")]
     ReadRule { path: PathBuf, message: String },
     #[error("rule directory {0} contains no .yaml files")]

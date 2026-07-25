@@ -21,7 +21,6 @@ pub struct SiteRuleSource {
     pub probes: Vec<ProbeSource>,
     pub plan: ProbePlanSource,
     pub classification: ClassificationSource,
-    pub canary: CanaryPolicy,
     #[serde(default)]
     pub metadata: SiteMetadata,
 }
@@ -389,37 +388,6 @@ pub enum TransportOutcome {
     Decode,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CanaryPolicy {
-    pub found: Vec<String>,
-    pub not_found: NegativeCanaryPolicy,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NegativeCanaryPolicy {
-    pub generator: NegativeGenerator,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NegativeGenerator {
-    pub alphabet: NegativeAlphabet,
-    pub length: usize,
-    #[serde(default = "default_negative_attempts")]
-    pub attempts: usize,
-    #[serde(default)]
-    pub suffix: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NegativeAlphabet {
-    LowercaseAlnum,
-    Lowercase,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SiteMetadata {
@@ -469,8 +437,4 @@ const fn default_decompressed_bytes() -> usize {
 
 const fn default_inspected_bytes() -> usize {
     256 * 1_024
-}
-
-const fn default_negative_attempts() -> usize {
-    3
 }

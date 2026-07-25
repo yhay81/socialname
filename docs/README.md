@@ -59,6 +59,8 @@ The first vertical slice is implemented in the repository:
 - asynchronous HTTP probe engine and explainable deterministic classifier;
 - local CLI commands for rule validation, fixture validation, and live probing;
 - ten representative rules with 30 minimized offline cases;
+- independent, time-bounded positive/negative canary manifests with strict
+  semantic validation against compiled site rules;
 - a Tauri 2 Windows/macOS desktop slice with local streaming and explicit
   research-mode consent.
 
@@ -77,6 +79,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   trust model, data model, API, and technology choices.
 - [Site rule design](site-rules.md) — rule authoring, classification, validation,
   packaging, and migration.
+- [Canary Manifest v1](canary-manifest-v1.md) — independent positive/negative
+  controls, validity, review evidence, and policy compatibility.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

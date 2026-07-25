@@ -52,13 +52,6 @@ classification:
       probe: about
       in: [404]
   otherwise: inconclusive
-canary:
-  found: [reddit]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 20
-      attempts: 3
 metadata:
   enabled: false
   enabled_regions: []

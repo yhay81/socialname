@@ -56,13 +56,6 @@ classification:
           op: contains
           value: The specified profile could not be found.
   otherwise: inconclusive
-canary:
-  found: [valve]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 32
-      attempts: 3
 metadata:
   enabled: false
   enabled_regions: []

@@ -54,13 +54,6 @@ classification:
       probe: api
       in: [404]
   otherwise: inconclusive
-canary:
-  found: [docker]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 30
-      attempts: 3
 metadata:
   enabled: false
   enabled_regions: []

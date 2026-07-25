@@ -2978,6 +2978,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive 1.2.1",
@@ -3342,12 +3343,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "socialname-canary"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "hex",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "socialname-rule-compiler",
+ "thiserror 2.0.19",
+ "url",
+]
+
+[[package]]
 name = "socialname-cli"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "serde_json",
+ "socialname-canary",
  "socialname-engine",
  "socialname-rule-compiler",
  "socialname-testkit",

@@ -47,13 +47,6 @@ classification:
       probe: handle
       in: [404]
   otherwise: inconclusive
-canary:
-  found: [YouTube]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 30
-      attempts: 3
 metadata:
   enabled: false
   enabled_regions: []

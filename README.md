@@ -32,6 +32,8 @@ person.
 - HTTPS and per-rule host allowlists, bounded redirects, timeouts, and body
   inspection.
 - Canonical JSON rule compilation and deterministic SHA-256 rule-pack hashes.
+- Independent typed canary manifests with review, expiry, policy compatibility,
+  and deterministic content hashes.
 - Assertion v1 trust thresholds for managed and opt-in shared observations.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
@@ -56,6 +58,7 @@ Validate the complete rule pack and its deterministic fixtures:
 ```console
 cargo run -p socialname-cli -- rules validate
 cargo run -p socialname-cli -- rules list --all
+cargo run -p socialname-cli -- canaries validate
 cargo run -p socialname-cli -- fixtures
 ```
 
@@ -85,6 +88,7 @@ live-canary gate exists. They are blocked from live execution unless
 ```text
 crates/
   socialname-app-core/       UI-independent local search orchestration
+  socialname-canary/         typed canary manifests and strict validation
   socialname-domain/         observations and assertion/v1 derivation
   socialname-rule-schema/    strict Site Rule v1 source types
   socialname-rule-compiler/  validation and canonical compilation
@@ -95,6 +99,7 @@ apps/
   desktop/                   Tauri 2 + React application for Windows and macOS
 rules/
   sites/                     one reviewed YAML rule per site
+  canaries/                  time-bounded reviewed controls (currently empty)
   fixtures/                  minimized deterministic response cases
 docs/                        product, architecture, trust, and governance records
 ```

@@ -58,14 +58,6 @@ classification:
           op: equals
           value: ProfileNotFound
   otherwise: inconclusive
-canary:
-  found: [bsky.app]
-  not_found:
-    generator:
-      alphabet: lowercase_alnum
-      length: 24
-      attempts: 3
-      suffix: .bsky.social
 metadata:
   enabled: false
   enabled_regions: []
