@@ -104,6 +104,11 @@ so status does not diverge across design records.
   purpose-specific sync consent, watch bounds, transition confirmation, and
   delivery state. Sensitive destinations and usernames redact `Debug`, and
   errors never echo rejected values or raw response data.
+- The modular-monolith server starts as a separate Axum/Tower binary with a
+  loopback-only default, bounded deadline/body/concurrency, target-free request
+  tracing, closed protocol errors, hardened health responses, and graceful
+  shutdown. No search, watch, notification, authentication, or persistence
+  route exists until its ordered slice supplies the complete boundary.
 
 ## Detailed records
 
@@ -119,6 +124,7 @@ so status does not diverge across design records.
 - [Signed rule promotion](rule-promotion-v1.md)
 - [Local cache](local-cache.md)
 - [Public protocol v1](protocol-v1.md)
+- [Modular-monolith server shell](server.md)
 
 ## Implementation baseline
 
@@ -133,8 +139,9 @@ so status does not diverge across design records.
    Windows/macOS compile CI.
 7. **Done:** Add the independent public protocol v1 DTO and JSON Schema
    boundary.
+8. **Done:** Add the bounded Axum/Tower modular-monolith process shell.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
 work is the first paid monitoring loop in Milestone 2, continuing with the
-Axum/Tower modular-monolith server shell.
+PostgreSQL schema and lineage slice.

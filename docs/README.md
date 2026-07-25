@@ -69,6 +69,9 @@ The first vertical slice is implemented in the repository:
 - an independent public API v1 crate with closed search/SSE, error,
   source/freshness, watch, transition-confirmation, notification endpoint, and
   delivery DTOs plus generated JSON Schema roots;
+- an operable Axum/Tower modular-monolith shell with loopback-safe defaults,
+  bounded requests, versioned health, closed errors, redacted tracing, and
+  graceful shutdown but no unauthenticated product routes;
 - a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache and
   cached-first sources, immutable observation persistence, source-preserving
   refresh streaming, freshness display, cancellation, and explicit
@@ -108,6 +111,8 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Public protocol v1](protocol-v1.md) — closed REST/SSE DTOs, source and
   freshness, bounded watches, transition confirmation, errors, and notification
   delivery contracts.
+- [Modular-monolith server shell](server.md) — process configuration, health,
+  request bounds, error and logging boundaries, and graceful shutdown.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

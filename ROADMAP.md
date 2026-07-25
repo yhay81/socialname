@@ -64,8 +64,9 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add the Rust modular-monolith `socialname-server` shell
-using Axum/Tower without adding persistence ahead of the ordered roadmap item.
+Next executable item: add PostgreSQL migrations for the ordered Milestone 2
+managed data model without implementing authentication or search routes ahead
+of their roadmap items.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -456,7 +457,7 @@ derives a trustworthy transition, and delivers one auditable notification.
 
 - [x] Add `socialname-protocol` for versioned API, event, error, source,
       freshness, watch, transition, and notification DTOs.
-- [ ] Add a Rust modular-monolith `socialname-server` using Axum/Tower.
+- [x] Add a Rust modular-monolith `socialname-server` using Axum/Tower.
 - [ ] Add PostgreSQL migrations for tenants, credentials, sites, rule versions,
       searches, jobs, observations, assertion support, watches, transitions,
       notification endpoints, deliveries, consent, lineage, and deletion tasks.
@@ -498,6 +499,29 @@ account state, make shared-only absence non-deliverable, and allow notification
 delivery construction only from a validated confirmed transition. Watch
 schedule, budget, retention, revision, and next-run relations are deterministic
 and validated without arbitrary cron or code.
+
+Server-shell evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked -p socialname-server
+# 10 passed: configuration, bounds, health, error boundary, deadline, and shutdown
+cargo clippy --locked -p socialname-server --all-targets --all-features -- -D warnings
+cargo build --locked -p socialname-server
+```
+
+`socialname-server` is an explicit Axum 0.8/Tower 0.5 binary with a
+loopback-only default. It exposes only versioned liveness/readiness documents;
+search, watch, notification, authentication, and persistence routes remain
+absent. Configuration bounds the handler deadline, declared/default body size,
+and in-flight work, and rejects invalid values without echoing them. One outer
+request guard supplies a closed request ID, protocol JSON errors, no-store and
+nosniff response headers, and method/status/latency-only tracing that never logs
+the URI, headers, body, or target. Unknown routes, unsupported methods, body
+overflow, invalid content length, and deadlines cannot become account verdicts.
+The binary drains through injected graceful shutdown, Ctrl-C, and Unix SIGTERM.
+Readiness is dependency-free for this shell and must become PostgreSQL-aware in
+the next storage slice.
 
 Software acceptance gate:
 

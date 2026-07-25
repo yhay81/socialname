@@ -366,9 +366,9 @@ crates/
   socialname-app-core/      UI-independent local search orchestration
   socialname-cli/           CLI binary
   socialname-protocol/      versioned API, event, watch, and delivery DTOs
+  socialname-server/        Axum/Tower modular-monolith process boundary
   socialname-testkit/       mock sites, fixtures, deterministic clocks
   # next slices
-  socialname-server/        API and modular control/data plane
   socialname-worker/        managed probe and canary worker binary
 rules/
   sites/
