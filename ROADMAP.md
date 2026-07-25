@@ -64,7 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: persist immutable local observations and cache metadata.
+Next executable item: key cache eligibility by target, vantage class, rule
+identity, verdict policy, and freshness.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -264,7 +265,7 @@ External evidence gate:
 ### 1B. Local cache and source policy
 
 - [x] Add `socialname-cache` with embedded SQLite migrations.
-- [ ] Persist immutable local observations and cache metadata, not just the
+- [x] Persist immutable local observations and cache metadata, not just the
       latest boolean result.
 - [ ] Key eligibility by normalized username, site, region class, rule hash,
       verdict policy, and freshness.
@@ -301,7 +302,25 @@ with a dedicated SQLite application ID. It refuses foreign, future, and corrupt
 databases before producing a cache handle, applies migrations idempotently,
 enables WAL only after ownership/version preflight, and preserves complete
 immutable observation fields separately from mutable cache metadata. This
-slice does not yet write domain observations or select cached results.
+slice does not yet select cached results.
+
+Persistence-slice evidence:
+
+```console
+cargo test --locked -p socialname-cache
+# 10 passed: complete typed round trip, initial metadata, exact replay,
+# immutable-ID conflict, transactional rollback, missing metadata, and the
+# migration/opening cases above
+cargo clippy --locked -p socialname-cache --all-targets --all-features -- -D warnings
+```
+
+`store_observation` validates typed domain values and atomically inserts the
+complete immutable observation with its initial cache metadata. Exact replay is
+idempotent; different content under one observation ID is an explicit conflict
+that preserves the original. `get_observation` reconstructs the closed domain
+types and distinguishes a real miss from incomplete or invalid stored data.
+No query is eligible for result reuse until the next source/freshness policy
+slice is implemented.
 
 ## Milestone 2 — First paid monitoring loop
 
@@ -480,3 +499,6 @@ Choose these only when their trigger is measured:
   explicit database ownership, fail-closed foreign/future/corrupt handling,
   immutable observation rows, separate access metadata, and deterministic
   initialization and migration tests.
+- **2026-07-25:** Added transactional typed observation persistence with full
+  domain round trips, immutable-ID replay/conflict behavior, initial cache
+  metadata, rollback on partial failure, and explicit incomplete-row errors.

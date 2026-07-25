@@ -2,9 +2,9 @@
 
 The local cache is a user-controlled SQLite database for immutable SocialName
 observations and cache-management metadata. It is an optional local product
-component: opening or using it does not contact a SocialName service, and this
-slice does not implement synchronization, export, search integration, or
-result reuse yet.
+component: opening or using it does not contact a SocialName service. It can
+persist and read domain observations, but does not implement synchronization,
+export, search integration, eligibility selection, or result reuse yet.
 
 ## Ownership and opening policy
 
@@ -51,6 +51,26 @@ normalized username, site, region class, rule hash, observation time, and
 expiry, but eligibility policy is implemented in a later slice rather than
 being inferred from the latest row.
 
+## Persistence contract
+
+`LocalCache::store_observation` accepts a typed domain `Observation` plus the
+local cache time. It validates bounded identities, exact lowercase digest
+encoding, expiry order, cache time, and the relationship between verdict and
+inconclusive reason before writing.
+
+The immutable observation and its initial metadata row are inserted in one
+transaction. A first insert returns `Inserted`; replaying the exact same
+observation ID and content returns `AlreadyPresent` without changing its
+original cache time. Reusing an observation ID for different immutable content
+returns an explicit conflict and preserves the first row. A metadata insert
+failure rolls the observation insert back.
+
+`LocalCache::get_observation` reconstructs the complete closed domain enums and
+returns cache metadata separately. A missing observation returns no result.
+An existing observation with missing metadata, an unknown stored enum, or
+otherwise invalid stored content returns an explicit error rather than a cache
+miss or verdict.
+
 ## Privacy and failure behavior
 
 Normalized usernames and public identifiers are sensitive local product data.
@@ -64,6 +84,8 @@ Opening failure is explicit:
 - a newer schema is refused instead of downgraded;
 - migration errors are returned without producing observations;
 - integrity failure is distinct from a valid empty cache.
+- immutable-ID conflicts and incomplete stored records are distinct from a
+  cache miss.
 
 Recovery, export, maximum-size policy, pruning, and complete deletion remain
 separate roadmap items so none of those behaviors is implied before it is
@@ -78,4 +100,6 @@ cargo clippy --locked -p socialname-cache --all-targets --all-features -- -D war
 
 The deterministic tests cover first initialization, schema ownership and
 integrity, idempotent reopen, foreign and future database refusal, corrupt
-input, observation immutability, and deletion for later pruning.
+input, complete domain round trips, exact replay, immutable-ID conflict,
+transaction rollback, missing metadata, observation immutability, and deletion
+for later pruning.

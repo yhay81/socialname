@@ -57,6 +57,11 @@ so status does not diverge across design records.
   empty cache. Observations are immutable; mutable access metadata is a
   separate child record, while explicit deletion remains available for
   pruning and complete local deletion.
+- Local observation persistence is transactional across the immutable
+  observation and its initial cache metadata. Exact replay of an observation ID
+  is idempotent, different immutable content under that ID is a conflict, and
+  missing metadata or an unknown stored enum is an error rather than a cache
+  miss.
 
 ## Detailed records
 
@@ -84,6 +89,7 @@ so status does not diverge across design records.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
 
-The next work is Milestone 1 in `ROADMAP.md`: persist domain observations in
-the local SQLite cache, then implement cache eligibility and source-selection
-policy. The first paid monitoring loop follows as Milestone 2.
+The next work is Milestone 1 in `ROADMAP.md`: implement cache eligibility by
+target, vantage class, rule identity, verdict policy, and freshness, then add
+source-selection policy. The first paid monitoring loop follows as Milestone
+2.
