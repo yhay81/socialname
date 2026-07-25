@@ -135,6 +135,8 @@ pub enum RuleHealthError {
     InvalidEvidenceTime,
     #[error("rule-health evidence identity is invalid")]
     InvalidEvidenceId,
+    #[error("persisted rule-health record is invalid")]
+    InvalidRecord,
     #[error("rule-health counter overflowed")]
     CounterOverflow,
 }
@@ -164,6 +166,7 @@ impl RuleHealthRecord {
         applied_at_unix_ms: i64,
     ) -> Result<(Self, RuleHealthTransition), RuleHealthError> {
         validate_policy(policy)?;
+        self.validate(policy)?;
         validate_key(&event.key)?;
         if event.key != self.key {
             return Err(RuleHealthError::KeyMismatch);
@@ -269,6 +272,43 @@ impl RuleHealthRecord {
             evidence_ids,
         };
         Ok((next, transition))
+    }
+
+    pub fn validate(&self, policy: RuleHealthPolicy) -> Result<(), RuleHealthError> {
+        validate_policy(policy)?;
+        validate_key(&self.key)?;
+        let valid_initial_shape = self.last_evidence_ids.is_empty()
+            && self.state == RuleHealth::Quarantined
+            && self.entered_at_unix_ms == self.updated_at_unix_ms;
+        if self.entered_at_unix_ms > self.updated_at_unix_ms
+            || (self.sequence == 0 && !valid_initial_shape)
+            || (self.sequence > 0 && self.last_evidence_ids.is_empty())
+            || self.last_evidence_ids.len() > 2
+            || (self.last_evidence_ids.len() == 2
+                && self.last_evidence_ids[0] == self.last_evidence_ids[1])
+            || !self.last_evidence_ids.iter().all(|id| valid_sha256(id))
+        {
+            return Err(RuleHealthError::InvalidRecord);
+        }
+        let counters_valid = match self.state {
+            RuleHealth::Healthy | RuleHealth::Quarantined => {
+                self.consecutive_recovery_passes == 0 && self.consecutive_operational_failures == 0
+            }
+            RuleHealth::Degraded => {
+                self.consecutive_recovery_passes == 0
+                    && (1..policy.operational_failures_to_quarantine)
+                        .contains(&self.consecutive_operational_failures)
+            }
+            RuleHealth::Recovering => {
+                self.consecutive_operational_failures == 0
+                    && (1..policy.recovery_passes_required)
+                        .contains(&self.consecutive_recovery_passes)
+            }
+        };
+        if !counters_valid {
+            return Err(RuleHealthError::InvalidRecord);
+        }
+        Ok(())
     }
 }
 
@@ -562,5 +602,33 @@ mod tests {
             )
             .unwrap();
         assert!(!transition.allows_account_state_notification());
+    }
+
+    #[test]
+    fn rejects_an_invalid_persisted_record_before_applying_evidence() {
+        let invalid = RuleHealthRecord {
+            key: key("region-a"),
+            state: RuleHealth::Healthy,
+            sequence: 0,
+            entered_at_unix_ms: 1_000,
+            updated_at_unix_ms: 1_000,
+            consecutive_recovery_passes: 1,
+            consecutive_operational_failures: 0,
+            last_evidence_ids: Vec::new(),
+        };
+        assert_eq!(
+            invalid.validate(RuleHealthPolicy::default()).unwrap_err(),
+            RuleHealthError::InvalidRecord
+        );
+        assert_eq!(
+            invalid
+                .apply_at(
+                    &pass(key("region-a"), 1, 2_000),
+                    RuleHealthPolicy::default(),
+                    2_001,
+                )
+                .unwrap_err(),
+            RuleHealthError::InvalidRecord
+        );
     }
 }

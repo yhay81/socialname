@@ -1,5 +1,4 @@
 use chrono::TimeDelta;
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 use socialname_domain::{
     InconclusiveReason, RuleClassificationFailure, RuleHealthEvent, RuleHealthKey,
@@ -45,14 +44,17 @@ impl CanaryHealthAssessor {
     ) -> Result<RuleHealthEvent, CanaryHealthError> {
         let aggregate = evaluated_aggregate.aggregate();
         validate_inputs(aggregate, shadow, region)?;
-        let aggregate_evidence_id = canonical_id(aggregate)?;
+        let aggregate_evidence_id = aggregate_evidence_id(aggregate)?;
         let shadow_envelope = shadow.envelope();
         let shadow_comparison = &shadow_envelope.comparison;
         let shadow_report = &shadow_comparison.candidate.report;
         let observed_at = std::cmp::max(aggregate.aggregated_at, shadow_report.finished_at);
-        let aggregate_expiry =
+        let aggregate_policy_expiry =
             aggregate.aggregated_at + TimeDelta::hours(HEALTH_EVIDENCE_VALIDITY_HOURS);
-        let expires_at = std::cmp::min(aggregate_expiry, shadow_report.expires_at);
+        let expires_at = std::cmp::min(
+            std::cmp::min(aggregate_policy_expiry, aggregate.expires_at),
+            shadow_report.expires_at,
+        );
         if expires_at <= observed_at {
             return Err(CanaryHealthError::ExpiredEvidence);
         }
@@ -112,6 +114,7 @@ fn validate_inputs(
         || aggregate.report_ids.is_empty()
         || aggregate.window_end - aggregate.window_start != TimeDelta::hours(24)
         || aggregate.aggregated_at < aggregate.window_end
+        || aggregate.expires_at <= aggregate.aggregated_at
         || (!aggregate.regions.contains_key(region)
             && !aggregate
                 .issues
@@ -236,8 +239,12 @@ fn combined_failure_id(aggregate_id: &str, shadow_id: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn canonical_id(value: &impl Serialize) -> Result<String, CanaryHealthError> {
-    serde_json::to_vec(value)
+fn aggregate_evidence_id(
+    aggregate: &CanaryAcceptanceAggregate,
+) -> Result<String, CanaryHealthError> {
+    let mut evidence = aggregate.clone();
+    evidence.aggregated_at = evidence.window_end;
+    serde_json::to_vec(&evidence)
         .map(|bytes| hex::encode(Sha256::digest(bytes)))
         .map_err(|error| CanaryHealthError::CanonicalSerialization(error.to_string()))
 }
@@ -409,6 +416,7 @@ mod tests {
             window_start: timestamp(25, 0, 0),
             window_end: timestamp(26, 0, 0),
             aggregated_at: timestamp(26, 0, 1),
+            expires_at: timestamp(27, 0, 0),
             disposition: if issues.is_empty() {
                 CanaryAcceptanceDisposition::Accepted
             } else {
@@ -433,12 +441,12 @@ mod tests {
         RuleHealthRecord {
             key: event.key.clone(),
             state: RuleHealth::Healthy,
-            sequence: 0,
+            sequence: event.sequence - 1,
             entered_at_unix_ms: event.observed_at_unix_ms - 2,
             updated_at_unix_ms: event.observed_at_unix_ms - 1,
             consecutive_recovery_passes: 0,
             consecutive_operational_failures: 0,
-            last_evidence_ids: Vec::new(),
+            last_evidence_ids: vec!["7".repeat(64)],
         }
     }
 
@@ -486,7 +494,7 @@ mod tests {
             }],
         );
         let event = CanaryHealthAssessor::new()
-            .assess_region(&aggregate, &shadow, "region-a", 1)
+            .assess_region(&aggregate, &shadow, "region-a", 3)
             .unwrap();
         assert!(matches!(
             event.signal,
@@ -519,7 +527,7 @@ mod tests {
             }],
         );
         let event = CanaryHealthAssessor::new()
-            .assess_region(&precision_aggregate, &stable_shadow, "region-a", 1)
+            .assess_region(&precision_aggregate, &stable_shadow, "region-a", 3)
             .unwrap();
         assert!(matches!(
             event.signal,
@@ -568,6 +576,7 @@ mod tests {
         outside_value.window_start = timestamp(26, 0, 0);
         outside_value.window_end = timestamp(27, 0, 0);
         outside_value.aggregated_at = timestamp(27, 0, 1);
+        outside_value.expires_at = timestamp(28, 0, 0);
         let outside = EvaluatedCanaryAggregate::from_test(outside_value);
         assert_eq!(
             CanaryHealthAssessor::new()
@@ -575,5 +584,36 @@ mod tests {
                 .unwrap_err(),
             CanaryHealthError::ShadowOutsideWindow
         );
+    }
+
+    #[test]
+    fn reprocessing_time_cannot_manufacture_distinct_aggregate_evidence() {
+        let shadow = validated_shadow(false);
+        let first = aggregate(&shadow, Vec::new());
+        let mut reprocessed_value = first.aggregate().clone();
+        reprocessed_value.aggregated_at = timestamp(26, 0, 2);
+        let reprocessed = EvaluatedCanaryAggregate::from_test(reprocessed_value);
+
+        let first_event = CanaryHealthAssessor::new()
+            .assess_region(&first, &shadow, "region-a", 1)
+            .unwrap();
+        let second_event = CanaryHealthAssessor::new()
+            .assess_region(&reprocessed, &shadow, "region-a", 2)
+            .unwrap();
+        let RuleHealthSignal::AcceptancePassed {
+            aggregate_evidence_id: first_id,
+            ..
+        } = first_event.signal
+        else {
+            panic!("first assessment should pass");
+        };
+        let RuleHealthSignal::AcceptancePassed {
+            aggregate_evidence_id: second_id,
+            ..
+        } = second_event.signal
+        else {
+            panic!("second assessment should pass");
+        };
+        assert_eq!(first_id, second_id);
     }
 }

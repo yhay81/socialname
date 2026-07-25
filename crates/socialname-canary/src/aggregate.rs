@@ -110,6 +110,7 @@ pub struct CanaryAcceptanceAggregate {
     pub window_start: DateTime<Utc>,
     pub window_end: DateTime<Utc>,
     pub aggregated_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
     pub disposition: CanaryAcceptanceDisposition,
     pub regions: BTreeMap<String, CanaryRegionAggregate>,
     pub overall: CanaryReportSummary,
@@ -242,6 +243,11 @@ impl CanaryReportAggregator {
                 .then_with(|| left.envelope().report_id.cmp(&right.envelope().report_id))
         });
         let overall = aggregate_reports(&ordered_reports)?;
+        let expires_at = ordered_reports
+            .iter()
+            .map(|report| report.envelope().report.expires_at)
+            .min()
+            .ok_or(CanaryAggregationError::EmptyInput)?;
         let report_ids = ordered_reports
             .iter()
             .map(|report| report.envelope().report_id.clone())
@@ -262,6 +268,7 @@ impl CanaryReportAggregator {
                 window_start: policy.window_start,
                 window_end: policy.window_end,
                 aggregated_at: aggregation_time,
+                expires_at,
                 disposition,
                 regions,
                 overall,
