@@ -12,6 +12,14 @@ pub enum SearchSource {
     #[default]
     Local,
     Cache,
+    Hybrid,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultSource {
+    Local,
+    Cache,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +70,7 @@ impl SearchRuleHealth {
 pub enum SearchStatus {
     Complete,
     CacheMiss,
+    CacheUnavailable,
     InvalidUsername,
     RuleNotPromoted,
     RuleHealthUnavailable,
@@ -74,6 +83,7 @@ pub enum SearchStatus {
 pub enum RefreshState {
     Completed,
     NotRequested,
+    Pending,
 }
 
 impl fmt::Display for SearchSource {
@@ -81,6 +91,7 @@ impl fmt::Display for SearchSource {
         formatter.write_str(match self {
             Self::Local => "local",
             Self::Cache => "cache",
+            Self::Hybrid => "hybrid",
         })
     }
 }
@@ -92,6 +103,7 @@ impl FromStr for SearchSource {
         match value {
             "local" => Ok(Self::Local),
             "cache" => Ok(Self::Cache),
+            "hybrid" => Ok(Self::Hybrid),
             _ => Err(ParseSearchPolicyError {
                 field: "source",
                 value: value.to_owned(),
@@ -125,6 +137,7 @@ impl fmt::Display for SearchStatus {
         formatter.write_str(match self {
             Self::Complete => "complete",
             Self::CacheMiss => "cache_miss",
+            Self::CacheUnavailable => "cache_unavailable",
             Self::InvalidUsername => "invalid_username",
             Self::RuleNotPromoted => "rule_not_promoted",
             Self::RuleHealthUnavailable => "rule_health_unavailable",
@@ -139,6 +152,7 @@ impl fmt::Display for RefreshState {
         formatter.write_str(match self {
             Self::Completed => "completed",
             Self::NotRequested => "not_requested",
+            Self::Pending => "pending",
         })
     }
 }
@@ -171,6 +185,7 @@ mod tests {
     fn source_and_sync_parsers_are_closed() {
         assert_eq!("local".parse(), Ok(SearchSource::Local));
         assert_eq!("cache".parse(), Ok(SearchSource::Cache));
+        assert_eq!("hybrid".parse(), Ok(SearchSource::Hybrid));
         assert!("cloud".parse::<SearchSource>().is_err());
         assert_eq!("never".parse(), Ok(SyncPolicy::Never));
         assert!("private".parse::<SyncPolicy>().is_err());

@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use futures_util::{StreamExt, stream};
+use futures_util::{StreamExt, future::BoxFuture, stream};
 use serde::{Deserialize, Serialize};
 use socialname_cache::{CacheEligibilityQuery, CacheMetadata, CacheVerdictPolicy, LocalCache};
 use socialname_domain::{
@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 
 pub use local_observation::{LocalObservationProducer, local_observation_from_result};
 pub use source_policy::{
-    DEFAULT_MAXIMUM_AGE_MS, DEFAULT_REGION_CLASS, RefreshState, SearchPolicy, SearchRuleHealth,
-    SearchSource, SearchStatus, SyncPolicy,
+    DEFAULT_MAXIMUM_AGE_MS, DEFAULT_REGION_CLASS, RefreshState, ResultSource, SearchPolicy,
+    SearchRuleHealth, SearchSource, SearchStatus, SyncPolicy,
 };
 
 const MAX_SELECTED_SITES: usize = 64;
@@ -118,6 +118,7 @@ impl SearchCompletion {
             match result.status {
                 SearchStatus::Complete => self.cache_hits += 1,
                 SearchStatus::CacheMiss => self.cache_misses += 1,
+                SearchStatus::CacheUnavailable => self.unavailable += 1,
                 SearchStatus::InvalidUsername => self.invalid_username += 1,
                 SearchStatus::RuleNotPromoted
                 | SearchStatus::RuleHealthUnavailable
@@ -147,7 +148,8 @@ pub struct SearchResultView {
     pub site_id: String,
     pub site_name: String,
     pub username: String,
-    pub source: SearchSource,
+    pub source: ResultSource,
+    pub requested_source: SearchSource,
     pub sync: SyncPolicy,
     pub status: SearchStatus,
     pub refresh_state: RefreshState,
@@ -164,6 +166,7 @@ pub struct SearchResultView {
 #[serde(rename_all = "camelCase")]
 pub struct SearchObservationView {
     pub observation_id: String,
+    pub source: ResultSource,
     pub verdict: Verdict,
     pub inconclusive_reason: Option<InconclusiveReason>,
     pub evidence_class: EvidenceClass,
@@ -179,9 +182,14 @@ pub struct SearchObservationView {
 }
 
 impl SearchObservationView {
-    fn from_observation(observation: Observation, metadata: Option<CacheMetadata>) -> Self {
+    fn from_observation(
+        observation: Observation,
+        source: ResultSource,
+        metadata: Option<CacheMetadata>,
+    ) -> Self {
         Self {
             observation_id: observation.id.as_str().to_owned(),
+            source,
             verdict: observation.verdict,
             inconclusive_reason: observation.inconclusive_reason,
             evidence_class: observation.evidence_class,
@@ -286,10 +294,28 @@ struct RuleHealthLookupKey {
     region_class: String,
 }
 
+trait LocalSearchExecutor: std::fmt::Debug + Send + Sync {
+    fn search<'a>(
+        &'a self,
+        rule: &'a CompiledSiteRule,
+        username: &'a str,
+    ) -> BoxFuture<'a, SearchResult>;
+}
+
+impl LocalSearchExecutor for SearchEngine {
+    fn search<'a>(
+        &'a self,
+        rule: &'a CompiledSiteRule,
+        username: &'a str,
+    ) -> BoxFuture<'a, SearchResult> {
+        Box::pin(SearchEngine::search(self, rule, username))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AppCore {
     rules: Arc<Vec<Arc<CompiledSiteRule>>>,
-    engine: SearchEngine,
+    local_executor: Arc<dyn LocalSearchExecutor>,
     rule_pack_hash: String,
     cache: Option<LocalCache>,
     rule_health: Arc<BTreeMap<RuleHealthLookupKey, SearchRuleHealth>>,
@@ -315,7 +341,7 @@ impl AppCore {
             SearchEngine::new().map_err(|error| AppCoreError::Engine(error.to_string()))?;
         Ok(Self {
             rules: Arc::new(rules),
-            engine,
+            local_executor: Arc::new(engine),
             rule_pack_hash,
             cache: None,
             rule_health: Arc::new(BTreeMap::new()),
@@ -415,6 +441,7 @@ impl AppCore {
         let username = request.username.trim().to_owned();
         let selected = self.select_rules(&request)?;
         let mut summary = SearchCompletion::new(selected.len());
+        let on_event = Arc::new(on_event);
         on_event(SearchEvent::Started {
             total: selected.len(),
         });
@@ -424,13 +451,19 @@ impl AppCore {
             let cancellation = cancellation.clone();
             let username = username.clone();
             let policy = policy.clone();
+            let on_event = Arc::clone(&on_event);
             async move {
                 tokio::select! {
                     biased;
                     () = cancellation.cancelled() => Ok(None),
-                    result = self.execute_rule(&rule, &username, &policy, now_unix_ms) => {
-                        result.map(Some)
-                    },
+                    result = self.execute_rule(
+                        &rule,
+                        &username,
+                        &policy,
+                        now_unix_ms,
+                        &cancellation,
+                        |result| on_event(SearchEvent::Result { result }),
+                    ) => result,
                 }
             }
         }))
@@ -449,21 +482,45 @@ impl AppCore {
         Ok(summary)
     }
 
-    async fn execute_rule(
+    async fn execute_rule<F>(
         &self,
         rule: &CompiledSiteRule,
         username: &str,
         policy: &SearchPolicy,
         now_unix_ms: i64,
-    ) -> Result<SearchResultView, AppCoreError> {
+        cancellation: &CancellationToken,
+        on_intermediate: F,
+    ) -> Result<Option<SearchResultView>, AppCoreError>
+    where
+        F: Fn(SearchResultView) + Send + Sync,
+    {
         match policy.source {
-            SearchSource::Local => {
-                self.execute_local_rule(rule, username, policy, now_unix_ms)
-                    .await
-            }
-            SearchSource::Cache => {
-                self.execute_cache_rule(rule, username, policy, now_unix_ms)
-                    .await
+            SearchSource::Local => self
+                .execute_local_rule(rule, username, policy, now_unix_ms)
+                .await
+                .map(Some),
+            SearchSource::Cache => self
+                .execute_cache_rule(rule, username, policy, now_unix_ms)
+                .await
+                .map(Some),
+            SearchSource::Hybrid => {
+                let mut cached = self
+                    .execute_cache_rule(rule, username, policy, now_unix_ms)
+                    .await?;
+                cached.refresh_state = RefreshState::Pending;
+                let cached_observations = cached.observations.clone();
+                on_intermediate(cached);
+                if cancellation.is_cancelled() {
+                    return Ok(None);
+                }
+
+                let mut local = self
+                    .execute_local_rule(rule, username, policy, now_unix_ms)
+                    .await?;
+                let mut observations = cached_observations;
+                observations.append(&mut local.observations);
+                local.observations = observations;
+                Ok(Some(local))
             }
         }
     }
@@ -475,17 +532,18 @@ impl AppCore {
         policy: &SearchPolicy,
         now_unix_ms: i64,
     ) -> Result<SearchResultView, AppCoreError> {
-        let result = self.engine.search(rule, username).await;
+        let result = self.local_executor.search(rule, username).await;
         let health = self.rule_health_for(rule, &policy.region_class);
         let status = if result.classification.verdict == Verdict::InvalidUsername {
             SearchStatus::InvalidUsername
         } else {
             SearchStatus::Complete
         };
-        let mut output = self.base_result(
+        let mut output = Self::base_result(
             rule,
             result.username.clone(),
             policy,
+            ResultSource::Local,
             health,
             status,
             RefreshState::Completed,
@@ -516,6 +574,7 @@ impl AppCore {
                 .observations
                 .push(SearchObservationView::from_observation(
                     observation,
+                    ResultSource::Local,
                     metadata,
                 ));
         }
@@ -531,56 +590,71 @@ impl AppCore {
         now_unix_ms: i64,
     ) -> Result<SearchResultView, AppCoreError> {
         let Some(normalized_username) = rule.normalize_username(username) else {
-            return Ok(self.base_result(
+            return Ok(Self::base_result(
                 rule,
                 username.to_owned(),
                 policy,
+                ResultSource::Cache,
                 None,
                 SearchStatus::InvalidUsername,
                 RefreshState::NotRequested,
             ));
         };
         if !rule.source.metadata.enabled {
-            return Ok(self.base_result(
+            return Ok(Self::base_result(
                 rule,
                 normalized_username,
                 policy,
+                ResultSource::Cache,
                 self.rule_health_for(rule, &policy.region_class),
                 SearchStatus::RuleNotPromoted,
                 RefreshState::NotRequested,
             ));
         }
         let Some(health) = self.rule_health_for(rule, &policy.region_class) else {
-            return Ok(self.base_result(
+            return Ok(Self::base_result(
                 rule,
                 normalized_username,
                 policy,
+                ResultSource::Cache,
                 None,
                 SearchStatus::RuleHealthUnavailable,
                 RefreshState::NotRequested,
             ));
         };
         if health.state != RuleHealth::Healthy {
-            return Ok(self.base_result(
+            return Ok(Self::base_result(
                 rule,
                 normalized_username,
                 policy,
+                ResultSource::Cache,
                 Some(health),
                 SearchStatus::RuleNotHealthy,
                 RefreshState::NotRequested,
             ));
         }
         if !health.is_fresh_healthy_at(now_unix_ms) {
-            return Ok(self.base_result(
+            return Ok(Self::base_result(
                 rule,
                 normalized_username,
                 policy,
+                ResultSource::Cache,
                 Some(health),
                 SearchStatus::RuleHealthStale,
                 RefreshState::NotRequested,
             ));
         }
-        let cache = self.cache.as_ref().ok_or(AppCoreError::CacheUnavailable)?;
+        let Some(cache) = self.cache.as_ref() else {
+            return Ok(Self::base_result(
+                rule,
+                normalized_username,
+                policy,
+                ResultSource::Cache,
+                Some(health),
+                SearchStatus::CacheUnavailable,
+                RefreshState::NotRequested,
+            ));
+        };
         let cached = cache
             .eligible_observations(&CacheEligibilityQuery {
                 target: TargetKey {
@@ -596,10 +670,11 @@ impl AppCore {
             })
             .await
             .map_err(cache_error)?;
-        let mut output = self.base_result(
+        let mut output = Self::base_result(
             rule,
             normalized_username.clone(),
             policy,
+            ResultSource::Cache,
             Some(health),
             if cached.is_empty() {
                 SearchStatus::CacheMiss
@@ -614,17 +689,21 @@ impl AppCore {
         output.observations = cached
             .into_iter()
             .map(|cached| {
-                SearchObservationView::from_observation(cached.observation, Some(cached.metadata))
+                SearchObservationView::from_observation(
+                    cached.observation,
+                    ResultSource::Cache,
+                    Some(cached.metadata),
+                )
             })
             .collect();
         Ok(output)
     }
 
     fn base_result(
-        &self,
         rule: &CompiledSiteRule,
         username: String,
         policy: &SearchPolicy,
+        source: ResultSource,
         health: Option<SearchRuleHealth>,
         status: SearchStatus,
         refresh_state: RefreshState,
@@ -633,7 +712,8 @@ impl AppCore {
             site_id: rule.source.id.clone(),
             site_name: rule.source.name.clone(),
             username,
-            source: policy.source,
+            source,
+            requested_source: policy.source,
             sync: policy.sync,
             status,
             refresh_state,
@@ -704,8 +784,10 @@ impl AppCore {
                 .iter()
                 .find(|rule| rule.source.id == *site_id)
                 .ok_or_else(|| AppCoreError::UnknownSite(site_id.clone()))?;
-            if request.policy.source == SearchSource::Local
-                && !rule.source.metadata.enabled
+            if matches!(
+                request.policy.source,
+                SearchSource::Local | SearchSource::Hybrid
+            ) && !rule.source.metadata.enabled
                 && !request.allow_discovery
             {
                 return Err(AppCoreError::DiscoveryRule(site_id.clone()));
@@ -786,7 +868,114 @@ fn format_compile_errors(errors: socialname_rule_compiler::CompileErrors) -> App
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+
+    #[derive(Debug, Default)]
+    struct FoundExecutor {
+        calls: AtomicUsize,
+    }
+
+    impl LocalSearchExecutor for FoundExecutor {
+        fn search<'a>(
+            &'a self,
+            rule: &'a CompiledSiteRule,
+            username: &'a str,
+        ) -> BoxFuture<'a, SearchResult> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let result = SearchResult {
+                site_id: rule.source.id.clone(),
+                username: username.to_owned(),
+                profile_url: Some(format!("https://example.test/{username}")),
+                rule_hash: rule.rule_hash.clone(),
+                classification: socialname_engine::Classification {
+                    verdict: Verdict::Found,
+                    inconclusive_reason: None,
+                    evidence_class: EvidenceClass::E4StructuredIdentity,
+                    matcher_trace: Vec::new(),
+                    evidence_digest: "3".repeat(64),
+                },
+                probes: Vec::new(),
+            };
+            Box::pin(async move { result })
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct NeverExecutor {
+        calls: AtomicUsize,
+    }
+
+    impl LocalSearchExecutor for NeverExecutor {
+        fn search<'a>(
+            &'a self,
+            _rule: &'a CompiledSiteRule,
+            _username: &'a str,
+        ) -> BoxFuture<'a, SearchResult> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(std::future::pending())
+        }
+    }
+
+    async fn cache_ready_core() -> AppCore {
+        let mut core = AppCore::from_embedded_rules().unwrap();
+        let mut rule = (**core
+            .rules
+            .iter()
+            .find(|rule| rule.source.id == "github")
+            .unwrap())
+        .clone();
+        rule.source.metadata.enabled = true;
+        let rule = Arc::new(rule);
+        let cache = LocalCache::open_in_memory().await.unwrap();
+        for (id, verdict, observed_at) in [
+            ("cached-found", Verdict::Found, 1_000),
+            ("cached-absent", Verdict::NotFound, 1_100),
+        ] {
+            cache
+                .store_observation(
+                    &Observation {
+                        id: socialname_domain::ObservationId::new(id),
+                        target: TargetKey {
+                            site_id: SiteId::new("github"),
+                            normalized_username: "octocat".to_owned(),
+                        },
+                        verdict,
+                        inconclusive_reason: None,
+                        evidence_class: EvidenceClass::E4StructuredIdentity,
+                        observed_at_unix_ms: observed_at,
+                        expires_at_unix_ms: 10_000,
+                        region: "local".to_owned(),
+                        network_group: "local-network".to_owned(),
+                        independence_group: id.to_owned(),
+                        producer_kind: socialname_domain::ProducerKind::LocalCli,
+                        producer_reputation: socialname_domain::ProducerReputation::New,
+                        collection_profile: socialname_domain::CollectionProfile::LocalOnly,
+                        rule_hash: rule.rule_hash.clone(),
+                        rule_health_green: true,
+                        evidence_digest: "2".repeat(64),
+                    },
+                    observed_at,
+                )
+                .await
+                .unwrap();
+        }
+        core.rules = Arc::new(vec![Arc::clone(&rule)]);
+        core.cache = Some(cache);
+        core.rule_health = Arc::new(BTreeMap::from([(
+            RuleHealthLookupKey {
+                site_id: "github".to_owned(),
+                rule_hash: rule.rule_hash.clone(),
+                region_class: "local".to_owned(),
+            },
+            SearchRuleHealth {
+                state: RuleHealth::Healthy,
+                evidence_expires_at_unix_ms: Some(10_000),
+            },
+        )]));
+        core
+    }
 
     #[test]
     fn embedded_pack_contains_the_representative_set() {
@@ -881,7 +1070,7 @@ mod tests {
         let SearchEvent::Result { result } = &events[1] else {
             panic!("expected a result event");
         };
-        assert_eq!(result.source, SearchSource::Cache);
+        assert_eq!(result.source, ResultSource::Cache);
         assert_eq!(result.status, SearchStatus::RuleNotPromoted);
         assert_eq!(result.refresh_state, RefreshState::NotRequested);
         assert!(result.live_result.is_none());
@@ -890,61 +1079,7 @@ mod tests {
 
     #[tokio::test]
     async fn cache_source_returns_the_full_eligible_observation_set_as_cached() {
-        let mut core = AppCore::from_embedded_rules().unwrap();
-        let mut rule = (**core
-            .rules
-            .iter()
-            .find(|rule| rule.source.id == "github")
-            .unwrap())
-        .clone();
-        rule.source.metadata.enabled = true;
-        let rule = Arc::new(rule);
-        let cache = LocalCache::open_in_memory().await.unwrap();
-        for (id, verdict, observed_at) in [
-            ("cached-found", Verdict::Found, 1_000),
-            ("cached-absent", Verdict::NotFound, 1_100),
-        ] {
-            cache
-                .store_observation(
-                    &Observation {
-                        id: socialname_domain::ObservationId::new(id),
-                        target: TargetKey {
-                            site_id: SiteId::new("github"),
-                            normalized_username: "octocat".to_owned(),
-                        },
-                        verdict,
-                        inconclusive_reason: None,
-                        evidence_class: EvidenceClass::E4StructuredIdentity,
-                        observed_at_unix_ms: observed_at,
-                        expires_at_unix_ms: 10_000,
-                        region: "local".to_owned(),
-                        network_group: "local-network".to_owned(),
-                        independence_group: id.to_owned(),
-                        producer_kind: socialname_domain::ProducerKind::LocalCli,
-                        producer_reputation: socialname_domain::ProducerReputation::New,
-                        collection_profile: socialname_domain::CollectionProfile::LocalOnly,
-                        rule_hash: rule.rule_hash.clone(),
-                        rule_health_green: true,
-                        evidence_digest: "2".repeat(64),
-                    },
-                    observed_at,
-                )
-                .await
-                .unwrap();
-        }
-        core.rules = Arc::new(vec![Arc::clone(&rule)]);
-        core.cache = Some(cache);
-        core.rule_health = Arc::new(BTreeMap::from([(
-            RuleHealthLookupKey {
-                site_id: "github".to_owned(),
-                rule_hash: rule.rule_hash.clone(),
-                region_class: "local".to_owned(),
-            },
-            SearchRuleHealth {
-                state: RuleHealth::Healthy,
-                evidence_expires_at_unix_ms: Some(10_000),
-            },
-        )]));
+        let core = cache_ready_core().await;
 
         let events = std::sync::Mutex::new(Vec::new());
         let summary = core
@@ -973,11 +1108,124 @@ mod tests {
         assert_eq!(result.status, SearchStatus::Complete);
         assert_eq!(result.observations.len(), 2);
         assert!(result.live_result.is_none());
-        assert!(
-            result
+        assert!(result.observations.iter().all(|observation| {
+            observation.source == ResultSource::Cache && observation.cached_at_unix_ms.is_some()
+        }));
+    }
+
+    #[tokio::test]
+    async fn hybrid_streams_cached_observations_before_the_local_refresh() {
+        let mut core = cache_ready_core().await;
+        let executor = Arc::new(FoundExecutor::default());
+        core.local_executor = executor.clone();
+        let events = std::sync::Mutex::new(Vec::new());
+
+        let summary = core
+            .run_search_at(
+                SearchRequest {
+                    username: "octocat".to_owned(),
+                    site_ids: vec!["github".to_owned()],
+                    allow_discovery: false,
+                    policy: SearchPolicy {
+                        source: SearchSource::Hybrid,
+                        ..SearchPolicy::default()
+                    },
+                },
+                CancellationToken::new(),
+                1_500,
+                |event| events.lock().unwrap().push(event),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(executor.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(summary.completed, 1);
+        assert_eq!(summary.found, 1);
+        let events = events.into_inner().unwrap();
+        assert_eq!(events.len(), 4);
+        let SearchEvent::Result { result: cached } = &events[1] else {
+            panic!("expected cached intermediate result");
+        };
+        assert_eq!(cached.source, ResultSource::Cache);
+        assert_eq!(cached.requested_source, SearchSource::Hybrid);
+        assert_eq!(cached.refresh_state, RefreshState::Pending);
+        assert_eq!(cached.observations.len(), 2);
+        assert!(cached.live_result.is_none());
+
+        let SearchEvent::Result { result: refreshed } = &events[2] else {
+            panic!("expected local refresh result");
+        };
+        assert_eq!(refreshed.source, ResultSource::Local);
+        assert_eq!(refreshed.requested_source, SearchSource::Hybrid);
+        assert_eq!(refreshed.refresh_state, RefreshState::Completed);
+        assert_eq!(refreshed.observations.len(), 3);
+        assert_eq!(
+            refreshed
                 .observations
                 .iter()
-                .all(|observation| observation.cached_at_unix_ms.is_some())
+                .filter(|observation| observation.source == ResultSource::Cache)
+                .count(),
+            2
         );
+        assert_eq!(
+            refreshed
+                .observations
+                .iter()
+                .filter(|observation| observation.source == ResultSource::Local)
+                .count(),
+            1
+        );
+        assert!(refreshed.live_result.is_some());
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_cached_phase_retains_cache_without_a_local_result() {
+        let mut core = cache_ready_core().await;
+        let executor = Arc::new(NeverExecutor::default());
+        core.local_executor = executor.clone();
+        let cancellation = CancellationToken::new();
+        let cancel_on_cache = cancellation.clone();
+        let events = std::sync::Mutex::new(Vec::new());
+
+        let summary = core
+            .run_search_at(
+                SearchRequest {
+                    username: "octocat".to_owned(),
+                    site_ids: vec!["github".to_owned()],
+                    allow_discovery: false,
+                    policy: SearchPolicy {
+                        source: SearchSource::Hybrid,
+                        ..SearchPolicy::default()
+                    },
+                },
+                cancellation,
+                1_500,
+                |event| {
+                    if matches!(
+                        &event,
+                        SearchEvent::Result { result }
+                            if result.source == ResultSource::Cache
+                                && result.refresh_state == RefreshState::Pending
+                    ) {
+                        cancel_on_cache.cancel();
+                    }
+                    events.lock().unwrap().push(event);
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(summary.cancelled);
+        assert_eq!(summary.completed, 0);
+        assert_eq!(executor.calls.load(Ordering::Relaxed), 0);
+        let events = events.into_inner().unwrap();
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            &events[1],
+            SearchEvent::Result { result }
+                if result.source == ResultSource::Cache
+                    && result.refresh_state == RefreshState::Pending
+        ));
+        assert!(matches!(&events[2], SearchEvent::Finished { .. }));
     }
 }

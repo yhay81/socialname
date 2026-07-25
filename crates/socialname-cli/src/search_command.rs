@@ -142,6 +142,26 @@ where
             };
             local_output(rule, policy, health, cache, now_unix_ms, result).await
         }
+        SearchSource::Hybrid => {
+            let cached =
+                execute_cache_search(rule, username, policy.clone(), health, cache, now_unix_ms)
+                    .await?;
+            let engine = engine_factory()?;
+            let search = engine.search(rule, username);
+            tokio::pin!(search);
+            let result = tokio::select! {
+                result = &mut search => result,
+                signal = tokio::signal::ctrl_c() => {
+                    signal?;
+                    bail!("local refresh cancelled");
+                }
+            };
+            let mut output = local_output(rule, policy, health, cache, now_unix_ms, result).await?;
+            let mut observations = cached.observations;
+            observations.append(&mut output.observations);
+            output.observations = observations;
+            Ok(output)
+        }
     }
 }
 

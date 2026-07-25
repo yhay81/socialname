@@ -62,17 +62,19 @@ export interface SearchRequest {
   policy: SearchPolicy;
 }
 
-export type SearchSource = "local" | "cache";
+export type SearchSource = "local" | "cache" | "hybrid";
+export type ResultSource = "local" | "cache";
 export type SyncPolicy = "never";
 export type SearchStatus =
   | "complete"
   | "cache_miss"
+  | "cache_unavailable"
   | "invalid_username"
   | "rule_not_promoted"
   | "rule_health_unavailable"
   | "rule_not_healthy"
   | "rule_health_stale";
-export type RefreshState = "completed" | "not_requested";
+export type RefreshState = "completed" | "not_requested" | "pending";
 export type RuleHealth =
   | "healthy"
   | "degraded"
@@ -107,7 +109,8 @@ export interface SearchResult {
   siteId: string;
   siteName: string;
   username: string;
-  source: SearchSource;
+  source: ResultSource;
+  requestedSource: SearchSource;
   sync: SyncPolicy;
   status: SearchStatus;
   refreshState: RefreshState;
@@ -122,6 +125,7 @@ export interface SearchResult {
 
 export interface SearchObservation {
   observationId: string;
+  source: ResultSource;
   verdict: Verdict;
   inconclusiveReason: InconclusiveReason | null;
   evidenceClass: EvidenceClass;

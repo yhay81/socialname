@@ -282,7 +282,11 @@ struct SearchArgs {
     #[arg(long, default_value = "rules/sites")]
     rules_dir: PathBuf,
     /// Select live local probing or strictly offline cache lookup.
-    #[arg(long, default_value_t = SearchSource::Local)]
+    #[arg(
+        long,
+        default_value_t = SearchSource::Local,
+        value_parser = parse_cli_search_source
+    )]
     source: SearchSource,
     /// Synchronization is independent of source; only never is implemented.
     #[arg(long, default_value_t = SyncPolicy::Never)]
@@ -302,6 +306,16 @@ struct SearchArgs {
     allow_disabled: bool,
     #[arg(long)]
     json: bool,
+}
+
+fn parse_cli_search_source(value: &str) -> Result<SearchSource, String> {
+    let source = value
+        .parse::<SearchSource>()
+        .map_err(|error| error.to_string())?;
+    if source == SearchSource::Hybrid {
+        return Err("hybrid cached-first streaming is currently desktop-only".to_owned());
+    }
+    Ok(source)
 }
 
 #[tokio::main]
@@ -1015,7 +1029,7 @@ async fn run_search(arguments: SearchArgs) -> Result<()> {
         .iter()
         .find(|rule| rule.source.id == arguments.site)
         .with_context(|| format!("unknown site {:?}", arguments.site))?;
-    if arguments.source == SearchSource::Local
+    if matches!(arguments.source, SearchSource::Local | SearchSource::Hybrid)
         && !rule.source.metadata.enabled
         && !arguments.allow_disabled
     {
@@ -1167,6 +1181,22 @@ mod cli_tests {
                 "github",
                 "--sync",
                 "private",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn hybrid_source_is_rejected_until_cli_streaming_has_an_event_contract() {
+        assert!(
+            Cli::try_parse_from([
+                "socialname",
+                "search",
+                "octocat",
+                "--site",
+                "github",
+                "--source",
+                "hybrid",
             ])
             .is_err()
         );

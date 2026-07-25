@@ -90,7 +90,7 @@ function App() {
     username.trim().length > 0 &&
     selectedSites.size > 0 &&
     (source !== "cache" || appInfo?.cacheReady === true) &&
-    (source !== "local" || !discoverySitesSelected || allowDiscovery);
+    (source === "cache" || !discoverySitesSelected || allowDiscovery);
 
   function handleEvent(searchId: string, event: SearchEvent) {
     if (activeSearchRef.current !== searchId) {
@@ -100,7 +100,17 @@ function App() {
     if (event.event === "started") {
       setTotalSites(event.data.total);
     } else if (event.event === "result") {
-      setResults((current) => [...current, event.data.result]);
+      setResults((current) => {
+        const index = current.findIndex(
+          (result) => result.siteId === event.data.result.siteId,
+        );
+        if (index === -1) {
+          return [...current, event.data.result];
+        }
+        return current.map((result, resultIndex) =>
+          resultIndex === index ? event.data.result : result,
+        );
+      });
     } else {
       setCancelled(event.data.summary.cancelled);
     }
@@ -175,7 +185,9 @@ function App() {
     });
   }
 
-  const completed = results.length;
+  const completed = results.filter(
+    (result) => result.refreshState !== "pending",
+  ).length;
   const progress = totalSites === 0 ? 0 : (completed / totalSites) * 100;
 
   return (
@@ -194,7 +206,11 @@ function App() {
         <div className="topbar__status">
           <span className="status-pill">
             <span className="status-dot" />
-            {source === "local" ? "Local probe" : "Offline cache"}
+            {source === "local"
+              ? "Local probe"
+              : source === "cache"
+                ? "Offline cache"
+                : "Cached-first refresh"}
           </span>
           <span className="status-pill status-pill--muted">
             <Icon name="shield" />
@@ -291,7 +307,9 @@ function App() {
             <p className="search-hero__description">
               {source === "local"
                 ? "Requests run from this device. Results remain local and are stored only in this installation's cache."
-                : "Cache lookup is strictly offline. It never falls through to a network probe and only returns fresh, rule-matched observations."}
+                : source === "cache"
+                  ? "Cache lookup is strictly offline. It never falls through to a network probe and only returns fresh, rule-matched observations."
+                  : "Eligible cached evidence appears first, then this device performs a separately labelled local refresh."}
             </p>
 
             <div
@@ -326,6 +344,18 @@ function App() {
                       ? "Cache unavailable"
                       : "No network refresh"}
                   </small>
+                </span>
+              </button>
+              <button
+                aria-pressed={source === "hybrid"}
+                disabled={running}
+                onClick={() => setSource("hybrid")}
+                type="button"
+              >
+                <Icon name="clock" />
+                <span>
+                  <strong>Cached-first</strong>
+                  <small>Then refresh locally</small>
                 </span>
               </button>
             </div>
@@ -372,7 +402,7 @@ function App() {
               )}
             </form>
 
-            {source === "local" && discoverySitesSelected && (
+            {source !== "cache" && discoverySitesSelected && (
               <label className="research-consent">
                 <input
                   checked={allowDiscovery}
@@ -411,7 +441,11 @@ function App() {
             <div className="results-heading">
               <div>
                 <p className="eyebrow">
-                  {source === "local" ? "Local evidence" : "Cached evidence"}
+                  {source === "local"
+                    ? "Local evidence"
+                    : source === "cache"
+                      ? "Cached evidence"
+                      : "Cached-first evidence"}
                 </p>
                 <h2>
                   {running

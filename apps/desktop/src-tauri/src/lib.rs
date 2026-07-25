@@ -25,7 +25,7 @@ struct DesktopState {
 #[serde(rename_all = "camelCase")]
 struct AppInfo {
     version: &'static str,
-    available_sources: [SearchSource; 2],
+    available_sources: [SearchSource; 3],
     default_policy: SearchPolicy,
     synchronization: SyncPolicy,
     cache_ready: bool,
@@ -37,7 +37,11 @@ struct AppInfo {
 fn get_app_info(state: State<'_, DesktopState>) -> AppInfo {
     AppInfo {
         version: env!("CARGO_PKG_VERSION"),
-        available_sources: [SearchSource::Local, SearchSource::Cache],
+        available_sources: [
+            SearchSource::Local,
+            SearchSource::Cache,
+            SearchSource::Hybrid,
+        ],
         default_policy: SearchPolicy::default(),
         synchronization: SyncPolicy::Never,
         cache_ready: state.cache_error.is_none(),

@@ -29,6 +29,7 @@ const verdictDetails: Record<
 const statusLabels: Record<SearchStatus, string> = {
   complete: "Complete",
   cache_miss: "No eligible cached observation",
+  cache_unavailable: "Cache unavailable",
   invalid_username: "Invalid username",
   rule_not_promoted: "Rule not promoted",
   rule_health_unavailable: "Rule health unavailable",
@@ -104,7 +105,13 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
           <div className="result-card__title-row">
             <h3>{result.siteName}</h3>
             <span className={`tag tag--${result.source}`}>
-              {result.source === "local" ? "Local probe" : "Cached"}
+              {result.source === "local"
+                ? result.requestedSource === "hybrid"
+                  ? "Local refresh"
+                  : "Local probe"
+                : result.refreshState === "pending"
+                  ? "Cached · refreshing"
+                  : "Cached"}
             </span>
             {researchRule && (
               <span className="tag tag--research">Research rule</span>
@@ -124,7 +131,11 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
             {primaryProbe
               ? `${primaryProbe.status ?? primaryProbe.transport} · ${primaryProbe.elapsedMs} ms`
               : result.observations.length > 0
-                ? `${result.observations.length} observation${result.observations.length === 1 ? "" : "s"} · offline`
+                ? `${result.observations.length} observation${result.observations.length === 1 ? "" : "s"} · ${
+                    result.refreshState === "pending"
+                      ? "refresh pending"
+                      : "offline"
+                  }`
                 : statusLabels[result.status]}
           </span>
         </div>
@@ -145,7 +156,10 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
           <dl className="evidence-grid">
             <div>
               <dt>Source</dt>
-              <dd>{result.source === "local" ? "Local probe" : "Local cache"}</dd>
+              <dd>
+                {result.source === "local" ? "Local probe" : "Local cache"}
+                {result.requestedSource === "hybrid" ? " · cached-first" : ""}
+              </dd>
             </div>
             <div>
               <dt>Refresh</dt>
@@ -193,9 +207,9 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
                     <dd>{formatTime(observation.expiresAtUnixMs)}</dd>
                   </div>
                   <div>
-                    <dt>Region / rule</dt>
+                    <dt>Origin / region / rule</dt>
                     <dd>
-                      {observation.regionClass} ·{" "}
+                      {observation.source} · {observation.regionClass} ·{" "}
                       <code title={observation.ruleHash}>
                         {observation.ruleHash.slice(0, 12)}
                       </code>
