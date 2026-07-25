@@ -76,7 +76,7 @@ maintained revision integer.
 
 Transient state is not committed into site YAML:
 
-- Healthy, degraded, or quarantined.
+- Healthy, degraded, quarantined, or recovering.
 - Region-specific success rate.
 - Last positive and negative canary time.
 - Current rollout percentage.
@@ -435,6 +435,9 @@ Canary results are stored per managed region. A site can be:
 
 Client observations can suggest degradation but cannot automatically publish a
 new rule or clear quarantine.
+
+The evidence-driven regional transition rules are defined in
+[`rule-health-v1.md`](rule-health-v1.md).
 
 ## Validation pipeline
 

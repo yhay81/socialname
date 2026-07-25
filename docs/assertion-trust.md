@@ -130,10 +130,13 @@ Monitoring can demand a shorter maximum age. A rule change invalidates older
 support unless compatibility is explicitly proven. Regional rule health caps
 quality:
 
-- `green`: normal derivation.
-- `yellow`: shared-only results cannot exceed `single_vantage`; managed results
-  may be provisional.
-- `red` or quarantined: no definitive assertion in that region.
+- `healthy` (green): normal definitive derivation.
+- `degraded` or `recovering` (yellow): evidence may remain visible as
+  provisional history, but it cannot establish a definitive assertion.
+- `quarantined` (red): no definitive assertion in that region.
+
+The persisted transition policy is defined in
+[`rule-health-v1.md`](rule-health-v1.md).
 
 ## Derivation rules
 

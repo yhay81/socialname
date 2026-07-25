@@ -8,8 +8,9 @@ the repeated-run and 24-hour parts of the live gate; it does not promote or
 enable a rule.
 
 The aggregator accepts only the opaque `ValidatedCanaryReport` type returned by
-the report validator. Raw or merely deserialized JSON cannot be passed directly
-into acceptance calculation.
+the report validator and returns an opaque `EvaluatedCanaryAggregate`. Raw or
+merely deserialized JSON cannot be passed directly into acceptance or
+rule-health calculation.
 
 ## Policy
 
@@ -58,9 +59,11 @@ global volume cannot compensate for a failed required region.
 
 ## Output and trust boundary
 
-The aggregate records its input report IDs, per-region summaries, overall
-summary, policy hashes, window, aggregation time, typed issues, and an
-`accepted` or `rejected` disposition.
+The aggregate records its input report IDs, their earliest expiry, per-region
+summaries, overall summary, policy hashes, window, aggregation time, typed
+issues, and an `accepted` or `rejected` disposition. Its downstream health
+evidence identity excludes the processing timestamp, so reprocessing the same
+reports cannot manufacture a second recovery pass.
 
 Acceptance means only that this candidate/engine combination met the synthetic
 report policy. It is not a signature, publication, health-state transition, or

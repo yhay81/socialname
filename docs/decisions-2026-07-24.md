@@ -39,6 +39,11 @@ so status does not diverge across design records.
   deployment, elapsed measurement, credential, signing, and production
   evidence. Missing external evidence keeps a capability disabled but does not
   authorize fabricated validation.
+- Rule health is scoped to an exact site, rule hash, and managed region. New
+  records start quarantined; two distinct fresh aggregate-plus-shadow passes
+  are required for recovery, two consecutive operational failures quarantine,
+  and any classification failure quarantines immediately. Health transitions
+  never authorize account-state notifications.
 
 ## Detailed records
 
@@ -50,6 +55,7 @@ so status does not diverge across design records.
 - [Desktop application](desktop-application.md)
 - [Ultimate goal](ultimate-goal.md)
 - [Execution roadmap](../ROADMAP.md)
+- [Regional rule health](rule-health-v1.md)
 
 ## Implementation baseline
 

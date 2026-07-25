@@ -208,7 +208,9 @@ cannot produce both definitive states.
   last-known-good rules under a combined request, concurrency, time, and byte
   budget, with typed precision, coverage, conflict, and per-case regression
   rejection.
-- **Next:** Explicit rule-health states and safe quarantine/recovery
-  transitions.
-- **Next:** Signed pack publication and a last-known-good rollback
-  demonstration.
+- **Done:** Regional `healthy`, `degraded`, `quarantined`, and `recovering`
+  state with quarantined initialization, replay-safe evidence sequencing,
+  operational degradation, immediate classification quarantine, two-pass
+  recovery, and account-notification suppression.
+- **Next:** Signed promotion metadata and a retained last-known-good rollback
+  path.

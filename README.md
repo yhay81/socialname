@@ -44,6 +44,9 @@ person.
 - Canary Shadow v1 paired execution against last-known-good rules with one
   combined budget and typed precision, coverage, conflict, and case regression
   rejection.
+- Regional rule-health state transitions with quarantined initialization,
+  evidence-bound recovery, operational degradation, immediate drift
+  quarantine, and account-notification suppression.
 - Assertion v1 trust thresholds for managed and opt-in shared observations.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.

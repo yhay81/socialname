@@ -81,8 +81,9 @@ verdict is recorded as an improvement.
 Shadow acceptance alone does not establish sufficient quality. The candidate
 must still independently satisfy the 100% precision, 95% conclusive coverage,
 zero-conflict, latency, repeated-run, and multi-region Canary Aggregate gate.
-It also does not publish a rule, change rule health, or emit an account-state
-notification.
+It also does not publish a rule or emit an account-state notification. A
+validated shadow becomes one input to the separate regional health policy; it
+cannot change health by itself.
 
 Deterministic tests cover identical private target sets, accepted parity and
 improvement, coverage/precision/conflict regression, combined-budget preflight,

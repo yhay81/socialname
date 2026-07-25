@@ -3374,6 +3374,7 @@ dependencies = [
  "clap",
  "serde_json",
  "socialname-canary",
+ "socialname-domain",
  "socialname-engine",
  "socialname-rule-compiler",
  "socialname-testkit",

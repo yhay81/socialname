@@ -1,16 +1,23 @@
 #![forbid(unsafe_code)]
 
-use std::{collections::BTreeSet, fs, path::PathBuf, process::ExitCode};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use socialname_canary::{
-    CanaryAggregationPolicy, CanaryManifestCompiler, CanaryReportAggregator, CanaryReportBuilder,
-    CanaryReportPolicy, CanaryReportValidator, CanaryRunBudget, CanaryRunCompletion, CanaryRunner,
-    CanaryShadowBuilder, CanaryShadowDisposition, CanaryShadowPair, CanaryShadowPolicy,
-    CanaryShadowValidator, DeclaredVantage,
+    CanaryAggregationPolicy, CanaryHealthAssessor, CanaryManifestCompiler, CanaryReportAggregator,
+    CanaryReportBuilder, CanaryReportPolicy, CanaryReportValidator, CanaryRunBudget,
+    CanaryRunCompletion, CanaryRunner, CanaryShadowBuilder, CanaryShadowDisposition,
+    CanaryShadowPair, CanaryShadowPolicy, CanaryShadowValidator, DeclaredVantage,
+    ValidatedCanaryReport,
 };
+use socialname_domain::{RuleHealthPolicy, RuleHealthRecord};
 use socialname_engine::SearchEngine;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_testkit::verify_fixtures;
@@ -33,7 +40,7 @@ enum Command {
     /// Validate, inspect, and compile Site Rule v1 sources.
     Rules(RulesArgs),
     /// Validate independent positive/negative canary manifests.
-    Canaries(CanaryArgs),
+    Canaries(Box<CanaryArgs>),
     /// Verify deterministic response fixtures against the rule pack.
     Fixtures(FixtureArgs),
     /// Run one private local probe using the shared Rust engine.
@@ -162,6 +169,49 @@ enum CanaryCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Derive and apply one regional rule-health event from aggregate and shadow evidence.
+    Health {
+        #[arg(long)]
+        reports_dir: PathBuf,
+        #[arg(long)]
+        shadow_report: PathBuf,
+        #[arg(long)]
+        current_record: Option<PathBuf>,
+        #[arg(long)]
+        site: String,
+        #[arg(long)]
+        manifest_hash: String,
+        #[arg(long)]
+        candidate_rule_hash: String,
+        #[arg(long)]
+        last_known_good_rule_hash: String,
+        #[arg(long)]
+        engine_hash: String,
+        /// Region whose health record is updated.
+        #[arg(long)]
+        region: String,
+        /// Complete required region set for aggregate evaluation.
+        #[arg(long = "required-region", required = true)]
+        required_regions: Vec<String>,
+        #[arg(long)]
+        window_start: DateTime<Utc>,
+        #[arg(long)]
+        window_end: DateTime<Utc>,
+        #[arg(long, default_value_t = 3)]
+        minimum_runs_per_region: u32,
+        #[arg(long, default_value_t = 6_000)]
+        maximum_p95_latency_ms: u64,
+        #[arg(long, default_value_t = 64)]
+        max_planned_requests: u32,
+        #[arg(long, default_value_t = 16_777_216)]
+        max_completed_response_bytes: u64,
+        #[arg(long, default_value_t = 2)]
+        recovery_passes_required: u32,
+        #[arg(long, default_value_t = 2)]
+        operational_failures_to_quarantine: u32,
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the generated JSON Schema.
     Schema,
 }
@@ -203,7 +253,7 @@ async fn main() -> ExitCode {
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Rules(arguments) => run_rules(arguments),
-        Command::Canaries(arguments) => run_canaries(arguments).await,
+        Command::Canaries(arguments) => run_canaries(*arguments).await,
         Command::Fixtures(arguments) => run_fixtures(arguments),
         Command::Search(arguments) => run_search(arguments).await,
     }
@@ -491,37 +541,8 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                 max_planned_requests,
                 max_completed_response_bytes,
             };
-            let mut paths = Vec::new();
-            for entry in fs::read_dir(&reports_dir)
-                .with_context(|| format!("failed to read report directory {reports_dir:?}"))?
-            {
-                let path = entry
-                    .with_context(|| format!("failed to read report directory {reports_dir:?}"))?
-                    .path();
-                if path
-                    .extension()
-                    .is_some_and(|extension| extension == "json")
-                {
-                    paths.push(path);
-                }
-            }
-            paths.sort();
-
-            let validator = CanaryReportValidator::new();
-            let mut seen_report_ids = BTreeSet::new();
-            let mut reports = Vec::new();
-            for path in paths {
-                let source = fs::read_to_string(&path)
-                    .with_context(|| format!("failed to read report {path:?}"))?;
-                let validated = validator.parse_and_validate_json_at(
-                    &source,
-                    &report_policy,
-                    &seen_report_ids,
-                    aggregation_time,
-                )?;
-                seen_report_ids.insert(validated.envelope().report_id.clone());
-                reports.push(validated);
-            }
+            let reports =
+                load_validated_canary_reports(&reports_dir, &report_policy, aggregation_time)?;
 
             let evaluated = CanaryReportAggregator::new().aggregate_at(
                 &reports,
@@ -555,11 +576,177 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                 }
             }
         }
+        CanaryCommand::Health {
+            reports_dir,
+            shadow_report,
+            current_record,
+            site,
+            manifest_hash,
+            candidate_rule_hash,
+            last_known_good_rule_hash,
+            engine_hash,
+            region,
+            required_regions,
+            window_start,
+            window_end,
+            minimum_runs_per_region,
+            maximum_p95_latency_ms,
+            max_planned_requests,
+            max_completed_response_bytes,
+            recovery_passes_required,
+            operational_failures_to_quarantine,
+            json,
+        } => {
+            let assessment_time = Utc::now();
+            let required_regions: BTreeSet<_> = required_regions.into_iter().collect();
+            if !required_regions.contains(&region) {
+                bail!("health region must be included in --required-region");
+            }
+            let report_policy = CanaryReportPolicy {
+                site_id: site.clone(),
+                manifest_hash: manifest_hash.clone(),
+                allowed_rule_hashes: BTreeSet::from([candidate_rule_hash.clone()]),
+                allowed_engine_hashes: BTreeSet::from([engine_hash.clone()]),
+                allowed_regions: required_regions.clone(),
+                max_planned_requests,
+                max_completed_response_bytes,
+            };
+            let reports =
+                load_validated_canary_reports(&reports_dir, &report_policy, assessment_time)?;
+            let evaluated = CanaryReportAggregator::new().aggregate_at(
+                &reports,
+                &CanaryAggregationPolicy {
+                    site_id: site.clone(),
+                    manifest_hash: manifest_hash.clone(),
+                    rule_hash: candidate_rule_hash.clone(),
+                    engine_hash: engine_hash.clone(),
+                    required_regions,
+                    window_start,
+                    window_end,
+                    minimum_runs_per_region,
+                    maximum_p95_latency_ms,
+                },
+                assessment_time,
+            )?;
+
+            let shadow_source = fs::read_to_string(&shadow_report)
+                .with_context(|| format!("failed to read shadow report {shadow_report:?}"))?;
+            let validated_shadow = CanaryShadowValidator::new().parse_and_validate_json_at(
+                &shadow_source,
+                &CanaryShadowPolicy {
+                    site_id: site,
+                    manifest_hash,
+                    candidate_rule_hash,
+                    last_known_good_rule_hash,
+                    engine_hash,
+                    allowed_regions: BTreeSet::from([region.clone()]),
+                    max_planned_requests_per_rule: max_planned_requests,
+                    max_completed_response_bytes_per_rule: max_completed_response_bytes,
+                },
+                &BTreeSet::new(),
+                assessment_time,
+            )?;
+            let health_policy = RuleHealthPolicy {
+                recovery_passes_required,
+                operational_failures_to_quarantine,
+            };
+            let current = if let Some(path) = current_record {
+                let source = fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read health record {path:?}"))?;
+                let value: serde_json::Value = serde_json::from_str(&source)
+                    .with_context(|| format!("failed to parse health record {path:?}"))?;
+                let record_value = value.get("record").cloned().unwrap_or(value);
+                let record: RuleHealthRecord = serde_json::from_value(record_value)
+                    .with_context(|| format!("failed to decode health record {path:?}"))?;
+                record.validate(health_policy)?;
+                record
+            } else {
+                let aggregate = evaluated.aggregate();
+                RuleHealthRecord::quarantined(
+                    socialname_domain::RuleHealthKey {
+                        site_id: socialname_domain::SiteId::new(aggregate.site_id.clone()),
+                        rule_hash: aggregate.rule_hash.clone(),
+                        region: region.clone(),
+                    },
+                    aggregate.window_start.timestamp_millis(),
+                )?
+            };
+            let sequence = current
+                .sequence
+                .checked_add(1)
+                .context("health sequence overflowed")?;
+            let event = CanaryHealthAssessor::new().assess_region(
+                &evaluated,
+                &validated_shadow,
+                &region,
+                sequence,
+            )?;
+            let (record, transition) =
+                current.apply_at(&event, health_policy, Utc::now().timestamp_millis())?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "record": record,
+                        "transition": transition,
+                    }))?
+                );
+            } else {
+                println!(
+                    "{}\t{}\t{}\t{:?}->{:?}\tchanged={}\thealth_only=true",
+                    record.key.site_id,
+                    record.key.region,
+                    record.sequence,
+                    transition.from,
+                    transition.to,
+                    transition.changed,
+                );
+            }
+        }
         CanaryCommand::Schema => {
             println!("{}", compiler.json_schema()?);
         }
     }
     Ok(())
+}
+
+fn load_validated_canary_reports(
+    reports_dir: &Path,
+    policy: &CanaryReportPolicy,
+    validation_time: DateTime<Utc>,
+) -> Result<Vec<ValidatedCanaryReport>> {
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(reports_dir)
+        .with_context(|| format!("failed to read report directory {reports_dir:?}"))?
+    {
+        let path = entry
+            .with_context(|| format!("failed to read report directory {reports_dir:?}"))?
+            .path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+
+    let validator = CanaryReportValidator::new();
+    let mut seen_report_ids = BTreeSet::new();
+    let mut reports = Vec::new();
+    for path in paths {
+        let source =
+            fs::read_to_string(&path).with_context(|| format!("failed to read report {path:?}"))?;
+        let validated = validator.parse_and_validate_json_at(
+            &source,
+            policy,
+            &seen_report_ids,
+            validation_time,
+        )?;
+        seen_report_ids.insert(validated.envelope().report_id.clone());
+        reports.push(validated);
+    }
+    Ok(reports)
 }
 
 fn run_rules(arguments: RulesArgs) -> Result<()> {

@@ -89,6 +89,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   multi-region, 24-hour acceptance metrics and explicit regional failures.
 - [Canary Shadow v1](canary-shadow-v1.md) — same-target paired execution and
   candidate regression checks against a last-known-good rule.
+- [Regional Rule Health v1](rule-health-v1.md) — evidence-driven regional
+  health, quarantine, recovery, replay rejection, and notification separation.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

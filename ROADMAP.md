@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add rule-health states and safe
-`healthy -> degraded -> quarantined -> recovering` transitions.
+Next executable item: bind accepted evidence, rule-pack hash, region policy,
+and expiry into a signed promotion artifact with last-known-good rollback.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -81,7 +81,7 @@ disabled.
 - [x] Implement aggregation across runs, vantages, and the documented 24-hour
       acceptance window.
 - [x] Add shadow comparison between candidate and last-known-good rules.
-- [ ] Add rule-health states and safe `healthy -> degraded -> quarantined ->
+- [x] Add rule-health states and safe `healthy -> degraded -> quarantined ->
       recovering` transitions.
 - [ ] Bind an accepted report, rule-pack hash, region policy, and expiry into a
       signed promotion artifact; verify it before activation and retain a
@@ -185,6 +185,26 @@ Canary Report v1 evidence and rejects lower precision or coverage, new
 conflicts, and formerly correct cases that become inconclusive or incorrect.
 Target usernames and profile URLs are not serialized. Shadow acceptance
 supplements rather than replaces the independent aggregate thresholds.
+
+Rule-health-slice evidence:
+
+```console
+cargo test --locked --workspace --all-targets
+# socialname-domain: 11 passed, including transition, recovery, replay,
+# cross-region, persisted-record, and notification-boundary cases
+# socialname-canary: 40 passed, including accepted, operational,
+# classification, partial-region, incompatible-evidence, and replay-stable ID
+# assessments
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+```
+
+Regional rule-health records start quarantined. Opaque aggregator output and a
+validated shadow pair produce fresh, sequence-bound health evidence. Two
+distinct passes move `quarantined -> recovering -> healthy`; repeated
+operational failures move `healthy -> degraded -> quarantined`; classification
+failure quarantines immediately. Only healthy permits definitive assertions,
+and every health transition is structurally ineligible for an account-state
+notification.
 
 Software acceptance gate:
 
@@ -397,3 +417,7 @@ Choose these only when their trigger is measured:
   execution, combined safety budgets, independently validated nested reports,
   content-integrity and duplicate checks, and typed precision, coverage,
   conflict, and per-case regression rejection.
+- **2026-07-25:** Added regional rule-health records with quarantined
+  initialization, contiguous evidence sequencing, bounded two-pass recovery,
+  operational degradation, immediate classification quarantine, persisted
+  record validation, and health-only notification semantics.
