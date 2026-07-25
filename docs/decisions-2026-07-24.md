@@ -77,6 +77,12 @@ so status does not diverge across design records.
   corrupt current data and sidecars move to an adjacent quarantine before a
   new empty cache is created. Complete deletion consumes the cache and removes
   its journal, SHM, WAL, and main file without claiming secure media erasure.
+- CLI source and synchronization are orthogonal. `local` and strictly offline
+  `cache` sources currently accept only `sync=never`; unsupported sync values
+  fail parsing. Cache lookup never constructs the network engine or falls back
+  to a probe, and requires both a promoted rule and fresh exact regional health
+  evidence. Human and JSON envelopes identify source, freshness, health, rule,
+  and refresh state.
 
 ## Detailed records
 
@@ -104,6 +110,7 @@ so status does not diverge across design records.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
 
-The next work is Milestone 1 in `ROADMAP.md`: add explicit CLI `local` and
-`cache` source modes with independent `sync=never`, then expose source and
-freshness metadata. The first paid monitoring loop follows as Milestone 2.
+The next work is Milestone 1 in `ROADMAP.md`: expose the same cache/source
+policy through `socialname-app-core` and desktop, then stream cached-first local
+refreshes without relabelling their source. The first paid monitoring loop
+follows as Milestone 2.

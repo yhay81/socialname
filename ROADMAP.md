@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add CLI `local` and `cache` modes plus independent
-`sync=never`.
+Next executable item: expose the cache/source policy through
+`socialname-app-core` and the desktop application.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -271,8 +271,8 @@ External evidence gate:
       verdict policy, and freshness.
 - [x] Implement pruning, maximum-size behavior, corruption recovery, export,
       and complete local deletion.
-- [ ] Add CLI `local` and `cache` modes plus independent `sync=never`.
-- [ ] Show source, observed time, expiry, rule hash, and refresh state in normal
+- [x] Add CLI `local` and `cache` modes plus independent `sync=never`.
+- [x] Show source, observed time, expiry, rule hash, and refresh state in normal
       and machine-readable CLI output.
 - [ ] Expose the same cache/source policy through `socialname-app-core` and the
       desktop application.
@@ -358,6 +358,31 @@ under an adjacent quarantine before creating an empty cache, while healthy,
 foreign, nonempty unowned, and future databases are preserved and refused.
 Complete deletion closes the pool and removes journal, SHM, WAL, and main
 files, reporting any partial failure.
+
+CLI-source-slice evidence:
+
+```console
+cargo test --locked -p socialname-cli
+# 5 passed: default local/never parsing, explicit cache mode, unsupported sync
+# rejection, no-engine cache hit/miss/health/promotion paths, and verdict TTLs
+cargo clippy --locked -p socialname-cli --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- search --help
+# source values: local, cache; sync values: never
+cargo run --locked -p socialname-cli -- search octocat --site github \
+  --source cache --sync never --cache-path <absent-path> --json
+# source=cache, status=rule_not_promoted, refresh_state=not_requested;
+# no cache file created and no network engine constructed
+```
+
+The default remains a local probe with `sync=never`. `cache` requires an
+explicit path and never falls through to network execution. Cache reuse
+requires a promoted exact rule plus a fresh matching regional health record;
+all ten discovery-only repository rules remain disabled even if a health file
+is supplied. Human and JSON envelopes distinguish cached observations from
+live results and expose sync, status, refresh, promotion, health, rule hash,
+observed time, expiry, evidence, and region. Optional local persistence uses
+verdict-specific 24-hour found, 15-minute not-found, and 5-minute inconclusive
+TTLs; invalid usernames are not stored.
 
 ## Milestone 2 — First paid monitoring loop
 
@@ -547,3 +572,7 @@ Choose these only when their trigger is measured:
   data limits, create-new versioned JSONL export, full relational integrity
   checks, explicit corrupt-file quarantine and empty-cache recovery, and
   complete database/sidecar deletion.
+- **2026-07-25:** Added orthogonal CLI `local`/`cache` source and `sync=never`
+  policy, strict no-network cache execution, promoted-plus-fresh-health gates,
+  optional local observation persistence, verdict-specific TTLs, and
+  source/freshness-aware human and JSON output.

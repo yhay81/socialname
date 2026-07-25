@@ -3,8 +3,9 @@
 The local cache is a user-controlled SQLite database for immutable SocialName
 observations and cache-management metadata. It is an optional local product
 component: opening or using it does not contact a SocialName service. It can
-persist and read domain observations, but does not implement synchronization,
-search integration, or source-mode presentation yet.
+persist and read domain observations and is integrated with the CLI's explicit
+local/cache source policy. Desktop integration, cached-first refresh streaming,
+and synchronization beyond `never` are not implemented yet.
 
 ## Ownership and opening policy
 
@@ -161,6 +162,47 @@ removes its journal, SHM, WAL, and main database in that order. It reports the
 number of removed files and stops with an explicit partial-deletion error on
 the first non-absence failure. It does not claim secure media erasure.
 In-memory caches cannot claim file deletion.
+
+## CLI source and synchronization policy
+
+`socialname search` separates source from synchronization:
+
+```console
+socialname search USERNAME --site SITE --source local --sync never
+socialname search USERNAME --site SITE --source cache --sync never \
+  --cache-path PATH --rule-health-record RECORD
+```
+
+`local` is the default source and performs the bounded third-party probe. A
+cache path is optional; when supplied it is opened before network work, and a
+valid result becomes an immutable `local_cli`/`local_only` observation.
+`found`, `not_found`, and `inconclusive` receive initial TTLs of 24 hours,
+15 minutes, and 5 minutes respectively. Invalid usernames make no request and
+are not persisted. Ctrl-C cancels the in-flight local search future.
+
+`cache` is strictly offline. It requires a cache path, never constructs the
+network engine, and does not create a database for a missing path. Reuse also
+requires:
+
+- a promoted (`metadata.enabled`) exact rule, so a health record cannot promote
+  a discovery rule;
+- a structurally valid health record whose site, rule hash, and region match;
+- `healthy` state with unexpired evidence;
+- the cache eligibility contract above.
+
+Failure remains typed as `rule_not_promoted`, `rule_health_unavailable`,
+`rule_not_healthy`, `rule_health_stale`, or `cache_miss`; none falls through to
+a live probe. All ten repository rules therefore remain safely
+`rule_not_promoted` pending their external acceptance and signed promotion
+gate.
+
+Only `sync=never` is accepted. Other synchronization values fail CLI parsing,
+independently of source. Both human and JSON output expose source, sync,
+completion/miss status, refresh state, promotion and health state, rule hash,
+and every returned observation's observed time, expiry, evidence, and region.
+Cache output has no `live_result`; local output includes the engine result and
+the time-bounded observation. Cached observations are never labelled live, and
+cache mode does not imply a refresh.
 
 ## Privacy and failure behavior
 

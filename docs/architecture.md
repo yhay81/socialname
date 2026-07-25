@@ -349,12 +349,12 @@ crates/
   socialname-rule-schema/   typed source and compiled rule models
   socialname-rule-compiler/ lint, compile, bundle, and migration
   socialname-engine/        templates, HTTP probes, classifiers, scheduling
+  socialname-cache/         local SQLite cache and freshness policy
   socialname-app-core/      UI-independent local search orchestration
   socialname-cli/           CLI binary
   socialname-testkit/       mock sites, fixtures, deterministic clocks
   # next slices
   socialname-protocol/      API and event DTOs
-  socialname-cache/         local SQLite cache and freshness policy
   socialname-server/        API and modular control/data plane
   socialname-worker/        managed probe and canary worker binary
 rules/

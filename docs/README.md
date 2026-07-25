@@ -135,8 +135,10 @@ These terms have distinct meanings and should not be used interchangeably:
 The current milestone is **Trustworthy local product**. The canonical task
 breakdown and acceptance evidence live in [`ROADMAP.md`](../ROADMAP.md):
 
-1. Add explicit `local` and `cache` source modes with `sync=never` to the CLI.
-2. Expose source and freshness policy through the desktop application.
+1. Expose cache/source/freshness policy through `socialname-app-core` and the
+   desktop application.
+2. Stream eligible cached observations before an explicitly labelled local
+   refresh.
 
 Infrastructure, pricing, scale, and community-network choices remain deferred
 until their roadmap trigger is measured.
