@@ -349,7 +349,8 @@ GET /v1/sites/{site_id}/health
 ```
 
 The public API is versioned independently from the rule schema and rule-pack
-format.
+format. The implemented wire-level contract and validation rules are recorded
+in [Public protocol v1](protocol-v1.md).
 
 ## Rust workspace
 
@@ -364,9 +365,9 @@ crates/
   socialname-cache/         local SQLite cache and freshness policy
   socialname-app-core/      UI-independent local search orchestration
   socialname-cli/           CLI binary
+  socialname-protocol/      versioned API, event, watch, and delivery DTOs
   socialname-testkit/       mock sites, fixtures, deterministic clocks
   # next slices
-  socialname-protocol/      API and event DTOs
   socialname-server/        API and modular control/data plane
   socialname-worker/        managed probe and canary worker binary
 rules/

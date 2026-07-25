@@ -97,6 +97,13 @@ so status does not diverge across design records.
   The cache phase is emitted before the local executor starts; cancellation
   after that phase retains cached evidence and prevents the local call. The CLI
   rejects `hybrid` until it has a versioned ordered-event output contract.
+- Public API v1 is an independent, closed `snake_case` wire contract in
+  `socialname-protocol`, not direct serialization of mutable domain or app-core
+  types. Ordered search events structurally separate definitive observations,
+  uncertainty, and operational failure. Cross-field validation binds freshness,
+  purpose-specific sync consent, watch bounds, transition confirmation, and
+  delivery state. Sensitive destinations and usernames redact `Debug`, and
+  errors never echo rejected values or raw response data.
 
 ## Detailed records
 
@@ -111,6 +118,7 @@ so status does not diverge across design records.
 - [Regional rule health](rule-health-v1.md)
 - [Signed rule promotion](rule-promotion-v1.md)
 - [Local cache](local-cache.md)
+- [Public protocol v1](protocol-v1.md)
 
 ## Implementation baseline
 
@@ -123,8 +131,10 @@ so status does not diverge across design records.
 5. **Done:** Implement assertion replay with synthetic producers and conflicts.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
+7. **Done:** Add the independent public protocol v1 DTO and JSON Schema
+   boundary.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
-work is the first paid monitoring loop in Milestone 2, beginning with versioned
-protocol DTOs.
+work is the first paid monitoring loop in Milestone 2, continuing with the
+Axum/Tower modular-monolith server shell.

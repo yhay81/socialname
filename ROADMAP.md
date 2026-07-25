@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add `socialname-protocol` for the versioned Milestone 2
-API, event, error, source, freshness, watch, transition, and notification DTOs.
+Next executable item: add the Rust modular-monolith `socialname-server` shell
+using Axum/Tower without adding persistence ahead of the ordered roadmap item.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -449,12 +449,12 @@ adds the cache-before-local and cancellation paths. Together these satisfy the
 
 ## Milestone 2 — First paid monitoring loop
 
-Status: **Planned**
+Status: **Current**
 
 Outcome: a user can create a watch, the managed system observes it over time,
 derives a trustworthy transition, and delivers one auditable notification.
 
-- [ ] Add `socialname-protocol` for versioned API, event, error, source,
+- [x] Add `socialname-protocol` for versioned API, event, error, source,
       freshness, watch, transition, and notification DTOs.
 - [ ] Add a Rust modular-monolith `socialname-server` using Axum/Tower.
 - [ ] Add PostgreSQL migrations for tenants, credentials, sites, rule versions,
@@ -475,6 +475,29 @@ derives a trustworthy transition, and delivers one auditable notification.
 - [ ] Add a minimal monitoring UI without weakening the API boundary.
 - [ ] Provide one end-to-end test: watch creation -> managed observation ->
       assertion change -> transition -> exactly-once logical notification.
+
+Protocol-slice evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked -p socialname-protocol
+# 21 unit tests and 4 public contract tests passed
+cargo clippy --locked -p socialname-protocol --all-targets --all-features -- -D warnings
+```
+
+`socialname-protocol` owns the independent
+`socialname.dev/api/v1` snake-case wire contract and Draft 2020-12 schema roots.
+It does not serialize mutable domain or app-core types directly. Search events
+separate definitive observations, uncertainty, and operational failure; actual
+source and derived freshness remain explicit. Requests are bounded, reject
+unknown fields, and require purpose-specific grants for private/shared sync.
+Usernames and notification destinations redact `Debug`, error DTOs never echo
+values or raw response data, and endpoint resources do not return destinations.
+Closed transition confirmation rules keep measurement degradation outside
+account state, make shared-only absence non-deliverable, and allow notification
+delivery construction only from a validated confirmed transition. Watch
+schedule, budget, retention, revision, and next-run relations are deterministic
+and validated without arbitrary cron or code.
 
 Software acceptance gate:
 

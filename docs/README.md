@@ -66,6 +66,9 @@ The first vertical slice is implemented in the repository:
 - a user-controlled SQLite observation cache with typed persistence,
   freshness/health eligibility, bounded maintenance, explicit export,
   quarantine recovery, and complete local deletion;
+- an independent public API v1 crate with closed search/SSE, error,
+  source/freshness, watch, transition-confirmation, notification endpoint, and
+  delivery DTOs plus generated JSON Schema roots;
 - a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache and
   cached-first sources, immutable observation persistence, source-preserving
   refresh streaming, freshness display, cancellation, and explicit
@@ -102,6 +105,9 @@ access. Live canaries are intentionally a separate acceptance gate.
   manual and scheduled managed-vantage templates with fixed budgets.
 - [Local cache](local-cache.md) — embedded SQLite persistence, eligibility,
   maintenance, export, recovery, deletion, and fail-closed behavior.
+- [Public protocol v1](protocol-v1.md) — closed REST/SSE DTOs, source and
+  freshness, bounded watches, transition confirmation, errors, and notification
+  delivery contracts.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
