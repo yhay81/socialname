@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: key cache eligibility by target, vantage class, rule
-identity, verdict policy, and freshness.
+Next executable item: implement bounded pruning, maximum-size behavior,
+corruption recovery, export, and complete local deletion.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -267,7 +267,7 @@ External evidence gate:
 - [x] Add `socialname-cache` with embedded SQLite migrations.
 - [x] Persist immutable local observations and cache metadata, not just the
       latest boolean result.
-- [ ] Key eligibility by normalized username, site, region class, rule hash,
+- [x] Key eligibility by normalized username, site, region class, rule hash,
       verdict policy, and freshness.
 - [ ] Implement pruning, maximum-size behavior, corruption recovery, export,
       and complete local deletion.
@@ -319,8 +319,25 @@ complete immutable observation with its initial cache metadata. Exact replay is
 idempotent; different content under one observation ID is an explicit conflict
 that preserves the original. `get_observation` reconstructs the closed domain
 types and distinguishes a real miss from incomplete or invalid stored data.
-No query is eligible for result reuse until the next source/freshness policy
-slice is implemented.
+Selection and access accounting are defined by the eligibility evidence below.
+
+Eligibility-slice evidence:
+
+```console
+cargo test --locked -p socialname-cache
+# 16 passed: exact-key hit, target/site/region/rule misses, current and captured
+# rule health, verdict policy, expiry, maximum age, negative TTL, access
+# accounting, invalid query, and fail-closed result-set bound
+cargo clippy --locked -p socialname-cache --all-targets --all-features -- -D warnings
+```
+
+`eligible_observations` requires the exact normalized target, region class,
+rule hash, current healthy regional state, evaluation time, maximum age, and
+verdict policy. It also requires captured green health and the observation's
+own unexpired TTL. It returns the complete deterministic matching set instead
+of selecting a latest boolean, updates access metadata only for successful
+hits, and fails rather than truncating above 256 observations so conflicts
+cannot be hidden.
 
 ## Milestone 2 — First paid monitoring loop
 
@@ -502,3 +519,7 @@ Choose these only when their trigger is measured:
 - **2026-07-25:** Added transactional typed observation persistence with full
   domain round trips, immutable-ID replay/conflict behavior, initial cache
   metadata, rollback on partial failure, and explicit incomplete-row errors.
+- **2026-07-25:** Added exact cache eligibility across target, region, rule,
+  current and captured health, verdict policy, expiry, and maximum age; returns
+  a bounded observation set with transactional access accounting instead of a
+  latest-writer result.

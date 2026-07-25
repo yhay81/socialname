@@ -62,6 +62,11 @@ so status does not diverge across design records.
   is idempotent, different immutable content under that ID is a conflict, and
   missing metadata or an unknown stored enum is an error rather than a cache
   miss.
+- Cache eligibility requires the exact target, region class, current rule hash,
+  current healthy regional rule state, captured green health, observation
+  expiry, request maximum age, and explicit verdict policy. It returns the
+  bounded matching observation set rather than choosing a latest boolean;
+  overflow fails instead of hiding possible conflicts.
 
 ## Detailed records
 
@@ -89,7 +94,7 @@ so status does not diverge across design records.
 6. **Done:** Add the local Tauri desktop search vertical slice and native
    Windows/macOS compile CI.
 
-The next work is Milestone 1 in `ROADMAP.md`: implement cache eligibility by
-target, vantage class, rule identity, verdict policy, and freshness, then add
+The next work is Milestone 1 in `ROADMAP.md`: add bounded pruning, size,
+recovery, export, and complete local deletion behavior, then add
 source-selection policy. The first paid monitoring loop follows as Milestone
 2.

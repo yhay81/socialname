@@ -4,7 +4,7 @@ The local cache is a user-controlled SQLite database for immutable SocialName
 observations and cache-management metadata. It is an optional local product
 component: opening or using it does not contact a SocialName service. It can
 persist and read domain observations, but does not implement synchronization,
-export, search integration, eligibility selection, or result reuse yet.
+export, search integration, or source-mode presentation yet.
 
 ## Ownership and opening policy
 
@@ -48,8 +48,8 @@ including `found`, `not_found`, invalid input, and operational uncertainty.
 when the observation was cached, last access, and access count. Deleting an
 observation cascades to this metadata. Eligibility and expiry indexes include
 normalized username, site, region class, rule hash, observation time, and
-expiry, but eligibility policy is implemented in a later slice rather than
-being inferred from the latest row.
+expiry. Eligibility is evaluated over the observation set rather than inferred
+from the latest row.
 
 ## Persistence contract
 
@@ -70,6 +70,34 @@ returns cache metadata separately. A missing observation returns no result.
 An existing observation with missing metadata, an unknown stored enum, or
 otherwise invalid stored content returns an explicit error rather than a cache
 miss or verdict.
+
+## Eligibility contract
+
+`LocalCache::eligible_observations` requires an explicit query containing:
+
+- normalized username and site;
+- region class and exact current rule hash;
+- current regional rule health;
+- evaluation time and maximum acceptable age;
+- an exact, definitive-only, or all-observation verdict policy.
+
+An observation is reusable only when all key fields match, both its captured
+health and current regional health are green, it is not from the future, its
+own expiry is later than the evaluation time, and its age is within the
+request's maximum. The observation expiry retains verdict-specific TTLs, so a
+short-lived `not_found` cannot inherit the longer life of a `found` result.
+Changing a rule hash or region creates a miss rather than a broad fallback.
+
+The query returns every eligible observation in deterministic newest-first
+order. It never selects one latest boolean from potentially conflicting
+evidence. The result set is bounded at 256; exceeding the bound is an explicit
+error rather than silent truncation. A successful hit transaction increments
+access count and advances last-access time for every returned observation.
+Misses and failed or oversized queries do not touch metadata.
+
+This API establishes safe cache eligibility only. Later source-policy work
+must label cached data as cached, derive any current interpretation from the
+observation set, and decide whether to refresh locally.
 
 ## Privacy and failure behavior
 
@@ -102,4 +130,7 @@ The deterministic tests cover first initialization, schema ownership and
 integrity, idempotent reopen, foreign and future database refusal, corrupt
 input, complete domain round trips, exact replay, immutable-ID conflict,
 transaction rollback, missing metadata, observation immutability, and deletion
-for later pruning.
+for later pruning. Eligibility tests cover exact hits, target/site/region/rule
+misses, current and captured rule health, verdict filtering, expiry, maximum
+age, negative TTL, access accounting, invalid queries, and bounded conflict
+preservation.
