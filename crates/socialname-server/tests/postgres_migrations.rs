@@ -3,13 +3,19 @@ use std::{env, net::SocketAddr, time::Duration};
 use axum::{
     body::{Body, to_bytes},
     http::{
-        Request, StatusCode,
-        header::{AUTHORIZATION, WWW_AUTHENTICATE},
+        Method, Request, StatusCode,
+        header::{AUTHORIZATION, CONTENT_TYPE, LOCATION, WWW_AUTHENTICATE},
     },
     response::Response,
 };
 use sha2::{Digest, Sha256};
-use socialname_protocol::{ApiErrorCode, ApiErrorResponse, Validate, WorkspaceResource};
+use socialname_protocol::{
+    ApiErrorCode, ApiErrorResponse, ConsentGrantId, EventId, OperationalFailure,
+    OperationalFailureKind, ProtocolVersion, RegionClass, ResultSource, SearchCreateRequest,
+    SearchEvent, SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource,
+    SearchState, SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection, Username,
+    Validate, WorkspaceResource,
+};
 use socialname_server::{ServerConfig, build_router, migrate_database};
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -34,6 +40,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
         .unwrap();
 
     assert_schema_inventory(&pool).await;
+    reset_test_state(&pool).await;
     install_fixtures(&pool).await;
     install_api_key_fixtures(&pool).await;
     assert_api_key_scope_constraints(&pool).await;
@@ -43,8 +50,44 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_transition_and_delivery_safety(&pool).await;
     assert_deletion_deadlines_and_receipts(&pool).await;
     assert_authenticated_workspace_boundary(&pool).await;
+    assert_private_search_and_event_stream_boundary(&pool).await;
 
     pool.close().await;
+}
+
+async fn reset_test_state(pool: &PgPool) {
+    pool.execute(sqlx::raw_sql(
+        r#"
+        TRUNCATE TABLE
+            tenants, memberships, api_keys, api_key_credentials, clients, sites,
+            rule_packs, rule_versions, rule_health_records, consent_grants,
+            consent_events, searches, search_targets, search_events, watches,
+            watch_targets, probe_jobs, probe_job_consumers, observations,
+            assertions, assertion_support, transitions, transition_basis,
+            notification_endpoints, notification_deliveries, audit_events,
+            data_lineage_edges, deletion_requests, deletion_tasks,
+            deletion_receipts, suppression_tokens
+        CASCADE;
+
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT FROM pg_roles
+                WHERE rolname = 'socialname_migration_test_app'
+            ) THEN
+                REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public
+                    FROM socialname_migration_test_app;
+                REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public
+                    FROM socialname_migration_test_app;
+                REVOKE ALL PRIVILEGES ON SCHEMA public
+                    FROM socialname_migration_test_app;
+            END IF;
+        END
+        $$;
+        "#,
+    ))
+    .await
+    .unwrap();
 }
 
 async fn assert_schema_inventory(pool: &PgPool) {
@@ -56,6 +99,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('clients'), ('sites'),
                 ('rule_packs'), ('rule_versions'), ('rule_health_records'),
                 ('consent_grants'), ('consent_events'), ('searches'), ('search_targets'),
+                ('search_events'),
                 ('watches'), ('watch_targets'), ('probe_jobs'), ('probe_job_consumers'),
                 ('observations'), ('assertions'), ('assertion_support'), ('transitions'),
                 ('transition_basis'), ('notification_endpoints'),
@@ -71,7 +115,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 30);
+    assert_eq!(required_tables, 31);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -80,7 +124,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 25);
+    assert_eq!(tenant_policies, 26);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -90,7 +134,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 25);
+    assert_eq!(forced_rls_tables, 26);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -174,7 +218,7 @@ async fn install_fixtures(pool: &PgPool) {
         );
 
         INSERT INTO search_targets (
-            id, tenant_id, search_id, normalized_username, site_id, ordinal, created_at
+            id, tenant_id, search_id, requested_username, site_id, ordinal, created_at
         )
         VALUES (
             '00000000-0000-0000-0000-000000000042',
@@ -332,7 +376,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
             membership_id: "00000000-0000-0000-0000-000000000011",
             prefix: "aaaaaaaaaaaaaaaa",
             secret_byte: 0x11,
-            scopes: &["workspace:read"],
+            scopes: &["workspace:read", "search:read", "search:write"],
             state: "active",
             expires_at_unix_ms: None,
         },
@@ -342,7 +386,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
             membership_id: "00000000-0000-0000-0000-000000000012",
             prefix: "bbbbbbbbbbbbbbbb",
             secret_byte: 0x22,
-            scopes: &["workspace:read"],
+            scopes: &["workspace:read", "search:read", "search:write"],
             state: "active",
             expires_at_unix_ms: None,
         },
@@ -470,6 +514,14 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT SELECT, INSERT ON tenants, memberships TO socialname_migration_test_app;
         GRANT SELECT ON api_keys TO socialname_migration_test_app;
         GRANT UPDATE (last_used_at) ON api_keys TO socialname_migration_test_app;
+        GRANT SELECT ON sites, consent_grants, searches, search_targets, search_events
+            TO socialname_migration_test_app;
+        GRANT INSERT ON searches, search_targets, search_events
+            TO socialname_migration_test_app;
+        GRANT UPDATE (state, updated_at, completed_at) ON searches
+            TO socialname_migration_test_app;
+        GRANT UPDATE (state, completed_at) ON search_targets
+            TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
             TO socialname_migration_test_app;
         "#,
@@ -537,13 +589,43 @@ async fn assert_tenant_isolation(pool: &PgPool) {
     .unwrap();
     assert!(can_update_last_used);
     assert!(!can_update_scopes);
+
+    let can_update_search_state: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'searches', 'state', 'UPDATE'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let can_update_idempotency_hash: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'searches', \
+            'idempotency_key_hash', 'UPDATE'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let can_update_normalized_username: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'search_targets', \
+            'normalized_username', 'UPDATE'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(can_update_search_state);
+    assert!(!can_update_idempotency_hash);
+    assert!(!can_update_normalized_username);
 }
 
 async fn assert_cross_tenant_references_are_rejected(pool: &PgPool) {
     let error = sqlx::query(
         r#"
         INSERT INTO search_targets (
-            id, tenant_id, search_id, normalized_username, site_id, ordinal, created_at
+            id, tenant_id, search_id, requested_username, site_id, ordinal, created_at
         )
         VALUES (
             '00000000-0000-0000-0000-000000000043',
@@ -807,13 +889,575 @@ async fn assert_authenticated_workspace_boundary(administrator_pool: &PgPool) {
     assert_eq!(json_body(not_ready).await["status"], "not_ready");
 }
 
+async fn assert_private_search_and_event_stream_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let writer_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let reader_token = api_key_token("cccccccccccccccc", 0x33);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let request = private_search_request(SyncPolicy::Private, "github", 60_000);
+    let request_body = serde_json::to_string(&request).unwrap();
+
+    let read_only_create = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&reader_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "read-only"),
+        ],
+        request_body.clone(),
+    )
+    .await;
+    assert_eq!(read_only_create.status(), StatusCode::FORBIDDEN);
+    assert_api_error(read_only_create, ApiErrorCode::Forbidden).await;
+
+    let missing_key = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        request_body.clone(),
+    )
+    .await;
+    assert_eq!(missing_key.status(), StatusCode::BAD_REQUEST);
+    assert_api_error(missing_key, ApiErrorCode::InvalidRequest).await;
+
+    let never_request = SearchCreateRequest {
+        sync: SyncPolicy::Never,
+        consent_grant_id: None,
+        ..request.clone()
+    };
+    let never = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "never-leaves-device"),
+        ],
+        serde_json::to_string(&never_request).unwrap(),
+    )
+    .await;
+    assert_eq!(never.status(), StatusCode::BAD_REQUEST);
+    let never_error = json_body(never).await;
+    assert_eq!(never_error["error"]["code"], "invalid_request");
+    assert!(!never_error.to_string().contains("private-search-target"));
+
+    let shared_request = SearchCreateRequest {
+        sync: SyncPolicy::Shared,
+        ..request.clone()
+    };
+    let wrong_purpose = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "wrong-purpose"),
+        ],
+        serde_json::to_string(&shared_request).unwrap(),
+    )
+    .await;
+    assert_eq!(wrong_purpose.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_purpose, ApiErrorCode::Forbidden).await;
+
+    let unknown_site_request = private_search_request(SyncPolicy::Private, "unknown-site", 60_000);
+    let unknown_site = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "unknown-site"),
+        ],
+        serde_json::to_string(&unknown_site_request).unwrap(),
+    )
+    .await;
+    assert_eq!(unknown_site.status(), StatusCode::BAD_REQUEST);
+    let unknown_site_error = json_body(unknown_site).await;
+    assert_eq!(unknown_site_error["error"]["code"], "invalid_request");
+    assert!(!unknown_site_error.to_string().contains("unknown-site"));
+
+    let created = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "private-search-replay"),
+        ],
+        request_body.clone(),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let location = created.headers()[LOCATION].to_str().unwrap().to_owned();
+    let created_resource: SearchResource =
+        serde_json::from_value(json_body(created).await).unwrap();
+    assert!(created_resource.validate().is_ok());
+    assert_eq!(created_resource.state, SearchState::Accepted);
+    assert_eq!(created_resource.progress.total_targets, 1);
+    assert_eq!(created_resource.progress.completed_targets, 0);
+    assert_eq!(
+        location,
+        format!("/v1/searches/{}", created_resource.search_id.as_str())
+    );
+    let search_id = Uuid::parse_str(created_resource.search_id.as_str()).unwrap();
+
+    let replay = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "private-search-replay"),
+        ],
+        request_body,
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay_resource: SearchResource = serde_json::from_value(json_body(replay).await).unwrap();
+    assert_eq!(replay_resource.search_id, created_resource.search_id);
+
+    let changed_request = private_search_request(SyncPolicy::Private, "github", 120_000);
+    let conflict = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "private-search-replay"),
+        ],
+        serde_json::to_string(&changed_request).unwrap(),
+    )
+    .await;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_api_error(conflict, ApiErrorCode::IdempotencyConflict).await;
+
+    let idempotency_hash = Sha256::digest(b"private-search-replay");
+    let stored_hash_matches: bool = sqlx::query_scalar(
+        "SELECT idempotency_key_hash = $1 \
+         FROM searches WHERE id = $2",
+    )
+    .bind(&idempotency_hash[..])
+    .bind(search_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(stored_hash_matches);
+
+    let polled = server_request(
+        &application_pool,
+        &format!("/v1/searches/{search_id}"),
+        Some(&writer_token),
+    )
+    .await;
+    assert_eq!(polled.status(), StatusCode::OK);
+    let polled_resource: SearchResource = serde_json::from_value(json_body(polled).await).unwrap();
+    assert_eq!(polled_resource.search_id, created_resource.search_id);
+
+    let cross_tenant = server_request(
+        &application_pool,
+        &format!("/v1/searches/{search_id}"),
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(cross_tenant.status(), StatusCode::NOT_FOUND);
+    assert_api_error(cross_tenant, ApiErrorCode::NotFound).await;
+
+    let started_event_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM search_events \
+         WHERE search_id = $1 AND sequence = 1",
+    )
+    .bind(search_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    complete_search_with_operational_failure(administrator_pool, search_id).await;
+
+    let completed = server_request(
+        &application_pool,
+        &format!("/v1/searches/{search_id}"),
+        Some(&writer_token),
+    )
+    .await;
+    let completed_resource: SearchResource =
+        serde_json::from_value(json_body(completed).await).unwrap();
+    assert_eq!(completed_resource.state, SearchState::Completed);
+    assert_eq!(completed_resource.progress.completed_targets, 1);
+    assert_eq!(completed_resource.progress.operational_failures, 1);
+    assert!(completed_resource.validate().is_ok());
+
+    let events = server_request_with(
+        &application_pool,
+        Method::GET,
+        &format!("/v1/searches/{search_id}/events"),
+        Some(&writer_token),
+        &[],
+        String::new(),
+    )
+    .await;
+    assert_eq!(events.status(), StatusCode::OK);
+    assert!(
+        events.headers()[CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+    let event_bytes = to_bytes(events.into_body(), 256 * 1_024).await.unwrap();
+    let event_text = String::from_utf8(event_bytes.to_vec()).unwrap();
+    let sequence_one = event_text.find("\"sequence\":1").unwrap();
+    let sequence_two = event_text.find("\"sequence\":2").unwrap();
+    let sequence_three = event_text.find("\"sequence\":3").unwrap();
+    assert!(sequence_one < sequence_two && sequence_two < sequence_three);
+    assert!(event_text.contains("\"type\":\"operational_failure\""));
+    assert!(event_text.contains("\"type\":\"finished\""));
+    assert!(!event_text.contains(&writer_token));
+    assert!(!event_text.contains("private-search-replay"));
+
+    let immutable_event = sqlx::query(
+        "UPDATE search_events SET created_at = created_at \
+         WHERE search_id = $1 AND sequence = 2",
+    )
+    .bind(search_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(immutable_event, "55000");
+
+    let resumed = server_request_with(
+        &application_pool,
+        Method::GET,
+        &format!("/v1/searches/{search_id}/events"),
+        Some(&writer_token),
+        &[("last-event-id", &started_event_id.to_string())],
+        String::new(),
+    )
+    .await;
+    assert_eq!(resumed.status(), StatusCode::OK);
+    let resumed_bytes = to_bytes(resumed.into_body(), 256 * 1_024).await.unwrap();
+    let resumed_text = String::from_utf8(resumed_bytes.to_vec()).unwrap();
+    assert!(!resumed_text.contains("\"sequence\":1"));
+    assert!(resumed_text.contains("\"sequence\":2"));
+    assert!(resumed_text.contains("\"sequence\":3"));
+
+    let malformed_resume = server_request_with(
+        &application_pool,
+        Method::GET,
+        &format!("/v1/searches/{search_id}/events"),
+        Some(&writer_token),
+        &[("last-event-id", "not-an-event-id")],
+        String::new(),
+    )
+    .await;
+    assert_eq!(malformed_resume.status(), StatusCode::BAD_REQUEST);
+    assert_api_error(malformed_resume, ApiErrorCode::InvalidRequest).await;
+
+    let cancellation_request = private_search_request(SyncPolicy::Private, "github", 60_000);
+    let cancellation_created = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "cancel-search"),
+        ],
+        serde_json::to_string(&cancellation_request).unwrap(),
+    )
+    .await;
+    let cancellation_resource: SearchResource =
+        serde_json::from_value(json_body(cancellation_created).await).unwrap();
+    let cancellation_id = Uuid::parse_str(cancellation_resource.search_id.as_str()).unwrap();
+    for _ in 0..2 {
+        let cancelled = server_request_with(
+            &application_pool,
+            Method::DELETE,
+            &format!("/v1/searches/{cancellation_id}"),
+            Some(&writer_token),
+            &[],
+            String::new(),
+        )
+        .await;
+        assert_eq!(cancelled.status(), StatusCode::OK);
+        let cancelled_resource: SearchResource =
+            serde_json::from_value(json_body(cancelled).await).unwrap();
+        assert_eq!(cancelled_resource.state, SearchState::Cancelled);
+    }
+    let finished_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM search_events \
+         WHERE search_id = $1 AND event_type = 'finished'",
+    )
+    .bind(cancellation_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(finished_count, 1);
+
+    let capacity_created = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "stream-capacity"),
+        ],
+        serde_json::to_string(&private_search_request(
+            SyncPolicy::Private,
+            "github",
+            60_000,
+        ))
+        .unwrap(),
+    )
+    .await;
+    let capacity_resource: SearchResource =
+        serde_json::from_value(json_body(capacity_created).await).unwrap();
+    let capacity_uri = format!(
+        "/v1/searches/{}/events",
+        capacity_resource.search_id.as_str()
+    );
+    let bounded_router = build_router(
+        ServerConfig::new(
+            "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+            Duration::from_secs(1),
+            4_096,
+            1,
+        )
+        .unwrap(),
+        application_pool.clone(),
+    );
+    let first_stream = bounded_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&capacity_uri)
+                .header(AUTHORIZATION, format!("Bearer {writer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_stream.status(), StatusCode::OK);
+    let capacity_denied = bounded_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&capacity_uri)
+                .header(AUTHORIZATION, format!("Bearer {writer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(capacity_denied.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_api_error(capacity_denied, ApiErrorCode::Unavailable).await;
+    drop(first_stream);
+    let capacity_released = bounded_router
+        .oneshot(
+            Request::builder()
+                .uri(&capacity_uri)
+                .header(AUTHORIZATION, format!("Bearer {writer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(capacity_released.status(), StatusCode::OK);
+    drop(capacity_released);
+
+    application_pool.close().await;
+}
+
+fn private_search_request(
+    sync: SyncPolicy,
+    site_id: &str,
+    maximum_age_ms: i64,
+) -> SearchCreateRequest {
+    SearchCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        targets: TargetSelection {
+            usernames: vec![Username::new("private-search-target").unwrap()],
+            site_ids: vec![SiteId::new(site_id).unwrap()],
+        },
+        mode: SearchMode::Remote,
+        sync,
+        consent_grant_id: Some(
+            ConsentGrantId::new("00000000-0000-0000-0000-000000000031").unwrap(),
+        ),
+        maximum_age_ms,
+        region_classes: vec![RegionClass::new("jp").unwrap()],
+    }
+}
+
+async fn complete_search_with_operational_failure(pool: &PgPool, search_id: Uuid) {
+    let workspace_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let target_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM search_targets \
+         WHERE tenant_id = $1 AND search_id = $2",
+    )
+    .bind(workspace_id)
+    .bind(search_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let emitted_at_unix_ms = 1_800_000_000_000_i64;
+    let failure_event_id = Uuid::new_v4();
+    let failure_event = SearchEvent {
+        schema: ProtocolVersion::ApiV1,
+        event_id: EventId::new(failure_event_id.to_string()).unwrap(),
+        search_id: SearchId::new(search_id.to_string()).unwrap(),
+        sequence: 2,
+        emitted_at_unix_ms,
+        data: SearchEventData::OperationalFailure {
+            failure: OperationalFailure {
+                target: Target {
+                    username: Username::new("private-search-target").unwrap(),
+                    site_id: SiteId::new("github").unwrap(),
+                },
+                kind: OperationalFailureKind::CapacityUnavailable,
+                source: ResultSource::ManagedProbe,
+                occurred_at_unix_ms: emitted_at_unix_ms,
+                retryable: true,
+                region_class: Some(RegionClass::new("jp").unwrap()),
+                rule_hash: None,
+            },
+        },
+    };
+    let finished_event_id = Uuid::new_v4();
+    let progress = SearchProgress {
+        total_targets: 1,
+        completed_targets: 1,
+        definitive_results: 0,
+        uncertain_results: 0,
+        operational_failures: 1,
+    };
+    let finished_event = SearchEvent {
+        schema: ProtocolVersion::ApiV1,
+        event_id: EventId::new(finished_event_id.to_string()).unwrap(),
+        search_id: SearchId::new(search_id.to_string()).unwrap(),
+        sequence: 3,
+        emitted_at_unix_ms: emitted_at_unix_ms + 1,
+        data: SearchEventData::Finished {
+            state: SearchTerminalState::Completed,
+            progress,
+        },
+    };
+    assert!(failure_event.validate().is_ok());
+    assert!(finished_event.validate().is_ok());
+
+    let mut transaction = pool.begin().await.unwrap();
+    sqlx::query(
+        "UPDATE search_targets \
+         SET state = 'failed', completed_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND search_id = $2 AND id = $3",
+    )
+    .bind(workspace_id)
+    .bind(search_id)
+    .bind(target_id)
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE searches \
+         SET state = 'completed', updated_at = clock_timestamp(), \
+             completed_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(workspace_id)
+    .bind(search_id)
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    insert_search_event_fixture(
+        &mut transaction,
+        workspace_id,
+        search_id,
+        Some(target_id),
+        failure_event_id,
+        "operational_failure",
+        &failure_event,
+    )
+    .await;
+    insert_search_event_fixture(
+        &mut transaction,
+        workspace_id,
+        search_id,
+        None,
+        finished_event_id,
+        "finished",
+        &finished_event,
+    )
+    .await;
+    transaction.commit().await.unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_search_event_fixture(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    workspace_id: Uuid,
+    search_id: Uuid,
+    target_id: Option<Uuid>,
+    event_id: Uuid,
+    event_type: &str,
+    event: &SearchEvent,
+) {
+    sqlx::query(
+        "INSERT INTO search_events (\
+            id, tenant_id, search_id, search_target_id, sequence, event_type, \
+            payload, emitted_at, created_at\
+         ) VALUES (\
+            $1, $2, $3, $4, $5, $6, $7::jsonb, \
+            to_timestamp($8::double precision / 1000.0), clock_timestamp()\
+         )",
+    )
+    .bind(event_id)
+    .bind(workspace_id)
+    .bind(search_id)
+    .bind(target_id)
+    .bind(i64::try_from(event.sequence).unwrap())
+    .bind(event_type)
+    .bind(serde_json::to_string(event).unwrap())
+    .bind(event.emitted_at_unix_ms)
+    .execute(&mut **transaction)
+    .await
+    .unwrap();
+}
+
 async fn server_request(pool: &PgPool, uri: &str, token: Option<&str>) -> Response {
-    let mut request = Request::builder().uri(uri);
+    server_request_with(pool, Method::GET, uri, token, &[], String::new()).await
+}
+
+async fn server_request_with(
+    pool: &PgPool,
+    method: Method,
+    uri: &str,
+    token: Option<&str>,
+    headers: &[(&str, &str)],
+    body: String,
+) -> Response {
+    let mut request = Request::builder().method(method).uri(uri);
     if let Some(token) = token {
         request = request.header(AUTHORIZATION, format!("Bearer {token}"));
     }
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
     build_router(test_server_config(), pool.clone())
-        .oneshot(request.body(Body::empty()).unwrap())
+        .oneshot(request.body(Body::from(body)).unwrap())
         .await
         .unwrap()
 }

@@ -1,6 +1,6 @@
 use axum::http::{HeaderMap, header::AUTHORIZATION};
 use socialname_protocol::ApiKeyScope;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -35,6 +35,57 @@ pub(crate) async fn authenticate(
         return Err(AuthenticationError::InvalidCredential);
     };
 
+    let (mut transaction, scopes, expires_at_unix_ms) =
+        begin_authorized_transaction_for_ids(pool, workspace_id, api_key_id, required_scope)
+            .await?;
+
+    sqlx::query(
+        "UPDATE api_keys \
+         SET last_used_at = GREATEST(\
+            created_at, clock_timestamp(), COALESCE(last_used_at, created_at)\
+         ) \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(workspace_id)
+    .bind(api_key_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthenticationError::Unavailable)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthenticationError::Unavailable)?;
+
+    Ok(AuthenticatedPrincipal {
+        workspace_id,
+        api_key_id,
+        key_prefix: token.key_prefix().to_owned(),
+        scopes,
+        expires_at_unix_ms,
+    })
+}
+
+pub(crate) async fn begin_authorized_transaction<'a>(
+    pool: &'a PgPool,
+    principal: &AuthenticatedPrincipal,
+    required_scope: ApiKeyScope,
+) -> Result<Transaction<'a, Postgres>, AuthenticationError> {
+    let (transaction, _, _) = begin_authorized_transaction_for_ids(
+        pool,
+        principal.workspace_id,
+        principal.api_key_id,
+        required_scope,
+    )
+    .await?;
+    Ok(transaction)
+}
+
+async fn begin_authorized_transaction_for_ids<'a>(
+    pool: &'a PgPool,
+    workspace_id: Uuid,
+    api_key_id: Uuid,
+    required_scope: ApiKeyScope,
+) -> Result<(Transaction<'a, Postgres>, Vec<ApiKeyScope>, Option<i64>), AuthenticationError> {
     let mut transaction = pool
         .begin()
         .await
@@ -69,31 +120,7 @@ pub(crate) async fn authenticate(
     if !scopes.contains(&required_scope) {
         return Err(AuthenticationError::Forbidden);
     }
-
-    sqlx::query(
-        "UPDATE api_keys \
-         SET last_used_at = GREATEST(\
-            created_at, clock_timestamp(), COALESCE(last_used_at, created_at)\
-         ) \
-         WHERE tenant_id = $1 AND id = $2",
-    )
-    .bind(workspace_id)
-    .bind(api_key_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|_| AuthenticationError::Unavailable)?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| AuthenticationError::Unavailable)?;
-
-    Ok(AuthenticatedPrincipal {
-        workspace_id,
-        api_key_id,
-        key_prefix: token.key_prefix().to_owned(),
-        scopes,
-        expires_at_unix_ms,
-    })
+    Ok((transaction, scopes, expires_at_unix_ms))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<ApiKeyToken, AuthenticationError> {

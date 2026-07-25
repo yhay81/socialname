@@ -1,10 +1,11 @@
 use socialname_protocol::{
-    API_V1_SCHEMA, AccountState, EventId, NotificationChannel, NotificationDelivery,
-    NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey, ObservationId,
-    OperationalFailure, OperationalFailureKind, ProtocolVersion, RegionClass, ResultSource,
-    SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode, SiteId,
-    SuppressionReason, SyncPolicy, Target, TargetSelection, Transition, TransitionChange,
-    TransitionConfirmation, TransitionId, Username, Validate, WatchId,
+    API_V1_SCHEMA, AccountState, ConsentGrantId, EventId, NotificationChannel,
+    NotificationDelivery, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
+    ObservationId, OperationalFailure, OperationalFailureKind, ProtocolVersion, RegionClass,
+    ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
+    SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy, Target,
+    TargetSelection, Transition, TransitionChange, TransitionConfirmation, TransitionId, Username,
+    Validate, WatchId,
 };
 
 fn target() -> Target {
@@ -45,6 +46,68 @@ fn public_search_request_has_one_exact_v1_wire_shape() {
         })
     );
     assert!(!format!("{request:?}").contains("alice-private-target"));
+}
+
+#[test]
+fn accepted_private_search_resource_has_one_exact_v1_wire_shape() {
+    let request = SearchCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        targets: TargetSelection {
+            usernames: vec![Username::new("alice-private-target").unwrap()],
+            site_ids: vec![SiteId::new("github").unwrap()],
+        },
+        mode: SearchMode::Remote,
+        sync: SyncPolicy::Private,
+        consent_grant_id: Some(ConsentGrantId::new("grant_01").unwrap()),
+        maximum_age_ms: 60_000,
+        region_classes: vec![RegionClass::new("jp").unwrap()],
+    };
+    let resource = SearchResource {
+        schema: ProtocolVersion::ApiV1,
+        search_id: SearchId::new("search_01").unwrap(),
+        state: SearchState::Accepted,
+        request,
+        progress: SearchProgress {
+            total_targets: 1,
+            completed_targets: 0,
+            definitive_results: 0,
+            uncertain_results: 0,
+            operational_failures: 0,
+        },
+        created_at_unix_ms: 1_000,
+        updated_at_unix_ms: 1_000,
+    };
+    assert!(resource.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(&resource).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "search_id": "search_01",
+            "state": "accepted",
+            "request": {
+                "schema": API_V1_SCHEMA,
+                "targets": {
+                    "usernames": ["alice-private-target"],
+                    "site_ids": ["github"]
+                },
+                "mode": "remote",
+                "sync": "private",
+                "consent_grant_id": "grant_01",
+                "maximum_age_ms": 60_000,
+                "region_classes": ["jp"]
+            },
+            "progress": {
+                "total_targets": 1,
+                "completed_targets": 0,
+                "definitive_results": 0,
+                "uncertain_results": 0,
+                "operational_failures": 0
+            },
+            "created_at_unix_ms": 1_000,
+            "updated_at_unix_ms": 1_000
+        })
+    );
+    assert!(!format!("{resource:?}").contains("alice-private-target"));
 }
 
 #[test]

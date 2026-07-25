@@ -111,6 +111,18 @@ impl Validate for SearchResource {
                 ValidationCode::InvalidRelation,
             )));
         }
+        let expected_targets = self
+            .request
+            .targets
+            .usernames
+            .len()
+            .saturating_mul(self.request.targets.site_ids.len());
+        if usize::try_from(self.progress.total_targets).ok() != Some(expected_targets) {
+            validations.push(Err(ValidationErrors::new(
+                "progress.total_targets",
+                ValidationCode::InvalidRelation,
+            )));
+        }
         let state_progress_valid = match self.state {
             SearchState::Accepted => self.progress.completed_targets == 0,
             SearchState::Running => self.progress.completed_targets < self.progress.total_targets,
@@ -492,6 +504,29 @@ mod tests {
             },
         };
         assert!(event.validate().is_err());
+    }
+
+    #[test]
+    fn resource_progress_matches_the_requested_cartesian_target_set() {
+        let request = request();
+        let mut resource = SearchResource {
+            schema: ProtocolVersion::ApiV1,
+            search_id: SearchId::new("search_01").unwrap(),
+            state: SearchState::Accepted,
+            request,
+            progress: SearchProgress {
+                total_targets: 2,
+                completed_targets: 0,
+                definitive_results: 0,
+                uncertain_results: 0,
+                operational_failures: 0,
+            },
+            created_at_unix_ms: 1_000,
+            updated_at_unix_ms: 1_000,
+        };
+        assert!(resource.validate().is_err());
+        resource.progress.total_targets = 1;
+        assert!(resource.validate().is_ok());
     }
 
     #[test]

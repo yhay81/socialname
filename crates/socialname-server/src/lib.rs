@@ -4,6 +4,7 @@ mod api_key;
 mod auth;
 mod config;
 mod database;
+mod search;
 mod workspace;
 mod workspace_operator;
 
@@ -35,6 +36,7 @@ use socialname_protocol::{
     ValidationCode, ValidationErrors,
 };
 use sqlx::PgPool;
+use tokio::sync::Semaphore;
 use tower::{ServiceBuilder, limit::ConcurrencyLimitLayer};
 use tracing::Instrument;
 
@@ -61,14 +63,17 @@ struct ServerState {
     config: ServerConfig,
     database: PgPool,
     request_sequence: Arc<AtomicU64>,
+    sse_connections: Arc<Semaphore>,
 }
 
 impl ServerState {
     fn new(config: ServerConfig, database: PgPool) -> Self {
+        let maximum_sse_connections = config.maximum_in_flight();
         Self {
             config,
             database,
             request_sequence: Arc::new(AtomicU64::new(1)),
+            sse_connections: Arc::new(Semaphore::new(maximum_sse_connections)),
         }
     }
 
@@ -103,7 +108,7 @@ struct ProtectedRouteState {
 
 pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
     let state = ServerState::new(config, database);
-    let protected_routes = Router::new()
+    let workspace_routes = Router::new()
         .route("/v1/workspace", get(workspace_resource))
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
@@ -112,10 +117,47 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let search_create_routes = Router::new()
+        .route("/v1/searches", axum::routing::post(search::create_search))
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::SearchWrite,
+            },
+            authenticate_request,
+        ));
+    let search_read_routes = Router::new()
+        .route("/v1/searches/{search_id}", get(search::get_search))
+        .route(
+            "/v1/searches/{search_id}/events",
+            get(search::search_events),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::SearchRead,
+            },
+            authenticate_request,
+        ));
+    let search_cancel_routes = Router::new()
+        .route(
+            "/v1/searches/{search_id}",
+            axum::routing::delete(search::cancel_search),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::SearchWrite,
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
-        .merge(protected_routes)
+        .merge(workspace_routes)
+        .merge(search_create_routes)
+        .merge(search_read_routes)
+        .merge(search_cancel_routes)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state.clone());
@@ -193,6 +235,11 @@ async fn workspace_resource(
     match workspace::load_workspace(&state.database, &principal).await {
         Ok(resource) => Json(resource).into_response(),
         Err(workspace::WorkspaceLoadError::Unauthenticated) => unauthenticated_response(request_id),
+        Err(workspace::WorkspaceLoadError::Forbidden) => api_error_response(
+            StatusCode::FORBIDDEN,
+            request_id,
+            standard_api_error(ApiErrorCode::Forbidden, false),
+        ),
         Err(workspace::WorkspaceLoadError::Unavailable) => api_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             request_id,
@@ -449,7 +496,18 @@ mod tests {
     #[tokio::test]
     async fn unknown_routes_and_methods_return_closed_protocol_errors() {
         for (method, uri, expected_status, expected_code) in [
-            ("GET", "/v1/searches", StatusCode::NOT_FOUND, "not_found"),
+            (
+                "GET",
+                "/v1/unimplemented",
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                "GET",
+                "/v1/searches",
+                StatusCode::METHOD_NOT_ALLOWED,
+                "invalid_request",
+            ),
             (
                 "POST",
                 "/health/live",

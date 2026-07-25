@@ -5,32 +5,25 @@ use socialname_protocol::{
 use sqlx::PgPool;
 use thiserror::Error;
 
-use crate::auth::AuthenticatedPrincipal;
+use crate::auth::{self, AuthenticatedPrincipal, AuthenticationError};
 
 pub(crate) async fn load_workspace(
     pool: &PgPool,
     principal: &AuthenticatedPrincipal,
 ) -> Result<WorkspaceResource, WorkspaceLoadError> {
-    let mut transaction = pool
-        .begin()
-        .await
-        .map_err(|_| WorkspaceLoadError::Unavailable)?;
-    sqlx::query("SELECT set_config('socialname.tenant_id', $1, true)")
-        .bind(principal.workspace_id.to_string())
-        .execute(&mut *transaction)
-        .await
-        .map_err(|_| WorkspaceLoadError::Unavailable)?;
+    let mut transaction = auth::begin_authorized_transaction(
+        pool,
+        principal,
+        socialname_protocol::ApiKeyScope::WorkspaceRead,
+    )
+    .await
+    .map_err(WorkspaceLoadError::from_authentication)?;
     let workspace: Option<(String, String, String)> = sqlx::query_as(
         "SELECT tenant.id::text, tenant.slug, tenant.display_name \
          FROM tenants AS tenant \
-         JOIN api_keys AS key ON key.tenant_id = tenant.id \
-         WHERE tenant.id = $1 AND tenant.state = 'active' \
-           AND key.id = $2 AND key.state = 'active' \
-           AND 'workspace:read' = ANY(key.scopes) \
-           AND (key.expires_at IS NULL OR key.expires_at > clock_timestamp())",
+         WHERE tenant.id = $1 AND tenant.state = 'active'",
     )
     .bind(principal.workspace_id)
-    .bind(principal.api_key_id)
     .fetch_optional(&mut *transaction)
     .await
     .map_err(|_| WorkspaceLoadError::Unavailable)?;
@@ -67,6 +60,18 @@ pub(crate) async fn load_workspace(
 pub(crate) enum WorkspaceLoadError {
     #[error("workspace credential is no longer active")]
     Unauthenticated,
+    #[error("workspace credential no longer grants this operation")]
+    Forbidden,
     #[error("workspace storage is unavailable")]
     Unavailable,
+}
+
+impl WorkspaceLoadError {
+    fn from_authentication(error: AuthenticationError) -> Self {
+        match error {
+            AuthenticationError::InvalidCredential => Self::Unauthenticated,
+            AuthenticationError::Forbidden => Self::Forbidden,
+            AuthenticationError::Unavailable => Self::Unavailable,
+        }
+    }
 }
