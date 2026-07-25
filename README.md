@@ -41,6 +41,9 @@ person.
   ingestion-policy validation.
 - Canary Aggregate v1 with an exact 24-hour window and per-region run count,
   precision, coverage, conflict, and p95-latency gates.
+- Canary Shadow v1 paired execution against last-known-good rules with one
+  combined budget and typed precision, coverage, conflict, and case regression
+  rejection.
 - Assertion v1 trust thresholds for managed and opt-in shared observations.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.

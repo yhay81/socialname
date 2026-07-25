@@ -149,7 +149,8 @@ state.
 
 ## Next integration
 
-Complete runs now produce the privacy-bounded, content-addressed report defined
-in [`canary-report-v1.md`](canary-report-v1.md). The next slice aggregates
-validated reports across runs, managed vantages, and the 24-hour acceptance
-window. Shadow comparison and promotion remain later Milestone 1A deliverables.
+Complete runs produce the privacy-bounded, content-addressed report defined in
+[`canary-report-v1.md`](canary-report-v1.md), and validated reports can be
+aggregated across the 24-hour acceptance window. Paired shadow software is also
+implemented, but real managed-region and shadow evidence plus signed promotion
+remain pending Milestone 1A gates.

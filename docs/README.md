@@ -87,6 +87,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   metrics, expiry, duplicate detection, and ingestion-policy validation.
 - [Canary Aggregation v1](canary-aggregation-v1.md) — repeated-run,
   multi-region, 24-hour acceptance metrics and explicit regional failures.
+- [Canary Shadow v1](canary-shadow-v1.md) — same-target paired execution and
+  candidate regression checks against a last-known-good rule.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

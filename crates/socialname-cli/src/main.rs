@@ -8,7 +8,8 @@ use clap::{Args, Parser, Subcommand};
 use socialname_canary::{
     CanaryAggregationPolicy, CanaryManifestCompiler, CanaryReportAggregator, CanaryReportBuilder,
     CanaryReportPolicy, CanaryReportValidator, CanaryRunBudget, CanaryRunCompletion, CanaryRunner,
-    DeclaredVantage,
+    CanaryShadowBuilder, CanaryShadowDisposition, CanaryShadowPair, CanaryShadowPolicy,
+    CanaryShadowValidator, DeclaredVantage,
 };
 use socialname_engine::SearchEngine;
 use socialname_rule_compiler::RuleCompiler;
@@ -96,6 +97,35 @@ enum CanaryCommand {
         #[arg(long, default_value_t = 120_000)]
         max_elapsed_ms: u64,
         #[arg(long, default_value_t = 16_777_216)]
+        max_response_bytes: usize,
+        /// Acknowledge that this command sends bounded requests to a third party.
+        #[arg(long)]
+        allow_live: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run a candidate beside its last-known-good rule on the same private cases.
+    Shadow {
+        #[arg(long)]
+        candidate_rule: PathBuf,
+        #[arg(long)]
+        last_known_good_rule: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Coarse managed-region label recorded with the paired run.
+        #[arg(long)]
+        region: String,
+        /// Combined request cap across both rules.
+        #[arg(long, default_value_t = 128)]
+        max_requests: usize,
+        /// Combined in-flight request cap across both rules.
+        #[arg(long, default_value_t = 4)]
+        max_concurrency: usize,
+        /// Combined wall-time cap across both rules.
+        #[arg(long, default_value_t = 120_000)]
+        max_elapsed_ms: u64,
+        /// Combined inspected-response-byte cap across both rules.
+        #[arg(long, default_value_t = 33_554_432)]
         max_response_bytes: usize,
         /// Acknowledge that this command sends bounded requests to a third party.
         #[arg(long)]
@@ -304,6 +334,135 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                     report.report.summary.planned_requests,
                     report.report.summary.completed_response_bytes,
                 );
+            }
+        }
+        CanaryCommand::Shadow {
+            candidate_rule,
+            last_known_good_rule,
+            manifest,
+            region,
+            max_requests,
+            max_concurrency,
+            max_elapsed_ms,
+            max_response_bytes,
+            allow_live,
+            json,
+        } => {
+            if !allow_live {
+                bail!(
+                    "live shadow execution is explicit; pass --allow-live to acknowledge bounded third-party requests"
+                );
+            }
+            let rule_compiler = RuleCompiler::new();
+            let candidate_source = fs::read_to_string(&candidate_rule)
+                .with_context(|| format!("failed to read candidate rule {candidate_rule:?}"))?;
+            let candidate = rule_compiler
+                .compile_yaml(&candidate_source, None)
+                .map_err(format_compile_errors)?;
+            let last_known_good_source =
+                fs::read_to_string(&last_known_good_rule).with_context(|| {
+                    format!("failed to read last-known-good rule {last_known_good_rule:?}")
+                })?;
+            let last_known_good = rule_compiler
+                .compile_yaml(&last_known_good_source, None)
+                .map_err(format_compile_errors)?;
+            let manifest_source = fs::read_to_string(&manifest)
+                .with_context(|| format!("failed to read canary manifest {manifest:?}"))?;
+            let validation_time = Utc::now();
+            let candidate_manifest = compiler
+                .compile_yaml_at(&manifest_source, &candidate, None, validation_time)
+                .map_err(format_canary_errors)?;
+            let last_known_good_manifest = compiler
+                .compile_yaml_at(&manifest_source, &last_known_good, None, validation_time)
+                .map_err(format_canary_errors)?;
+
+            let cancellation = CancellationToken::new();
+            let signal = cancellation.clone();
+            let _signal_task = tokio::spawn(async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    signal.cancel();
+                }
+            });
+            let run = CanaryRunner::production()?
+                .run_shadow(
+                    CanaryShadowPair {
+                        candidate_rule: &candidate,
+                        candidate_manifest: &candidate_manifest,
+                        last_known_good_rule: &last_known_good,
+                        last_known_good_manifest: &last_known_good_manifest,
+                    },
+                    DeclaredVantage {
+                        region: region.clone(),
+                    },
+                    CanaryRunBudget {
+                        max_requests,
+                        max_concurrency,
+                        max_elapsed_ms,
+                        max_response_bytes,
+                    },
+                    &cancellation,
+                )
+                .await?;
+            if run.completion != CanaryRunCompletion::Complete {
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&run)?);
+                } else {
+                    println!(
+                        "{}\t{:?}\tcompleted_requests={}/{}\tcompleted_bytes={}",
+                        run.candidate.site_id,
+                        run.completion,
+                        run.completed_requests,
+                        run.planned_requests,
+                        run.completed_response_bytes,
+                    );
+                }
+                bail!("shadow run ended with {:?}", run.completion);
+            }
+
+            let envelope = CanaryShadowBuilder::new().build(
+                &candidate_manifest,
+                &last_known_good_manifest,
+                &run,
+            )?;
+            let policy = CanaryShadowPolicy {
+                site_id: candidate.source.id.clone(),
+                manifest_hash: candidate_manifest.manifest_hash.clone(),
+                candidate_rule_hash: candidate.rule_hash.clone(),
+                last_known_good_rule_hash: last_known_good.rule_hash.clone(),
+                engine_hash: envelope.comparison.candidate.report.engine_hash.clone(),
+                allowed_regions: BTreeSet::from([region]),
+                max_planned_requests_per_rule: u32::try_from(max_requests)
+                    .context("max_requests does not fit shadow policy")?,
+                max_completed_response_bytes_per_rule: u64::try_from(max_response_bytes)
+                    .context("max_response_bytes does not fit shadow policy")?,
+            };
+            CanaryShadowValidator::new().validate_at(
+                &envelope,
+                &policy,
+                &BTreeSet::new(),
+                Utc::now(),
+            )?;
+            let disposition = envelope.comparison.summary.disposition;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+            } else {
+                println!(
+                    "{}\t{}\t{:?}\tagreements={}/{}\timprovements={}\tregressions={}\tissues={}",
+                    envelope.comparison.candidate.report.site_id,
+                    envelope.comparison_id,
+                    disposition,
+                    envelope.comparison.summary.verdict_agreements,
+                    envelope.comparison.summary.total_cases,
+                    envelope.comparison.summary.candidate_improvements,
+                    envelope.comparison.summary.candidate_regressions,
+                    envelope.comparison.summary.issues.len(),
+                );
+                for issue in &envelope.comparison.summary.issues {
+                    println!("issue\t{issue:?}");
+                }
+            }
+            if disposition == CanaryShadowDisposition::Rejected {
+                bail!("candidate regressed against the last-known-good rule");
             }
         }
         CanaryCommand::Aggregate {

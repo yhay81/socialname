@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add shadow comparison between candidate and
-last-known-good rules.
+Next executable item: add rule-health states and safe
+`healthy -> degraded -> quarantined -> recovering` transitions.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -80,7 +80,7 @@ disabled.
 - [x] Reject duplicate, expired, malformed, or policy-incompatible reports.
 - [x] Implement aggregation across runs, vantages, and the documented 24-hour
       acceptance window.
-- [ ] Add shadow comparison between candidate and last-known-good rules.
+- [x] Add shadow comparison between candidate and last-known-good rules.
 - [ ] Add rule-health states and safe `healthy -> degraded -> quarantined ->
       recovering` transitions.
 - [ ] Bind an accepted report, rule-pack hash, region policy, and expiry into a
@@ -167,6 +167,24 @@ wrappers. It requires an exact 24-hour measurement window, at least three
 managed regions and three runs per region, 100% conclusive precision, at least
 95% conclusive coverage, zero conflicts, and the reviewed p95 latency in every
 required region. Global volume cannot hide a missing or failed region.
+
+Shadow-slice evidence:
+
+```console
+cargo test --locked --workspace --all-targets
+# socialname-canary: 35 passed, including same-private-target pairing,
+# accepted parity/improvement, coverage/precision/conflict regression,
+# combined-budget preflight, cancellation, tampering, and duplicate rejection
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+```
+
+`socialname.dev/canary-shadow/v1` runs a candidate and last-known-good rule over
+one private target set. Both sides share combined request, concurrency, time,
+and byte limits. The content-addressed artifact nests independently validated
+Canary Report v1 evidence and rejects lower precision or coverage, new
+conflicts, and formerly correct cases that become inconclusive or incorrect.
+Target usernames and profile URLs are not serialized. Shadow acceptance
+supplements rather than replaces the independent aggregate thresholds.
 
 Software acceptance gate:
 
@@ -375,3 +393,7 @@ Choose these only when their trigger is measured:
 - **2026-07-25:** Added Canary Aggregate v1 with validator-only inputs, an exact
   24-hour interval, three-region/three-run requirements, per-region precision,
   coverage, conflict and p95 gates, and typed non-suppressing rejection issues.
+- **2026-07-25:** Added Canary Shadow v1 with same-private-target paired
+  execution, combined safety budgets, independently validated nested reports,
+  content-integrity and duplicate checks, and typed precision, coverage,
+  conflict, and per-case regression rejection.

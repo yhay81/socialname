@@ -204,6 +204,11 @@ cannot produce both definitive states.
 - **Done:** Deterministic aggregation across runs and managed vantages with the
   24-hour interval, three-run, 100% precision, 95% conclusive coverage,
   zero-conflict, and reviewed-p95 gates evaluated per region.
-- **Next:** Shadow comparison between candidate and last-known-good rules.
+- **Done:** Same-private-target shadow execution between candidate and
+  last-known-good rules under a combined request, concurrency, time, and byte
+  budget, with typed precision, coverage, conflict, and per-case regression
+  rejection.
+- **Next:** Explicit rule-health states and safe quarantine/recovery
+  transitions.
 - **Next:** Signed pack publication and a last-known-good rollback
   demonstration.

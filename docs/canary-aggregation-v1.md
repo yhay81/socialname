@@ -64,8 +64,8 @@ summary, policy hashes, window, aggregation time, typed issues, and an
 
 Acceptance means only that this candidate/engine combination met the synthetic
 report policy. It is not a signature, publication, health-state transition, or
-account-state observation. The later shadow-comparison, health-state, signed
-promotion, and rollback gates remain mandatory.
+account-state observation. The separate shadow-comparison, health-state,
+signed-promotion, and rollback gates remain mandatory.
 
 Deterministic tests cover:
 
