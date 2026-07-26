@@ -13,7 +13,9 @@ test("timeline totals keep account, measurement, retry, and failure separate", (
       transition: {
         change: { class: "account_state" },
       },
-      deliveries: [{ state: "delivered" }],
+      deliveries: [
+        { state: "delivered", acknowledged_at_unix_ms: 2_000 },
+      ],
     },
     {
       transition: {
@@ -29,6 +31,7 @@ test("timeline totals keep account, measurement, retry, and failure separate", (
     accountChanges: 1,
     measurementChanges: 1,
     delivered: 1,
+    acknowledged: 1,
     retrying: 1,
     failed: 1,
   });

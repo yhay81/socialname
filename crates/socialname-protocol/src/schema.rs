@@ -5,10 +5,11 @@ use schemars::{Schema, schema_for};
 use crate::{
     ApiErrorResponse, ConsentGrantCreateRequest, ConsentGrantListPage, ConsentGrantResource,
     ConsentWithdrawalRequest, ContributorDeletionCreateRequest, DeletionReceiptResource,
-    DeletionRequestResource, EvidenceCapsuleResource, NotificationDelivery,
-    NotificationEndpointCreateRequest, NotificationEndpointResource, SearchCreateRequest,
-    SearchEvent, SearchResource, Transition, WatchCreateRequest, WatchListPage, WatchPatchRequest,
-    WatchResource, WatchTransitionPage, WebhookNotification, WorkspaceResource,
+    DeletionRequestResource, EvidenceCapsuleResource, NotificationAcknowledgementCreateRequest,
+    NotificationAcknowledgementResource, NotificationDelivery, NotificationEndpointCreateRequest,
+    NotificationEndpointResource, SearchCreateRequest, SearchEvent, SearchResource, Transition,
+    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchTransitionPage,
+    WebhookNotification, WorkspaceResource,
 };
 
 #[must_use]
@@ -40,6 +41,14 @@ pub fn api_v1_schemas() -> BTreeMap<&'static str, Schema> {
         (
             "deletion_receipt_resource",
             schema_for!(DeletionReceiptResource),
+        ),
+        (
+            "notification_acknowledgement_create_request",
+            schema_for!(NotificationAcknowledgementCreateRequest),
+        ),
+        (
+            "notification_acknowledgement_resource",
+            schema_for!(NotificationAcknowledgementResource),
         ),
         ("notification_delivery", schema_for!(NotificationDelivery)),
         (
@@ -83,6 +92,8 @@ mod tests {
                 "deletion_receipt_resource",
                 "deletion_request_resource",
                 "evidence_capsule_resource",
+                "notification_acknowledgement_create_request",
+                "notification_acknowledgement_resource",
                 "notification_delivery",
                 "notification_endpoint_create_request",
                 "notification_endpoint_resource",

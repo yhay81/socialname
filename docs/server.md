@@ -139,6 +139,15 @@ The API process stores policy but performs no probe. See
 [Freshness-aware watch scheduling](watch-scheduling.md) and
 [Minimal monitoring console](monitoring-console.md).
 
+`POST /v1/notification-deliveries/{delivery_id}/acknowledgement` requires
+`notification:write`; the matching `GET` requires `notification:read`.
+Creation is accepted only after successful delivery, is idempotent per
+delivery, uses database time, and records one private audit actor. Foreign and
+deletion-hidden deliveries are indistinguishable from missing resources. The
+public response and watch timeline expose only the delivery ID and
+acknowledgement time. See
+[Notification acknowledgement](notification-acknowledgement.md).
+
 Consent creation and withdrawal require `consent:write`; bounded list and
 single-resource reads require `consent:read`. The API derives account identity
 from the active key membership, hashes installation identifiers with tenant
@@ -240,4 +249,5 @@ rule-pack replay protection,
 staged/general trust rotation, exact worker binding, signed rollback,
 monitoring read scope, tenant/cursor
 isolation, account-versus-measurement timelines, delivery retry/dead-letter
-state, and the absence of delivery secrets from public pages.
+state, delivered-only acknowledgement, exact acknowledgement replay, private
+audit attribution, and the absence of delivery secrets from public pages.

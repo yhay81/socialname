@@ -1232,6 +1232,43 @@ workflow-dispatch run
 passed the standalone PostgreSQL 18 delete-through and restore drill for the
 same commit. Scheduled daily history and production evidence remain external.
 
+Notification-acknowledgement slice evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked -p socialname-protocol
+# 43 unit + 12 wire-contract tests
+cargo test --locked -p socialname-server --lib
+# 37 tests
+cargo test --locked -p socialname-server --test postgres_migrations
+# 1 real PostgreSQL 18 integration test
+cd apps/console
+npm test
+npm run check
+npm run build
+# all passed
+```
+
+Migration `0014` brings the current schema to 49 product tables and 37
+forced-RLS policies. A successful delivery admits at most one append-only
+acknowledgement under `notification:write`; the first request returns the
+database time and exact replay returns the same resource. `notification:read`
+loads it independently. Queued/retrying/failed/cancelled delivery, foreign
+tenant access, database time inversion, mutation, and excess application-role
+privilege all fail. A companion delivery trigger prevents later state/time
+updates from invalidating an acknowledgement. Membership/API-key attribution
+remains private and one closed audit event records only the first insert.
+
+The same-origin monitoring console exposes an acknowledgement action only when
+the in-memory API key has `notification:write`, then projects the time and an
+explicitly loaded-page count without presenting it as workspace-wide. This
+narrow receipt is not email-open proof, webhook processing proof, destination
+ownership verification, or the later Team review workflow. The complete
+boundary is in
+[`docs/notification-acknowledgement.md`](docs/notification-acknowledgement.md).
+Email delivery remains the next vertical slice, so the combined roadmap item
+stays open.
+
 Acceptance gate:
 
 - Multi-region disagreement is represented, not overwritten.
@@ -1436,3 +1473,8 @@ Choose these only when their trigger is measured:
   history, provider inventory completeness, and elapsed production SLA proof
   external, and selected notification acknowledgement, email delivery,
   dashboards, and SLO reporting next.
+- **2026-07-26:** Added delivered-only, idempotent notification
+  acknowledgement with closed API v1 resources, forced-RLS append-only
+  storage, private actor audit, deletion hiding, and same-origin console
+  action. Kept destination ownership external and selected email delivery next
+  within the still-open combined roadmap item.

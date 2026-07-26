@@ -260,7 +260,16 @@ Endpoint resources intentionally return only ID, channel, verification state,
 and timestamps; they do not echo the destination. Delivery records contain a
 logical notification key for deduplication, endpoint and transition lineage,
 confirmation basis, attempt state, retry time, and a bounded error code rather
-than response content.
+than response content. A delivered record may carry one acknowledgement time;
+other delivery states cannot be acknowledged.
+
+`NotificationAcknowledgementCreateRequest` is version-only and
+`NotificationAcknowledgementResource` returns only the stable delivery ID and
+database acknowledgement time. The API treats exact replay as idempotent and
+keeps membership/API-key attribution private. This narrow receipt action is
+not a Team review decision and does not prove that an email was opened or a
+webhook payload was processed. See
+[Notification acknowledgement](notification-acknowledgement.md).
 
 `WebhookNotification` is the stable signed body. It contains the API schema,
 one stable delivery ID, and the complete typed confirmed transition. Its
@@ -301,4 +310,5 @@ webhook construction, workspace metadata, closed unique API-key scopes,
 absence of key secret/digest fields, exact account/installation consent wire
 shapes and redaction, exact accepted private-search resources, Cartesian
 target/progress consistency, consent and monitoring page bounds, cursor
-relations, and transition/delivery ownership.
+relations, transition/delivery ownership, acknowledgement wire shape, and
+delivered-only acknowledgement relations.

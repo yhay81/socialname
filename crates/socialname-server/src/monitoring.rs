@@ -382,11 +382,16 @@ async fn load_transition_entry(
                     AS next_attempt_at_unix_ms, \
                 (extract(epoch FROM delivery.delivered_at) * 1000)::bigint \
                     AS delivered_at_unix_ms, \
+                (extract(epoch FROM acknowledgement.acknowledged_at) * 1000)::bigint \
+                    AS acknowledged_at_unix_ms, \
                 delivery.last_error_code \
          FROM notification_deliveries AS delivery \
          JOIN notification_endpoints AS endpoint \
            ON endpoint.tenant_id = delivery.tenant_id \
           AND endpoint.id = delivery.endpoint_id \
+         LEFT JOIN notification_acknowledgements AS acknowledgement \
+           ON acknowledgement.tenant_id = delivery.tenant_id \
+          AND acknowledgement.delivery_id = delivery.id \
          WHERE delivery.tenant_id = $1 AND delivery.transition_id = $2 \
            AND NOT EXISTS (\
                SELECT 1 FROM deletion_resource_matches AS matched \
@@ -515,6 +520,7 @@ fn protocol_delivery(
         created_at_unix_ms: row.created_at_unix_ms,
         next_attempt_at_unix_ms: row.next_attempt_at_unix_ms,
         delivered_at_unix_ms: row.delivered_at_unix_ms,
+        acknowledged_at_unix_ms: row.acknowledged_at_unix_ms,
         last_error_code: row
             .last_error_code
             .map(DeliveryErrorCode::new)
@@ -659,6 +665,7 @@ struct StoredDelivery {
     created_at_unix_ms: i64,
     next_attempt_at_unix_ms: Option<i64>,
     delivered_at_unix_ms: Option<i64>,
+    acknowledged_at_unix_ms: Option<i64>,
     last_error_code: Option<String>,
 }
 

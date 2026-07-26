@@ -58,7 +58,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 48 product tables:
+The migrations create 49 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -68,7 +68,7 @@ The migrations create 48 product tables:
 | Interactive work | `searches`, `search_targets`, `search_events` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
-| Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts` |
+| Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts`, `notification_acknowledgements` |
 | Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `deletion_resource_matches`, `deletion_backup_verifications`, `deletion_restore_runs`, `deletion_restore_request_links`, `suppression_tokens` |
 
 Time partitioning is intentionally absent. PostgreSQL remains the source of
@@ -77,7 +77,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Thirty-five tenant-owned tables have row-level security both enabled and
+Thirty-six tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -286,12 +286,13 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 48 tables and 36
+It applies the embedded migrations twice, inventories all 49 tables and 37
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
 foreign keys, immutable observations, transition confirmation bases,
-shared-only notification suppression, valid confirmed delivery, ordered
+shared-only notification suppression, valid confirmed delivery, delivered-only
+idempotent acknowledgement, ordered
 deletion deadlines, receipts, lineage, and a second real NOBYPASSRLS worker
 role covering job coalescing, watch planning, freshness reuse, byte
 reservation, fencing, retry, atomic observation/assertion/search/watch

@@ -7,14 +7,16 @@ use socialname_protocol::{
     DeletionStoreState, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
     EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
     EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
-    EvidenceTransportOutcome, EvidenceVantage, InstallationId, NotificationChannel,
-    NotificationDelivery, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
-    ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion,
-    RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent, SearchEventData,
-    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason,
-    SyncPolicy, Target, TargetSelection, Transition, TransitionChange, TransitionConfirmation,
-    TransitionId, Username, Validate, WatchCreateRequest, WatchId, WatchListPage, WatchResource,
-    WatchSchedule, WatchState, WatchTransitionEntry, WatchTransitionPage, WebhookNotification,
+    EvidenceTransportOutcome, EvidenceVantage, InstallationId,
+    NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
+    NotificationChannel, NotificationDelivery, NotificationDeliveryId, NotificationEndpointId,
+    NotificationLogicalKey, ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget,
+    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent,
+    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId,
+    SuppressionReason, SyncPolicy, Target, TargetSelection, Transition, TransitionChange,
+    TransitionConfirmation, TransitionId, Username, Validate, WatchCreateRequest, WatchId,
+    WatchListPage, WatchResource, WatchSchedule, WatchState, WatchTransitionEntry,
+    WatchTransitionPage, WebhookNotification,
 };
 
 fn target() -> Target {
@@ -478,6 +480,41 @@ fn webhook_notification_has_one_exact_v1_wire_shape() {
                 "detected_at_unix_ms": 2_000
             }
         })
+    );
+}
+
+#[test]
+fn notification_acknowledgement_has_one_exact_v1_wire_shape() {
+    let request = NotificationAcknowledgementCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+    };
+    let resource = NotificationAcknowledgementResource {
+        schema: ProtocolVersion::ApiV1,
+        delivery_id: NotificationDeliveryId::new("delivery_01").unwrap(),
+        acknowledged_at_unix_ms: 3_000,
+    };
+    assert!(request.validate().is_ok());
+    assert!(resource.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(resource).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "delivery_id": "delivery_01",
+            "acknowledged_at_unix_ms": 3_000
+        })
+    );
+    assert!(
+        serde_json::from_value::<NotificationAcknowledgementCreateRequest>(serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "review_decision": "approved"
+        }))
+        .is_err()
     );
 }
 

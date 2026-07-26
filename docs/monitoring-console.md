@@ -14,9 +14,9 @@ monitoring loop. It lets an authenticated workspace:
   outcomes.
 
 Endpoint provisioning, destination verification, consent administration,
-account login, billing, acknowledgement, and production hosting remain outside
-this slice. The console cannot make a discovery-only rule eligible or turn
-measurement failure into account change.
+account login, billing, Team review workflow, and production hosting remain
+outside this slice. The console cannot make a discovery-only rule eligible or
+turn measurement failure into account change.
 
 ## Topcoat evaluation
 
@@ -57,7 +57,8 @@ cursor exists.
 Each transition entry carries the complete typed transition plus its
 zero-or-more delivery resources. Transition support, confirmation, account
 versus measurement class, logical delivery ID, attempt count, retry time,
-delivered time, and bounded error code remain distinct. The endpoint
+delivered time, acknowledgement time, and bounded error code remain distinct.
+The endpoint
 destination, signing material, attempt body digest, worker label, audit
 details, tenant ID, and database IDs not already in the public resources are
 not returned.
@@ -93,7 +94,8 @@ navigation chrome. It presents:
 - active/paused/deleting counts for loaded watch pages;
 - account-change and measurement-health counts for the loaded selected
   timeline;
-- delivered, retrying, and permanently failed counts for that loaded timeline;
+- delivered, acknowledged, retrying, and permanently failed counts for that
+  loaded timeline;
 - a keyboard-selectable watch list with target/site scope and next run;
 - a chronological timeline whose visual language keeps account state,
   measurement health, confirmation, and delivery separate;
@@ -119,5 +121,7 @@ The real PostgreSQL 18 integration test proves:
   destination/body/signature/attempt-audit data.
 
 The console runs deterministic model tests, TypeScript checking, and a
-production Vite build. Browser automation, deployed TLS/CSP, endpoint ownership,
-and production accessibility evidence remain external gates.
+production Vite build. The PostgreSQL gate also proves delivered-only,
+idempotent acknowledgement and private audit attribution. Browser automation,
+deployed TLS/CSP, endpoint ownership, and production accessibility evidence
+remain external gates.

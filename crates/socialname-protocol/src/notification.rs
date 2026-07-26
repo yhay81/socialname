@@ -118,6 +118,32 @@ pub enum NotificationDeliveryState {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct NotificationAcknowledgementCreateRequest {
+    pub schema: ProtocolVersion,
+}
+
+impl Validate for NotificationAcknowledgementCreateRequest {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationAcknowledgementResource {
+    pub schema: ProtocolVersion,
+    pub delivery_id: NotificationDeliveryId,
+    pub acknowledged_at_unix_ms: i64,
+}
+
+impl Validate for NotificationAcknowledgementResource {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        validate_timestamp("acknowledged_at_unix_ms", self.acknowledged_at_unix_ms)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WebhookNotification {
     pub schema: ProtocolVersion,
     pub delivery_id: NotificationDeliveryId,
@@ -169,6 +195,7 @@ pub struct NotificationDelivery {
     pub created_at_unix_ms: i64,
     pub next_attempt_at_unix_ms: Option<i64>,
     pub delivered_at_unix_ms: Option<i64>,
+    pub acknowledged_at_unix_ms: Option<i64>,
     pub last_error_code: Option<DeliveryErrorCode>,
 }
 
@@ -206,6 +233,7 @@ impl NotificationDelivery {
             created_at_unix_ms,
             next_attempt_at_unix_ms: None,
             delivered_at_unix_ms: None,
+            acknowledged_at_unix_ms: None,
             last_error_code: None,
         };
         delivery.validate()?;
@@ -222,12 +250,27 @@ impl Validate for NotificationDelivery {
             .next_attempt_at_unix_ms
             .into_iter()
             .chain(self.delivered_at_unix_ms)
+            .chain(self.acknowledged_at_unix_ms)
             .all(|timestamp| timestamp >= self.created_at_unix_ms);
         if !timestamps_valid {
             return Err(ValidationErrors::new(
                 "delivery_timestamps",
                 ValidationCode::InvalidRelation,
             ));
+        }
+        if let Some(acknowledged_at) = self.acknowledged_at_unix_ms {
+            let Some(delivered_at) = self.delivered_at_unix_ms else {
+                return Err(ValidationErrors::new(
+                    "acknowledged_at_unix_ms",
+                    ValidationCode::InvalidRelation,
+                ));
+            };
+            if acknowledged_at < delivered_at {
+                return Err(ValidationErrors::new(
+                    "acknowledged_at_unix_ms",
+                    ValidationCode::InvalidRelation,
+                ));
+            }
         }
 
         let state_valid = match self.state {
@@ -397,6 +440,29 @@ mod tests {
         delivery.attempt_count = 1;
         delivery.delivered_at_unix_ms = Some(3_000);
         assert!(delivery.validate().is_ok());
+
+        delivery.acknowledged_at_unix_ms = Some(2_999);
+        assert!(delivery.validate().is_err());
+        delivery.acknowledged_at_unix_ms = Some(3_001);
+        assert!(delivery.validate().is_ok());
+    }
+
+    #[test]
+    fn acknowledgement_is_a_bounded_delivery_resource() {
+        let acknowledgement = NotificationAcknowledgementResource {
+            schema: ProtocolVersion::ApiV1,
+            delivery_id: NotificationDeliveryId::new("delivery_01").unwrap(),
+            acknowledged_at_unix_ms: 3_000,
+        };
+        assert!(acknowledgement.validate().is_ok());
+        assert_eq!(
+            serde_json::to_value(acknowledgement).unwrap(),
+            serde_json::json!({
+                "schema": "socialname.dev/api/v1",
+                "delivery_id": "delivery_01",
+                "acknowledged_at_unix_ms": 3_000
+            })
+        );
     }
 
     #[test]

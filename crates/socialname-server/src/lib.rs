@@ -9,6 +9,7 @@ mod deletion;
 mod deletion_operator;
 mod evidence;
 mod monitoring;
+mod notification;
 mod rule_registry_operator;
 mod search;
 mod target_deletion_operator;
@@ -264,6 +265,30 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let notification_write_routes = Router::new()
+        .route(
+            "/v1/notification-deliveries/{delivery_id}/acknowledgement",
+            axum::routing::post(notification::acknowledge_delivery),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::NotificationWrite,
+            },
+            authenticate_request,
+        ));
+    let notification_read_routes = Router::new()
+        .route(
+            "/v1/notification-deliveries/{delivery_id}/acknowledgement",
+            get(notification::get_delivery_acknowledgement),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::NotificationRead,
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
@@ -277,6 +302,8 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(consent_read_routes)
         .merge(evidence_read_routes)
         .merge(deletion_routes)
+        .merge(notification_write_routes)
+        .merge(notification_read_routes)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state.clone());

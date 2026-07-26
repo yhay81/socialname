@@ -183,6 +183,11 @@ so status does not diverge across design records.
   public-address-only, proxy-free, redirect-free, time-bounded, lease-fenced,
   and response-body-blind. Attempt history, audit, and lineage retain closed
   metadata rather than destinations or bodies.
+- Notification acknowledgement is one authenticated, tenant-local,
+  append-only receipt per successfully delivered logical notification. It is
+  idempotent, records private membership/API-key attribution, exposes only the
+  delivery ID and database time, and is hidden with deletion lineage. It does
+  not prove email open, webhook processing, or Team review.
 - Topcoat 0.4.0 was evaluated at the replaceable web boundary and rejected for
   the Milestone 2 console because its experimental direct-data model would add
   a second authentication/authorization path. The implemented React/Vite
@@ -222,6 +227,7 @@ so status does not diverge across design records.
 - [Managed probe jobs and observation ingestion](managed-jobs.md)
 - [Assertion recomputation and transition persistence](assertion-recomputation.md)
 - [Signed webhook delivery](webhook-delivery.md)
+- [Notification acknowledgement](notification-acknowledgement.md)
 - [Minimal monitoring console](monitoring-console.md)
 - [Purpose-specific consent grant lifecycle](consent-api.md)
 - [Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md)
@@ -301,13 +307,19 @@ so status does not diverge across design records.
     deadlines, HMAC-only fail-closed suppression, remaining-support
     recomputation, fenced current-primary deletion, private-target routing,
     and exact replay before and after physical purge.
+23. **Done:** Add daily delete-through scheduling, fixed-shape completion
+    receipts, inventory- and deadline-gated backup expiry, authenticated
+    target-free restore-ledger replay, and restore-aware readiness quarantine.
+24. **Done:** Add delivered-only notification acknowledgement with closed
+    protocol resources, exact replay, forced tenant RLS, private audit
+    attribution, deletion hiding, and same-origin console action.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
 deployment evidence remains pending, with affected capabilities disabled.
 Milestone 3's deployment/operator artifact, regional assertion behavior,
-signed rule-pack distribution, purpose-specific consent lifecycle, and bounded
-Evidence Capsule retention, and lineage-backed contributor/target deletion are
-repository-complete, while actual multi-region deployment remains an external
-gate. The next executable work is daily delete-through testing, completed
-deletion receipts, restore-ledger replay, and backup-expiry verification.
+signed rule-pack distribution, purpose-specific consent lifecycle, bounded
+Evidence Capsule retention, lineage-backed deletion and restore drills, and
+notification acknowledgement are repository-complete, while actual
+multi-region deployment remains an external gate. The next executable work is
+email delivery.

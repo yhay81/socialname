@@ -37,13 +37,14 @@ use socialname_protocol::{
     DeletionStoreKind, DeletionStoreState, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
     EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
     EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
-    EvidenceTransportOutcome, EvidenceVantage, InstallationId, NotificationEndpointId,
-    OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass,
-    ResultSource, RuleHash, SearchCreateRequest, SearchEvent, SearchEventData, SearchId,
-    SearchMode, SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId,
-    SyncPolicy, Target, TargetSelection, Username, Validate, WatchCreateRequest, WatchListPage,
-    WatchPatchRequest, WatchResource, WatchSchedule, WatchState, WatchStateUpdate,
-    WatchTransitionPage, WorkspaceResource,
+    EvidenceTransportOutcome, EvidenceVantage, InstallationId,
+    NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
+    NotificationEndpointId, OperationalFailure, OperationalFailureKind, ProbeBudget,
+    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent,
+    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState,
+    SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection, Username, Validate,
+    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchSchedule, WatchState,
+    WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
@@ -97,6 +98,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_watch_api_boundary(&pool).await;
     assert_managed_probe_job_boundary(&pool).await;
     assert_evidence_capsule_retention_boundary(&pool).await;
+    assert_notification_acknowledgement_boundary(&pool).await;
     assert_monitoring_console_boundary(&pool).await;
     assert_lineage_backed_deletion_boundary(&pool).await;
 
@@ -117,7 +119,7 @@ async fn reset_test_state(pool: &PgPool) {
             assertions, assertion_support, regional_assertions,
             regional_assertion_support, transitions, transition_basis,
             notification_endpoints, notification_deliveries,
-            notification_delivery_attempts, audit_events,
+            notification_delivery_attempts, notification_acknowledgements, audit_events,
             data_lineage_edges, deletion_requests, deletion_tasks,
             deletion_receipts, suppression_tokens, evidence_capsules,
             evidence_retention_receipts, deletion_resource_matches,
@@ -176,6 +178,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('regional_assertions'), ('regional_assertion_support'), ('transitions'),
                 ('transition_basis'), ('notification_endpoints'),
                 ('notification_deliveries'), ('notification_delivery_attempts'),
+                ('notification_acknowledgements'),
                 ('audit_events'), ('data_lineage_edges'),
                 ('deletion_requests'), ('deletion_tasks'), ('deletion_receipts'),
                 ('suppression_tokens'), ('evidence_capsules'),
@@ -191,7 +194,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 48);
+    assert_eq!(required_tables, 49);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -200,7 +203,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 36);
+    assert_eq!(tenant_policies, 37);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -210,7 +213,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 36);
+    assert_eq!(forced_rls_tables, 37);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -483,6 +486,8 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "consent:write",
                 "evidence:read",
                 "data:delete",
+                "notification:read",
+                "notification:write",
             ],
             state: "active",
             expires_at_unix_ms: None,
@@ -503,6 +508,8 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "consent:write",
                 "evidence:read",
                 "data:delete",
+                "notification:read",
+                "notification:write",
             ],
             state: "active",
             expires_at_unix_ms: None,
@@ -637,6 +644,7 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             watches, watch_targets, watch_notification_endpoints,
             notification_endpoints, watch_runs, watch_run_targets,
             transitions, transition_basis, notification_deliveries,
+            notification_acknowledgements,
             rule_versions, evidence_capsules, suppression_tokens,
             deletion_requests, deletion_tasks, deletion_receipts,
             deletion_resource_matches, observations,
@@ -646,7 +654,8 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             clients, consent_grants, consent_events,
             searches, search_targets, search_events, watches, watch_targets,
             watch_notification_endpoints, deletion_requests, deletion_tasks,
-            suppression_tokens, deletion_resource_matches, audit_events
+            suppression_tokens, deletion_resource_matches,
+            notification_acknowledgements, audit_events
             TO socialname_migration_test_app;
         GRANT UPDATE (last_seen_at) ON clients
             TO socialname_migration_test_app;
@@ -2148,6 +2157,15 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     .await
     .unwrap();
     assert!(!can_read_credentials);
+    let can_read_acknowledgements: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            current_user, 'notification_acknowledgements', 'SELECT'\
+         )",
+    )
+    .fetch_one(&worker_pool)
+    .await
+    .unwrap();
+    assert!(!can_read_acknowledgements);
 
     let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
         .expect("application database URL must accompany the PostgreSQL integration test");
@@ -5597,6 +5615,236 @@ async fn assert_webhook_delivery_boundary(administrator_pool: &PgPool, worker_po
     store.close().await;
 }
 
+async fn assert_notification_acknowledgement_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let owner_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let wrong_scope_token = api_key_token("cccccccccccccccc", 0x33);
+    let tenant_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let delivered_id: Uuid = sqlx::query_scalar(
+        "SELECT delivery.id \
+         FROM notification_deliveries AS delivery \
+         JOIN transitions AS transition \
+           ON transition.tenant_id = delivery.tenant_id \
+          AND transition.id = delivery.transition_id \
+         JOIN watch_targets AS target \
+           ON target.tenant_id = transition.tenant_id \
+          AND target.id = transition.watch_target_id \
+         WHERE delivery.tenant_id = $1 AND delivery.state = 'delivered' \
+           AND target.site_id = 'managed-test' \
+         ORDER BY delivery.delivered_at DESC, delivery.id DESC \
+         LIMIT 1",
+    )
+    .bind(tenant_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let failed_id: Uuid = sqlx::query_scalar(
+        "SELECT delivery.id \
+         FROM notification_deliveries AS delivery \
+         JOIN transitions AS transition \
+           ON transition.tenant_id = delivery.tenant_id \
+          AND transition.id = delivery.transition_id \
+         JOIN watch_targets AS target \
+           ON target.tenant_id = transition.tenant_id \
+          AND target.id = transition.watch_target_id \
+         WHERE delivery.tenant_id = $1 \
+           AND delivery.state = 'permanently_failed' \
+           AND target.site_id = 'managed-test' \
+         ORDER BY delivery.created_at DESC, delivery.id DESC \
+         LIMIT 1",
+    )
+    .bind(tenant_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let body = serde_json::to_string(&NotificationAcknowledgementCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+    })
+    .unwrap();
+    let delivered_path = format!("/v1/notification-deliveries/{delivered_id}/acknowledgement");
+    let failed_path = format!("/v1/notification-deliveries/{failed_id}/acknowledgement");
+
+    let absent = server_request(&application_pool, &delivered_path, Some(&owner_token)).await;
+    assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+    assert_api_error(absent, ApiErrorCode::NotFound).await;
+
+    let wrong_scope = server_request_with(
+        &application_pool,
+        Method::POST,
+        &delivered_path,
+        Some(&wrong_scope_token),
+        &[("content-type", "application/json")],
+        body.clone(),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_scope, ApiErrorCode::Forbidden).await;
+
+    let foreign = server_request_with(
+        &application_pool,
+        Method::POST,
+        &delivered_path,
+        Some(&other_tenant_token),
+        &[("content-type", "application/json")],
+        body.clone(),
+    )
+    .await;
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    assert_api_error(foreign, ApiErrorCode::NotFound).await;
+
+    let not_delivered = server_request_with(
+        &application_pool,
+        Method::POST,
+        &failed_path,
+        Some(&owner_token),
+        &[("content-type", "application/json")],
+        body.clone(),
+    )
+    .await;
+    assert_eq!(not_delivered.status(), StatusCode::CONFLICT);
+    assert_api_error(not_delivered, ApiErrorCode::Conflict).await;
+
+    let database_rejection = sqlx::query(
+        "INSERT INTO notification_acknowledgements (\
+            delivery_id, tenant_id, acknowledged_by_membership_id, \
+            acknowledged_by_api_key_id, acknowledged_at\
+         ) VALUES (\
+            $1, $2, \
+            '00000000-0000-0000-0000-000000000011', \
+            '00000000-0000-0000-0000-0000000000b1', \
+            clock_timestamp()\
+         )",
+    )
+    .bind(failed_id)
+    .bind(tenant_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(database_rejection, "23514");
+
+    let created = server_request_with(
+        &application_pool,
+        Method::POST,
+        &delivered_path,
+        Some(&owner_token),
+        &[("content-type", "application/json")],
+        body.clone(),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    assert_eq!(created.headers()[LOCATION], delivered_path);
+    let created_json = json_body(created).await;
+    let created: NotificationAcknowledgementResource =
+        serde_json::from_value(created_json.clone()).unwrap();
+    assert!(created.validate().is_ok());
+    assert_eq!(created.delivery_id.as_str(), delivered_id.to_string());
+    let serialized = serde_json::to_string(&created_json).unwrap();
+    for forbidden in [
+        "membership",
+        "api_key",
+        "destination",
+        "private-search-target",
+    ] {
+        assert!(!serialized.contains(forbidden));
+    }
+
+    let replay = server_request_with(
+        &application_pool,
+        Method::POST,
+        &delivered_path,
+        Some(&owner_token),
+        &[("content-type", "application/json")],
+        body,
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay: NotificationAcknowledgementResource =
+        serde_json::from_value(json_body(replay).await).unwrap();
+    assert_eq!(replay, created);
+
+    let loaded = server_request(&application_pool, &delivered_path, Some(&owner_token)).await;
+    assert_eq!(loaded.status(), StatusCode::OK);
+    let loaded: NotificationAcknowledgementResource =
+        serde_json::from_value(json_body(loaded).await).unwrap();
+    assert_eq!(loaded, created);
+
+    let acknowledgement_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notification_acknowledgements \
+         WHERE tenant_id = $1 AND delivery_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(delivered_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(acknowledgement_count, 1);
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events \
+         WHERE tenant_id = $1 AND resource_id = $2 \
+           AND action = 'notification.delivery.acknowledged'",
+    )
+    .bind(tenant_id)
+    .bind(delivered_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 1);
+
+    let immutable = sqlx::query(
+        "UPDATE notification_acknowledgements \
+         SET acknowledged_at = acknowledged_at \
+         WHERE tenant_id = $1 AND delivery_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(delivered_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(immutable, "55000");
+
+    let delivery_relation = sqlx::query(
+        "UPDATE notification_deliveries \
+         SET delivered_at = delivered_at + interval '1 day' \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(delivered_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(delivery_relation, "23514");
+
+    let can_update: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            'socialname_migration_test_app', \
+            'notification_acknowledgements', 'UPDATE'\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let can_delete: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            'socialname_migration_test_app', \
+            'notification_acknowledgements', 'DELETE'\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(!can_update);
+    assert!(!can_delete);
+
+    application_pool.close().await;
+}
+
 async fn assert_monitoring_console_boundary(administrator_pool: &PgPool) {
     let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
         .expect("application database URL must accompany the PostgreSQL integration test");
@@ -5722,6 +5970,12 @@ async fn assert_monitoring_console_boundary(administrator_pool: &PgPool) {
         delivery_states
             .contains(&socialname_protocol::NotificationDeliveryState::PermanentlyFailed)
     );
+    assert!(timeline_page.entries.iter().any(|entry| {
+        entry
+            .deliveries
+            .iter()
+            .any(|delivery| delivery.acknowledged_at_unix_ms.is_some())
+    }));
     let serialized = serde_json::to_string(&timeline_json).unwrap();
     for forbidden in [
         "destination",

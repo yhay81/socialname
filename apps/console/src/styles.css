@@ -902,6 +902,33 @@ button:disabled {
   font-size: 0.6rem;
 }
 
+.delivery .delivery-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+
+.delivery-acknowledge {
+  border: 1px solid rgba(12, 89, 72, 0.28);
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green);
+  padding: 0.35rem 0.6rem;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.delivery-acknowledge:hover:not(:disabled) {
+  border-color: var(--green);
+}
+
+.delivery-acknowledge:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .no-delivery {
   margin: 0;
   color: var(--muted);

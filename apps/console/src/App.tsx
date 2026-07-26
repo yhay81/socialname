@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import {
+  acknowledgeDelivery,
   ApiFailure,
   createWatch,
   loadTransitions,
@@ -64,6 +65,7 @@ function App() {
   const [timelineCursor, setTimelineCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [timelineBusy, setTimelineBusy] = useState(false);
+  const [acknowledgementBusy, setAcknowledgementBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [showCreate, setShowCreate] = useState(false);
   const [createFields, setCreateFields] =
@@ -73,6 +75,9 @@ function App() {
     (watch) => watch.watch_id === selectedWatchId,
   );
   const totals = useMemo(() => summarizeTimeline(timeline), [timeline]);
+  const canAcknowledge =
+    workspace?.authenticated_api_key.scopes.includes("notification:write") ??
+    false;
   const watchCounts = useMemo(
     () => ({
       active: watches.filter((watch) => watch.state === "active").length,
@@ -129,6 +134,40 @@ function App() {
       if (request === timelineRequestRef.current) {
         setTimelineBusy(false);
       }
+    }
+  }
+
+  async function acknowledge(deliveryId: string) {
+    setAcknowledgementBusy(deliveryId);
+    setError(undefined);
+    try {
+      const resource = await acknowledgeDelivery(tokenRef.current, deliveryId);
+      setTimeline((current) =>
+        current.map((entry) => ({
+          ...entry,
+          deliveries: entry.deliveries.map((delivery) =>
+            delivery.delivery_id === resource.delivery_id
+              ? {
+                  ...delivery,
+                  acknowledged_at_unix_ms:
+                    resource.acknowledged_at_unix_ms,
+                }
+              : delivery,
+          ),
+        })),
+      );
+    } catch (reason) {
+      if (reason instanceof ApiFailure && reason.status === 409) {
+        setError(
+          "Only a successfully delivered notification can be acknowledged.",
+        );
+      } else if (reason instanceof ApiFailure && reason.status === 403) {
+        setError("This key does not grant notification:write.");
+      } else {
+        setError(describeFailure(reason));
+      }
+    } finally {
+      setAcknowledgementBusy(undefined);
     }
   }
 
@@ -436,7 +475,10 @@ function App() {
             <article>
               <span>Loaded deliveries</span>
               <strong>{totals.delivered}</strong>
-              <small>{totals.retrying} queued or retrying</small>
+              <small>
+                {totals.acknowledged} acknowledged · {totals.retrying} queued or
+                retrying
+              </small>
             </article>
             <article className={totals.failed > 0 ? "metric--alert" : ""}>
               <span>Loaded dead letters</span>
@@ -760,10 +802,40 @@ function App() {
                                     ? ` · ${readableToken(delivery.last_error_code)}`
                                     : ""}
                                 </small>
+                                {delivery.acknowledged_at_unix_ms !== null && (
+                                  <small>
+                                    Acknowledged{" "}
+                                    {formatTime(
+                                      delivery.acknowledged_at_unix_ms,
+                                    )}
+                                  </small>
+                                )}
                               </div>
-                              <code title={delivery.delivery_id}>
-                                {shortId(delivery.delivery_id)}
-                              </code>
+                              <div className="delivery-actions">
+                                {delivery.state === "delivered" &&
+                                  delivery.acknowledged_at_unix_ms === null &&
+                                  canAcknowledge && (
+                                    <button
+                                      className="delivery-acknowledge"
+                                      disabled={
+                                        acknowledgementBusy ===
+                                        delivery.delivery_id
+                                      }
+                                      onClick={() =>
+                                        void acknowledge(delivery.delivery_id)
+                                      }
+                                      type="button"
+                                    >
+                                      {acknowledgementBusy ===
+                                      delivery.delivery_id
+                                        ? "Saving…"
+                                        : "Acknowledge"}
+                                    </button>
+                                  )}
+                                <code title={delivery.delivery_id}>
+                                  {shortId(delivery.delivery_id)}
+                                </code>
+                              </div>
                             </div>
                           ))}
                           {entry.deliveries.length === 0 && (

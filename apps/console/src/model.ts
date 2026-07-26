@@ -1,6 +1,7 @@
 import {
   API_SCHEMA,
   type DeliveryState,
+  type NotificationAcknowledgementResource,
   type WatchListPage,
   type WatchTransitionEntry,
   type WatchTransitionPage,
@@ -72,7 +73,15 @@ export function parseTransitionPage(value: unknown): WatchTransitionPage {
         isRecord(entry) &&
         isRecord(entry.transition) &&
         entry.transition.schema === API_SCHEMA &&
-        Array.isArray(entry.deliveries),
+        Array.isArray(entry.deliveries) &&
+        entry.deliveries.every(
+          (delivery) =>
+            isRecord(delivery) &&
+            delivery.schema === API_SCHEMA &&
+            typeof delivery.delivery_id === "string" &&
+            (delivery.acknowledged_at_unix_ms === null ||
+              typeof delivery.acknowledged_at_unix_ms === "number"),
+        ),
     )
   ) {
     throw new Error("The transition response does not match API v1.");
@@ -80,10 +89,25 @@ export function parseTransitionPage(value: unknown): WatchTransitionPage {
   return value as unknown as WatchTransitionPage;
 }
 
+export function parseNotificationAcknowledgement(
+  value: unknown,
+): NotificationAcknowledgementResource {
+  if (
+    !isRecord(value) ||
+    value.schema !== API_SCHEMA ||
+    typeof value.delivery_id !== "string" ||
+    typeof value.acknowledged_at_unix_ms !== "number"
+  ) {
+    throw new Error("The notification response does not match API v1.");
+  }
+  return value as unknown as NotificationAcknowledgementResource;
+}
+
 export interface MonitoringTotals {
   accountChanges: number;
   measurementChanges: number;
   delivered: number;
+  acknowledged: number;
   retrying: number;
   failed: number;
 }
@@ -95,6 +119,7 @@ export function summarizeTimeline(
     accountChanges: 0,
     measurementChanges: 0,
     delivered: 0,
+    acknowledged: 0,
     retrying: 0,
     failed: 0,
   };
@@ -107,6 +132,9 @@ export function summarizeTimeline(
     for (const delivery of entry.deliveries) {
       if (delivery.state === "delivered") {
         totals.delivered += 1;
+        if (delivery.acknowledged_at_unix_ms !== null) {
+          totals.acknowledged += 1;
+        }
       } else if (
         delivery.state === "queued" ||
         delivery.state === "delivering" ||

@@ -1,5 +1,6 @@
 import {
   parseTransitionPage,
+  parseNotificationAcknowledgement,
   parseWatchPage,
   parseWorkspace,
 } from "./model";
@@ -84,6 +85,22 @@ export async function loadTransitions(
     await request(
       `/v1/watches/${encodeURIComponent(watchId)}/transitions?${query}`,
       token,
+    ),
+  );
+}
+
+export async function acknowledgeDelivery(
+  token: string,
+  deliveryId: string,
+) {
+  return parseNotificationAcknowledgement(
+    await request(
+      `/v1/notification-deliveries/${encodeURIComponent(deliveryId)}/acknowledgement`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({ schema: API_SCHEMA }),
+      },
     ),
   );
 }

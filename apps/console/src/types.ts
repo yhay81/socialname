@@ -151,7 +151,14 @@ export interface NotificationDelivery {
   created_at_unix_ms: number;
   next_attempt_at_unix_ms: number | null;
   delivered_at_unix_ms: number | null;
+  acknowledged_at_unix_ms: number | null;
   last_error_code: string | null;
+}
+
+export interface NotificationAcknowledgementResource {
+  schema: typeof API_SCHEMA;
+  delivery_id: string;
+  acknowledged_at_unix_ms: number;
 }
 
 export interface WatchTransitionEntry {
