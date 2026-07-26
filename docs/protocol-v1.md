@@ -281,6 +281,16 @@ exactly-once guarantee. Signature input, outbound network policy, retries,
 fencing, and audit are specified in
 [Signed webhook delivery](webhook-delivery.md).
 
+`EmailNotification` has the same stable delivery ID and typed confirmed
+transition admission boundary. It is the canonical retry payload whose digest
+is recorded, but it is not sent directly to a recipient. The worker derives a
+bounded plain-text account-state or measurement-health message and submits a
+closed recipient-bearing JSON request to an operator-configured HTTPS gateway.
+Retries preserve the same delivery ID and gateway body. Supporting observation
+IDs and raw evidence are excluded from message text. The gateway contract,
+outbound safety, channel-separated claims, and external provider gate are
+specified in [Email delivery](email-delivery.md).
+
 ## Predictable errors
 
 `ApiErrorResponse` contains a request ID and a closed error code:
@@ -306,7 +316,7 @@ field rejection, redaction, selection and execution bounds, consent relations,
 freshness relabelling, result/failure separation, progress consistency, watch
 revision and schedule rules, transition confirmation, shared-only absence,
 write-only notification destinations, delivery state consistency, bounded
-webhook construction, workspace metadata, closed unique API-key scopes,
+webhook and email construction, workspace metadata, closed unique API-key scopes,
 absence of key secret/digest fields, exact account/installation consent wire
 shapes and redaction, exact accepted private-search resources, Cartesian
 target/progress consistency, consent and monitoring page bounds, cursor

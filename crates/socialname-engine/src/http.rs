@@ -27,6 +27,8 @@ use crate::ProbeResponse;
 
 const MAXIMUM_WEBHOOK_BODY_BYTES: usize = 32 * 1_024;
 const MAXIMUM_WEBHOOK_TIMEOUT_MS: u64 = 30_000;
+const MAXIMUM_EMAIL_GATEWAY_BODY_BYTES: usize = 32 * 1_024;
+const MAXIMUM_EMAIL_GATEWAY_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Clone, Debug)]
 pub struct ProbeClient {
@@ -44,6 +46,41 @@ enum ResponseMode {
 pub struct ManagedWebhookClient {
     client: Client,
     timeout: Duration,
+}
+
+#[derive(Clone, Debug)]
+pub struct ManagedEmailGatewayClient {
+    client: Client,
+    timeout: Duration,
+}
+
+pub struct ManagedEmailGatewayRequest<'a> {
+    pub gateway: &'a str,
+    pub bearer_token: &'a str,
+    pub delivery_id: &'a str,
+    pub attempt_count: u32,
+    pub body: &'a [u8],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ManagedEmailGatewayResponse {
+    pub status: u16,
+}
+
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ManagedEmailGatewayError {
+    #[error("managed email gateway configuration is invalid")]
+    InvalidConfiguration,
+    #[error("managed email gateway destination is rejected")]
+    DestinationRejected,
+    #[error("managed email gateway request is invalid")]
+    RequestRejected,
+    #[error("managed email gateway request timed out")]
+    Timeout,
+    #[error("managed email gateway connection failed")]
+    Connection,
+    #[error("managed email gateway transport failed")]
+    Transport,
 }
 
 pub struct ManagedWebhookRequest<'a> {
@@ -146,6 +183,123 @@ impl ManagedWebhookClient {
             status: response.status().as_u16(),
         })
     }
+}
+
+impl ManagedEmailGatewayClient {
+    pub fn new(timeout: Duration) -> Result<Self, ManagedEmailGatewayError> {
+        let timeout_ms = u64::try_from(timeout.as_millis())
+            .map_err(|_| ManagedEmailGatewayError::InvalidConfiguration)?;
+        if !(1..=MAXIMUM_EMAIL_GATEWAY_TIMEOUT_MS).contains(&timeout_ms) {
+            return Err(ManagedEmailGatewayError::InvalidConfiguration);
+        }
+        let client = Client::builder()
+            .redirect(Policy::none())
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(2).min(timeout))
+            .timeout(timeout)
+            .user_agent("SocialName-Email-Worker/0.2 (+https://github.com/yhay81/socialname)")
+            .no_proxy()
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .no_zstd()
+            .http2_max_header_list_size(16 * 1_024)
+            .dns_resolver(ManagedDnsResolver::new(SystemDnsResolver))
+            .build()
+            .map_err(|_| ManagedEmailGatewayError::InvalidConfiguration)?;
+        Ok(Self { client, timeout })
+    }
+
+    pub fn validate_gateway(gateway: &str) -> Result<(), ManagedEmailGatewayError> {
+        let gateway =
+            Url::parse(gateway).map_err(|_| ManagedEmailGatewayError::DestinationRejected)?;
+        validate_email_gateway_destination(&gateway)
+    }
+
+    pub async fn post_json(
+        &self,
+        request: &ManagedEmailGatewayRequest<'_>,
+    ) -> Result<ManagedEmailGatewayResponse, ManagedEmailGatewayError> {
+        validate_email_gateway_request(request)?;
+        Self::validate_gateway(request.gateway)?;
+        let gateway = Url::parse(request.gateway)
+            .map_err(|_| ManagedEmailGatewayError::DestinationRejected)?;
+        let response = tokio::time::timeout(
+            self.timeout,
+            self.client
+                .post(gateway)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", request.bearer_token))
+                .header("socialname-email-id", request.delivery_id)
+                .header(
+                    "socialname-email-attempt",
+                    request.attempt_count.to_string(),
+                )
+                .header("idempotency-key", request.delivery_id)
+                .body(request.body.to_vec())
+                .send(),
+        )
+        .await
+        .map_err(|_| ManagedEmailGatewayError::Timeout)?
+        .map_err(|error| {
+            if error.is_timeout() {
+                ManagedEmailGatewayError::Timeout
+            } else if error.is_connect() {
+                ManagedEmailGatewayError::Connection
+            } else if error.is_builder() {
+                ManagedEmailGatewayError::RequestRejected
+            } else {
+                ManagedEmailGatewayError::Transport
+            }
+        })?;
+        Ok(ManagedEmailGatewayResponse {
+            status: response.status().as_u16(),
+        })
+    }
+}
+
+fn validate_email_gateway_request(
+    request: &ManagedEmailGatewayRequest<'_>,
+) -> Result<(), ManagedEmailGatewayError> {
+    let delivery_valid = (1..=128).contains(&request.delivery_id.len())
+        && request
+            .delivery_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+    let token_valid = (1..=4_096).contains(&request.bearer_token.len())
+        && request
+            .bearer_token
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic());
+    if delivery_valid
+        && token_valid
+        && (1..=10).contains(&request.attempt_count)
+        && (1..=MAXIMUM_EMAIL_GATEWAY_BODY_BYTES).contains(&request.body.len())
+    {
+        Ok(())
+    } else {
+        Err(ManagedEmailGatewayError::RequestRejected)
+    }
+}
+
+fn validate_email_gateway_destination(url: &Url) -> Result<(), ManagedEmailGatewayError> {
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ManagedEmailGatewayError::DestinationRejected);
+    }
+    if let Some(address) = url.host().and_then(|host| match host {
+        url::Host::Ipv4(address) => Some(IpAddr::V4(address)),
+        url::Host::Ipv6(address) => Some(IpAddr::V6(address)),
+        url::Host::Domain(_) => None,
+    }) && !is_public_ip(address)
+    {
+        return Err(ManagedEmailGatewayError::DestinationRejected);
+    }
+    Ok(())
 }
 
 fn validate_webhook_request(
@@ -1018,6 +1172,45 @@ mod tests {
         assert_eq!(
             validate_webhook_request(&invalid),
             Err(ManagedWebhookError::RequestRejected)
+        );
+    }
+
+    #[test]
+    fn email_gateway_boundary_rejects_private_destinations_and_invalid_secrets() {
+        for destination in [
+            "http://example.com/email",
+            "https://127.0.0.1/email",
+            "https://[::1]/email",
+            "https://user@example.com/email",
+            "https://example.com/email#secret",
+        ] {
+            assert_eq!(
+                validate_email_gateway_destination(&Url::parse(destination).unwrap()),
+                Err(ManagedEmailGatewayError::DestinationRejected)
+            );
+        }
+        assert!(
+            validate_email_gateway_destination(
+                &Url::parse("https://email.example.com/v1/send").unwrap()
+            )
+            .is_ok()
+        );
+
+        let request = ManagedEmailGatewayRequest {
+            gateway: "https://email.example.com/v1/send",
+            bearer_token: "private-token",
+            delivery_id: "delivery_01",
+            attempt_count: 1,
+            body: br#"{"schema":"socialname.dev/email-gateway/v1"}"#,
+        };
+        assert!(validate_email_gateway_request(&request).is_ok());
+        let invalid = ManagedEmailGatewayRequest {
+            bearer_token: "private token",
+            ..request
+        };
+        assert_eq!(
+            validate_email_gateway_request(&invalid),
+            Err(ManagedEmailGatewayError::RequestRejected)
         );
     }
 

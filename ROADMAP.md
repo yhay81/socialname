@@ -1266,13 +1266,61 @@ narrow receipt is not email-open proof, webhook processing proof, destination
 ownership verification, or the later Team review workflow. The complete
 boundary is in
 [`docs/notification-acknowledgement.md`](docs/notification-acknowledgement.md).
-Email delivery remains the next vertical slice, so the combined roadmap item
-stays open.
+Email delivery is now the second completed vertical slice; operational
+dashboards and SLO reporting still keep the combined roadmap item open.
 
 Quality run
 [`30212644031`](https://github.com/yhay81/socialname/actions/runs/30212644031)
 passed Rust core with PostgreSQL 18 migrations/tests, Windows/macOS desktop,
 monitoring console, and managed-worker OCI for commit `0a4f24a`.
+
+Email-delivery slice evidence:
+
+```console
+cargo fmt --all -- --check
+SOCIALNAME_TEST_DATABASE_URL=<disposable-postgresql-18> \
+SOCIALNAME_TEST_APPLICATION_DATABASE_URL=<non-owner-app> \
+SOCIALNAME_TEST_WORKER_DATABASE_URL=<non-owner-worker> \
+  cargo test --locked --workspace --all-targets
+# all passed, including the real PostgreSQL 18 boundary
+# engine 12; protocol 44 unit + 13 wire; worker 22 library + 6 binary +
+# 3 deployment-contract tests
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+cd ../console
+npm ci
+npm test
+npm run check
+npm run build
+# both application gates passed
+```
+
+Migration `0015` makes endpoint channels immutable and adds a narrow email-only
+cross-tenant claim coordinator without adding a product table or RLS policy.
+Confirmed transitions now enqueue
+active email and webhook endpoints with distinct logical-key and lineage
+domains. The email worker decrypts only email-domain envelopes, derives one
+fixed plain-text message from a confirmed `EmailNotification`, and submits a
+bounded stable-ID request to an operator-configured HTTPS gateway. Managed DNS,
+proxy/redirect/decompression refusal, lease fencing, retry/dead letter, and
+response-body blindness match the webhook boundary.
+
+The PostgreSQL test proves channel claim isolation, timeout then same-ID/body
+success, permanent 4xx handling, append-only email attempts, complete
+`email_attempt` lineage, and absence of recipient/gateway secret/body material
+from persisted operational metadata. Unit tests cover the closed protocol
+root, separate envelope/logical domains, redaction, and public-only gateway
+policy. The operable command and remaining endpoint/sending-domain/provider
+evidence gate are documented in
+[`docs/email-delivery.md`](docs/email-delivery.md). Production email remains
+disabled until that external evidence exists.
 
 Acceptance gate:
 
@@ -1483,3 +1531,9 @@ Choose these only when their trigger is measured:
   storage, private actor audit, deletion hiding, and same-origin console
   action. Kept destination ownership external and selected email delivery next
   within the still-open combined roadmap item.
+- **2026-07-26:** Added provider-neutral HTTPS email delivery with a
+  confirmed-only canonical DTO, separate logical/encryption/claim domains,
+  fixed plain-text trust language, stable gateway idempotency, public-only
+  egress, fenced retry/dead letter, and secret-free audit/lineage. Kept
+  endpoint ownership, sending-domain/provider evidence, dashboards, and SLO
+  reporting open.

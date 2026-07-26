@@ -117,13 +117,17 @@ The delivery plane owns:
 - Retry, dead-letter, and delivery audit.
 - Later collaboration and incident-management integrations.
 
-The implemented Milestone 2 webhook boundary uses one database-logical
-delivery with a stable receiver-deduplication ID and at-least-once HTTP
-attempts. A separate non-owner worker decrypts only endpoint-bound destination
-envelopes, signs the typed confirmed transition, enforces public-only managed
-networking, and records fenced attempt/audit/lineage metadata. Email and
-external administration remain later work. See
-[Signed webhook delivery](webhook-delivery.md).
+The implemented webhook and email boundaries use one channel-specific
+database-logical delivery with a stable receiver/gateway deduplication ID and
+at-least-once HTTPS attempts. Separate non-owner worker commands decrypt only
+channel- and endpoint-bound destination envelopes. Webhooks sign the typed
+confirmed transition; email derives a fixed plain-text message and submits it
+to a provider-neutral HTTPS gateway. Both enforce public-only managed
+networking and record fenced attempt/audit/lineage metadata without
+destinations or bodies. External endpoint administration and production
+provider evidence remain deployment gates. See
+[Signed webhook delivery](webhook-delivery.md) and
+[Email delivery](email-delivery.md).
 
 ## Query planning
 

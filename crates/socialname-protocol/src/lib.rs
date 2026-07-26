@@ -44,10 +44,10 @@ pub use monitoring::{
     MAX_MONITORING_PAGE_ITEMS, WatchListPage, WatchTransitionEntry, WatchTransitionPage,
 };
 pub use notification::{
-    NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
-    NotificationChannel, NotificationDelivery, NotificationDeliveryState, NotificationDestination,
-    NotificationEndpointCreateRequest, NotificationEndpointResource, NotificationEndpointState,
-    NotificationKind, WebhookNotification,
+    EmailNotification, NotificationAcknowledgementCreateRequest,
+    NotificationAcknowledgementResource, NotificationChannel, NotificationDelivery,
+    NotificationDeliveryState, NotificationDestination, NotificationEndpointCreateRequest,
+    NotificationEndpointResource, NotificationEndpointState, NotificationKind, WebhookNotification,
 };
 pub use schema::api_v1_schemas;
 pub use search::{

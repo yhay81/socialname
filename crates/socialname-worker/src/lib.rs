@@ -13,9 +13,12 @@ use tokio_util::sync::CancellationToken;
 pub use deletion::{DeletionError, DeletionProcessOutcome, DeletionStore};
 pub use delivery::{
     DeliveryClaim, DeliveryError, DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets,
-    DeliveryStore, ENDPOINT_ENCRYPTION_KEY_HEX_ENV, ENDPOINT_ENCRYPTION_KEY_ID_ENV,
+    DeliveryStore, EMAIL_FROM_ENV, EMAIL_GATEWAY_TOKEN_ENV, EMAIL_GATEWAY_URL_ENV,
+    ENDPOINT_ENCRYPTION_KEY_HEX_ENV, ENDPOINT_ENCRYPTION_KEY_ID_ENV, EmailGatewayConfig,
+    EmailGatewayTransport, EmailRequest, EmailSendError, ManagedEmailGatewayTransport,
     ManagedWebhookTransport, WEBHOOK_SIGNING_KEY_HEX_ENV, WEBHOOK_SIGNING_KEY_ID_ENV,
     WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
+    process_one_email_delivery,
 };
 pub use job::{
     EvidenceRetentionOutcome, ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError,

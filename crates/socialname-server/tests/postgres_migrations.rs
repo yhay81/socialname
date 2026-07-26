@@ -55,9 +55,11 @@ use socialname_server::{
 };
 use socialname_worker::{
     DeletionProcessOutcome, DeletionStore, DeliveryError, DeliveryProcessConfig,
-    DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, EvidenceRetentionOutcome,
-    ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule,
-    WatchPlanOutcome, WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
+    DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, EmailGatewayConfig,
+    EmailGatewayTransport, EmailRequest, EmailSendError, EvidenceRetentionOutcome, ExpandOutcome,
+    JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule, WatchPlanOutcome,
+    WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
+    process_one_email_delivery,
 };
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -436,10 +438,17 @@ async fn install_fixtures(pool: &PgPool) {
             id, tenant_id, channel, destination_ciphertext, destination_hash,
             encryption_key_id, state, created_at, verified_at
         )
-        VALUES (
+        VALUES
+        (
             '00000000-0000-0000-0000-000000000071',
             '00000000-0000-0000-0000-000000000001',
             'webhook', decode(repeat('71', 32), 'hex'), decode(repeat('72', 32), 'hex'),
+            'endpoint-key-1', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z'
+        ),
+        (
+            '00000000-0000-0000-0000-000000000072',
+            '00000000-0000-0000-0000-000000000001',
+            'email', decode(repeat('73', 32), 'hex'), decode(repeat('74', 32), 'hex'),
             'endpoint-key-1', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z'
         );
         "#,
@@ -463,6 +472,25 @@ async fn install_fixtures(pool: &PgPool) {
     .bind(endpoint_id)
     .bind(ciphertext)
     .bind(destination_hash)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let email_endpoint_id = Uuid::parse_str("00000000-0000-0000-0000-000000000072").unwrap();
+    let email_destination = "private-alerts@example.test";
+    let email_ciphertext = delivery_secrets()
+        .seal_email_destination(tenant_id, email_endpoint_id, email_destination)
+        .unwrap();
+    let email_destination_hash = Sha256::digest(email_destination.as_bytes()).to_vec();
+    sqlx::query(
+        "UPDATE notification_endpoints \
+         SET destination_ciphertext = $3, destination_hash = $4 \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(email_endpoint_id)
+    .bind(email_ciphertext)
+    .bind(email_destination_hash)
     .execute(pool)
     .await
     .unwrap();
@@ -2127,6 +2155,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
              'socialname_worker_claim_job', \
              'socialname_worker_lock_claim_consent', \
              'socialname_worker_claim_webhook_delivery', \
+             'socialname_worker_claim_email_delivery', \
              'socialname_worker_enforce_evidence_retention'\
          )",
     )
@@ -3805,6 +3834,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     )
     .await;
     assert_webhook_delivery_boundary(administrator_pool, worker_pool.clone()).await;
+    assert_email_delivery_boundary(administrator_pool, worker_pool.clone()).await;
     application_pool.close().await;
     store.close().await;
 }
@@ -5611,8 +5641,238 @@ async fn assert_webhook_delivery_boundary(administrator_pool: &PgPool, worker_po
     .await
     .unwrap();
     assert_eq!(leaked_audit_details, 0);
+}
 
-    store.close().await;
+struct CapturedEmailRequest {
+    gateway_matches: bool,
+    bearer_matches: bool,
+    delivery_id: String,
+    attempt_count: u32,
+    body: Vec<u8>,
+    debug_is_redacted: bool,
+}
+
+struct ScriptedEmailTransport {
+    results: Mutex<VecDeque<Result<u16, EmailSendError>>>,
+    requests: Mutex<Vec<CapturedEmailRequest>>,
+}
+
+impl ScriptedEmailTransport {
+    fn new(results: impl IntoIterator<Item = Result<u16, EmailSendError>>) -> Self {
+        Self {
+            results: Mutex::new(results.into_iter().collect()),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn requests(&self) -> std::sync::MutexGuard<'_, Vec<CapturedEmailRequest>> {
+        self.requests.lock().unwrap()
+    }
+}
+
+impl EmailGatewayTransport for ScriptedEmailTransport {
+    fn send<'a>(
+        &'a self,
+        request: &'a EmailRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<u16, EmailSendError>> + Send + 'a>> {
+        Box::pin(async move {
+            let debug = format!("{request:?}");
+            self.requests.lock().unwrap().push(CapturedEmailRequest {
+                gateway_matches: request.gateway() == "https://email.example.test/v1/send",
+                bearer_matches: request.bearer_token() == "private-gateway-token",
+                delivery_id: request.delivery_id().to_owned(),
+                attempt_count: request.attempt_count(),
+                body: request.body().to_vec(),
+                debug_is_redacted: !debug.contains("private-gateway-token")
+                    && !debug.contains("private-alerts@example.test")
+                    && !debug.contains("private-search-target"),
+            });
+            self.results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("scripted email result")
+        })
+    }
+}
+
+async fn assert_email_delivery_boundary(administrator_pool: &PgPool, worker_pool: PgPool) {
+    let channel_mutation = sqlx::query(
+        "UPDATE notification_endpoints SET channel = 'webhook' \
+         WHERE id = '00000000-0000-0000-0000-000000000072'",
+    )
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(channel_mutation, "23514");
+
+    let queued_email_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) \
+         FROM notification_deliveries AS delivery \
+         JOIN notification_endpoints AS endpoint \
+           ON endpoint.tenant_id = delivery.tenant_id \
+          AND endpoint.id = delivery.endpoint_id \
+         WHERE endpoint.channel = 'email' AND delivery.state = 'queued'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(queued_email_count >= 2);
+
+    let store = DeliveryStore::new(worker_pool);
+    assert!(
+        store
+            .claim("email-isolation-check", Duration::from_secs(5), 3)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let secrets = DeliverySecrets::new_email("endpoint-key-1", [7; 32]).unwrap();
+    let gateway = EmailGatewayConfig::new(
+        "https://email.example.test/v1/send",
+        "private-gateway-token",
+        "alerts@socialname.example",
+    )
+    .unwrap();
+    let retry_then_success = ScriptedEmailTransport::new([Err(EmailSendError::Timeout), Ok(202)]);
+    let now = current_unix_ms();
+    let first = process_one_email_delivery(
+        &store,
+        &secrets,
+        &gateway,
+        &retry_then_success,
+        DeliveryProcessConfig {
+            worker_id: "email-worker",
+            lease: Duration::from_secs(10),
+            maximum_attempts: 3,
+            timestamp_unix_ms: now,
+            cancellation: &tokio_util::sync::CancellationToken::new(),
+        },
+    )
+    .await
+    .unwrap();
+    let delivery_id = match first {
+        DeliveryProcessOutcome::RetryScheduled {
+            delivery_id,
+            attempt_count: 1,
+        } => delivery_id,
+        other => panic!("expected email retry scheduling, got {other:?}"),
+    };
+    sqlx::query("UPDATE notification_deliveries SET next_attempt_at = created_at WHERE id = $1")
+        .bind(delivery_id)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        process_one_email_delivery(
+            &store,
+            &secrets,
+            &gateway,
+            &retry_then_success,
+            DeliveryProcessConfig {
+                worker_id: "email-worker",
+                lease: Duration::from_secs(10),
+                maximum_attempts: 3,
+                timestamp_unix_ms: now + 1,
+                cancellation: &tokio_util::sync::CancellationToken::new(),
+            },
+        )
+        .await
+        .unwrap(),
+        DeliveryProcessOutcome::Delivered {
+            delivery_id,
+            attempt_count: 2,
+        }
+    );
+    {
+        let requests = retry_then_success.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|request| request.gateway_matches));
+        assert!(requests.iter().all(|request| request.bearer_matches));
+        assert!(requests.iter().all(|request| request.debug_is_redacted));
+        assert_eq!(requests[0].delivery_id, requests[1].delivery_id);
+        assert_eq!(requests[0].body, requests[1].body);
+        assert_eq!(requests[0].attempt_count, 1);
+        assert_eq!(requests[1].attempt_count, 2);
+        let message: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(message["schema"], "socialname.dev/email-gateway/v1");
+        assert_eq!(message["delivery_id"], delivery_id.to_string());
+        assert_eq!(message["from"], "alerts@socialname.example");
+        assert_eq!(message["to"], "private-alerts@example.test");
+        assert!(
+            message["text"]
+                .as_str()
+                .unwrap()
+                .contains("time- and vantage-specific")
+        );
+        assert!(
+            message["text"]
+                .as_str()
+                .unwrap()
+                .contains("private-search-target")
+        );
+        assert!(!message["text"].as_str().unwrap().contains("observation_"));
+    }
+
+    let permanent = ScriptedEmailTransport::new([Ok(400)]);
+    assert!(matches!(
+        process_one_email_delivery(
+            &store,
+            &secrets,
+            &gateway,
+            &permanent,
+            DeliveryProcessConfig {
+                worker_id: "email-worker",
+                lease: Duration::from_secs(10),
+                maximum_attempts: 3,
+                timestamp_unix_ms: now + 2,
+                cancellation: &tokio_util::sync::CancellationToken::new(),
+            },
+        )
+        .await
+        .unwrap(),
+        DeliveryProcessOutcome::PermanentlyFailed {
+            attempt_count: 1,
+            ..
+        }
+    ));
+
+    let email_attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) \
+         FROM notification_delivery_attempts AS attempt \
+         JOIN notification_deliveries AS delivery \
+           ON delivery.tenant_id = attempt.tenant_id \
+          AND delivery.id = attempt.delivery_id \
+         JOIN notification_endpoints AS endpoint \
+           ON endpoint.tenant_id = delivery.tenant_id \
+          AND endpoint.id = delivery.endpoint_id \
+         WHERE endpoint.channel = 'email'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let email_attempt_lineage: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM data_lineage_edges \
+         WHERE child_kind = 'notification_delivery_attempt' \
+           AND purpose = 'email_attempt'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(email_attempt_lineage, email_attempts);
+    let leaked_persistence: i64 = sqlx::query_scalar(
+        "SELECT \
+            (SELECT count(*) FROM audit_events \
+              WHERE details::text LIKE '%private-alerts@example.test%' \
+                 OR details::text LIKE '%private-gateway-token%') \
+          + (SELECT count(*) FROM notification_delivery_attempts \
+              WHERE encode(request_body_sha256, 'escape') \
+                    LIKE '%private-alerts@example.test%')",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(leaked_persistence, 0);
 }
 
 async fn assert_notification_acknowledgement_boundary(administrator_pool: &PgPool) {
@@ -6308,6 +6568,7 @@ async fn install_worker_role(pool: &PgPool) {
             socialname_worker_claim_job(uuid, text, text, integer),
             socialname_worker_lock_claim_consent(uuid, integer, text),
             socialname_worker_claim_webhook_delivery(text, integer, integer),
+            socialname_worker_claim_email_delivery(text, integer, integer),
             socialname_worker_enforce_evidence_retention(integer),
             socialname_worker_claim_deletion(text, integer)
             TO socialname_migration_test_worker;
@@ -6376,6 +6637,7 @@ async fn create_managed_watch(
         },
         notification_endpoint_ids: vec![
             NotificationEndpointId::new("00000000-0000-0000-0000-000000000071").unwrap(),
+            NotificationEndpointId::new("00000000-0000-0000-0000-000000000072").unwrap(),
         ],
         private_history_consent_grant_id: ConsentGrantId::new(consent_grant_id).unwrap(),
         retention_days: 400,

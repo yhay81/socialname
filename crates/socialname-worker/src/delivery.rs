@@ -5,16 +5,19 @@ use chacha20poly1305::{
     aead::{Aead, Generate, KeyInit, Payload},
 };
 use hmac::{Hmac, Mac};
+use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use socialname_engine::{
-    ManagedWebhookClient, ManagedWebhookError, ManagedWebhookRequest as EngineWebhookRequest,
+    ManagedEmailGatewayClient, ManagedEmailGatewayError,
+    ManagedEmailGatewayRequest as EngineEmailGatewayRequest, ManagedWebhookClient,
+    ManagedWebhookError, ManagedWebhookRequest as EngineWebhookRequest,
 };
 use socialname_protocol::{
-    AccountState, ConfirmationBasis, HttpsUrl, MeasurementState, NotificationDeliveryId,
-    ObservationId, ProtocolVersion, RegionClass, RuleHash, SiteId, Target, Transition,
-    TransitionChange, TransitionConfirmation, TransitionId, Username, Validate, WatchId,
-    WebhookNotification,
+    AccountState, ConfirmationBasis, EmailAddress, EmailNotification, HttpsUrl, MeasurementState,
+    NotificationChannel, NotificationDeliveryId, ObservationId, ProtocolVersion, RegionClass,
+    RuleHash, SiteId, Target, Transition, TransitionChange, TransitionConfirmation, TransitionId,
+    Username, Validate, WatchId, WebhookNotification,
 };
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tokio_util::sync::CancellationToken;
@@ -27,6 +30,9 @@ pub const ENDPOINT_ENCRYPTION_KEY_ID_ENV: &str = "SOCIALNAME_ENDPOINT_ENCRYPTION
 pub const ENDPOINT_ENCRYPTION_KEY_HEX_ENV: &str = "SOCIALNAME_ENDPOINT_ENCRYPTION_KEY_HEX";
 pub const WEBHOOK_SIGNING_KEY_ID_ENV: &str = "SOCIALNAME_WEBHOOK_SIGNING_KEY_ID";
 pub const WEBHOOK_SIGNING_KEY_HEX_ENV: &str = "SOCIALNAME_WEBHOOK_SIGNING_KEY_HEX";
+pub const EMAIL_GATEWAY_URL_ENV: &str = "SOCIALNAME_EMAIL_GATEWAY_URL";
+pub const EMAIL_GATEWAY_TOKEN_ENV: &str = "SOCIALNAME_EMAIL_GATEWAY_TOKEN";
+pub const EMAIL_FROM_ENV: &str = "SOCIALNAME_EMAIL_FROM";
 
 const DESTINATION_ENVELOPE_VERSION: u8 = 1;
 const DESTINATION_NONCE_BYTES: usize = 24;
@@ -37,14 +43,15 @@ const MAXIMUM_ATTEMPTS: u32 = 10;
 const INITIAL_RETRY_DELAY_MS: i64 = 5_000;
 const MAXIMUM_RETRY_DELAY_MS: i64 = 15 * 60 * 1_000;
 const MAXIMUM_WEBHOOK_BODY_BYTES: usize = 32 * 1_024;
+const MAXIMUM_EMAIL_BODY_BYTES: usize = 32 * 1_024;
 
 type HmacSha256 = Hmac<Sha256>;
 
 pub struct DeliverySecrets {
     endpoint_encryption_key_id: String,
     endpoint_encryption_key: Zeroizing<[u8; 32]>,
-    webhook_signing_key_id: String,
-    webhook_signing_key: Zeroizing<[u8; 32]>,
+    webhook_signing_key_id: Option<String>,
+    webhook_signing_key: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl fmt::Debug for DeliverySecrets {
@@ -86,8 +93,32 @@ impl DeliverySecrets {
         Ok(Self {
             endpoint_encryption_key_id,
             endpoint_encryption_key,
-            webhook_signing_key_id,
-            webhook_signing_key,
+            webhook_signing_key_id: Some(webhook_signing_key_id),
+            webhook_signing_key: Some(webhook_signing_key),
+        })
+    }
+
+    pub fn from_email_env() -> Result<Self, DeliveryError> {
+        let endpoint_encryption_key_id = required_env(ENDPOINT_ENCRYPTION_KEY_ID_ENV)?;
+        let endpoint_encryption_key_hex =
+            Zeroizing::new(required_env(ENDPOINT_ENCRYPTION_KEY_HEX_ENV)?);
+        let endpoint_encryption_key = parse_secret_key(&endpoint_encryption_key_hex)?;
+        Self::new_email(endpoint_encryption_key_id, endpoint_encryption_key)
+    }
+
+    pub fn new_email(
+        endpoint_encryption_key_id: impl Into<String>,
+        endpoint_encryption_key: [u8; 32],
+    ) -> Result<Self, DeliveryError> {
+        let endpoint_encryption_key_id = endpoint_encryption_key_id.into();
+        if !valid_key_id(&endpoint_encryption_key_id) {
+            return Err(DeliveryError::InvalidConfiguration);
+        }
+        Ok(Self {
+            endpoint_encryption_key_id,
+            endpoint_encryption_key: Zeroizing::new(endpoint_encryption_key),
+            webhook_signing_key_id: None,
+            webhook_signing_key: None,
         })
     }
 
@@ -119,6 +150,21 @@ impl DeliverySecrets {
             return Err(DeliveryError::InvalidDestination);
         }
         Ok(envelope)
+    }
+
+    pub fn seal_email_destination(
+        &self,
+        tenant_id: Uuid,
+        endpoint_id: Uuid,
+        destination: &str,
+    ) -> Result<Vec<u8>, DeliveryError> {
+        EmailAddress::new(destination.to_owned()).map_err(|_| DeliveryError::InvalidDestination)?;
+        self.seal_for_domain(
+            tenant_id,
+            endpoint_id,
+            destination,
+            b"socialname/email-destination/v1",
+        )
     }
 
     fn open_destination(
@@ -157,6 +203,94 @@ impl DeliverySecrets {
         Ok(destination)
     }
 
+    fn open_email_destination(
+        &self,
+        tenant_id: Uuid,
+        endpoint_id: Uuid,
+        encryption_key_id: &str,
+        envelope: &[u8],
+    ) -> Result<Zeroizing<String>, DeliveryError> {
+        let destination = self.open_for_domain(
+            tenant_id,
+            endpoint_id,
+            encryption_key_id,
+            envelope,
+            b"socialname/email-destination/v1",
+        )?;
+        EmailAddress::new(destination.as_str().to_owned())
+            .map_err(|_| DeliveryError::InvalidDestination)?;
+        Ok(destination)
+    }
+
+    fn seal_for_domain(
+        &self,
+        tenant_id: Uuid,
+        endpoint_id: Uuid,
+        destination: &str,
+        domain: &[u8],
+    ) -> Result<Vec<u8>, DeliveryError> {
+        let nonce = XNonce::generate();
+        let cipher = XChaCha20Poly1305::new_from_slice(self.endpoint_encryption_key.as_ref())
+            .map_err(|_| DeliveryError::InvalidConfiguration)?;
+        let aad = destination_aad_for_domain(
+            tenant_id,
+            endpoint_id,
+            &self.endpoint_encryption_key_id,
+            domain,
+        );
+        let encrypted = cipher
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: destination.as_bytes(),
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| DeliveryError::CryptographicFailure)?;
+        let mut envelope = Vec::with_capacity(1 + DESTINATION_NONCE_BYTES + encrypted.len());
+        envelope.push(DESTINATION_ENVELOPE_VERSION);
+        envelope.extend_from_slice(&nonce);
+        envelope.extend_from_slice(&encrypted);
+        if envelope.len() > 8_192 {
+            return Err(DeliveryError::InvalidDestination);
+        }
+        Ok(envelope)
+    }
+
+    fn open_for_domain(
+        &self,
+        tenant_id: Uuid,
+        endpoint_id: Uuid,
+        encryption_key_id: &str,
+        envelope: &[u8],
+        domain: &[u8],
+    ) -> Result<Zeroizing<String>, DeliveryError> {
+        if encryption_key_id != self.endpoint_encryption_key_id
+            || envelope.len() < 1 + DESTINATION_NONCE_BYTES + DESTINATION_TAG_BYTES
+            || envelope.len() > 8_192
+            || envelope.first().copied() != Some(DESTINATION_ENVELOPE_VERSION)
+        {
+            return Err(DeliveryError::CryptographicFailure);
+        }
+        let nonce = XNonce::try_from(&envelope[1..1 + DESTINATION_NONCE_BYTES])
+            .map_err(|_| DeliveryError::CryptographicFailure)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(self.endpoint_encryption_key.as_ref())
+            .map_err(|_| DeliveryError::InvalidConfiguration)?;
+        let aad = destination_aad_for_domain(tenant_id, endpoint_id, encryption_key_id, domain);
+        let plaintext = cipher
+            .decrypt(
+                &nonce,
+                Payload {
+                    msg: &envelope[1 + DESTINATION_NONCE_BYTES..],
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| DeliveryError::CryptographicFailure)?;
+        Ok(Zeroizing::new(
+            String::from_utf8(plaintext).map_err(|_| DeliveryError::CryptographicFailure)?,
+        ))
+    }
+
     fn signature(
         &self,
         delivery_id: Uuid,
@@ -166,7 +300,11 @@ impl DeliverySecrets {
         if timestamp_unix_ms <= 0 {
             return Err(DeliveryError::InvalidConfiguration);
         }
-        let mut mac = HmacSha256::new_from_slice(self.webhook_signing_key.as_ref())
+        let signing_key = self
+            .webhook_signing_key
+            .as_ref()
+            .ok_or(DeliveryError::InvalidConfiguration)?;
+        let mut mac = HmacSha256::new_from_slice(signing_key.as_ref())
             .map_err(|_| DeliveryError::InvalidConfiguration)?;
         mac.update(timestamp_unix_ms.to_string().as_bytes());
         mac.update(b".");
@@ -174,6 +312,52 @@ impl DeliverySecrets {
         mac.update(b".");
         mac.update(body);
         Ok(format!("v1={}", hex::encode(mac.finalize().into_bytes())))
+    }
+}
+
+pub struct EmailGatewayConfig {
+    gateway: String,
+    bearer_token: Zeroizing<String>,
+    from: String,
+}
+
+impl fmt::Debug for EmailGatewayConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("EmailGatewayConfig([REDACTED])")
+    }
+}
+
+impl EmailGatewayConfig {
+    pub fn from_env() -> Result<Self, DeliveryError> {
+        Self::new(
+            required_env(EMAIL_GATEWAY_URL_ENV)?,
+            required_env(EMAIL_GATEWAY_TOKEN_ENV)?,
+            required_env(EMAIL_FROM_ENV)?,
+        )
+    }
+
+    pub fn new(
+        gateway: impl Into<String>,
+        bearer_token: impl Into<String>,
+        from: impl Into<String>,
+    ) -> Result<Self, DeliveryError> {
+        let gateway = gateway.into();
+        let bearer_token = Zeroizing::new(bearer_token.into());
+        let from = from.into();
+        HttpsUrl::new(gateway.clone()).map_err(|_| DeliveryError::InvalidConfiguration)?;
+        ManagedEmailGatewayClient::validate_gateway(&gateway)
+            .map_err(|_| DeliveryError::InvalidConfiguration)?;
+        EmailAddress::new(from.clone()).map_err(|_| DeliveryError::InvalidConfiguration)?;
+        if !(1..=4_096).contains(&bearer_token.len())
+            || !bearer_token.bytes().all(|byte| byte.is_ascii_graphic())
+        {
+            return Err(DeliveryError::InvalidConfiguration);
+        }
+        Ok(Self {
+            gateway,
+            bearer_token,
+            from,
+        })
     }
 }
 
@@ -211,6 +395,37 @@ impl DeliveryStore {
         lease: Duration,
         maximum_attempts: u32,
     ) -> Result<Option<DeliveryClaim>, DeliveryError> {
+        self.claim_for_channel(
+            NotificationChannel::Webhook,
+            worker_id,
+            lease,
+            maximum_attempts,
+        )
+        .await
+    }
+
+    pub async fn claim_email(
+        &self,
+        worker_id: &str,
+        lease: Duration,
+        maximum_attempts: u32,
+    ) -> Result<Option<DeliveryClaim>, DeliveryError> {
+        self.claim_for_channel(
+            NotificationChannel::Email,
+            worker_id,
+            lease,
+            maximum_attempts,
+        )
+        .await
+    }
+
+    async fn claim_for_channel(
+        &self,
+        channel: NotificationChannel,
+        worker_id: &str,
+        lease: Duration,
+        maximum_attempts: u32,
+    ) -> Result<Option<DeliveryClaim>, DeliveryError> {
         validate_process_limits(worker_id, lease, maximum_attempts)?;
         let lease_ms =
             u64::try_from(lease.as_millis()).map_err(|_| DeliveryError::InvalidConfiguration)?;
@@ -219,16 +434,23 @@ impl DeliveryStore {
             .begin()
             .await
             .map_err(|_| DeliveryError::DatabaseUnavailable)?;
-        let coordinate: Option<ClaimCoordinate> = sqlx::query_as(
-            "SELECT tenant_id, notification_delivery_id, attempt_count \
-             FROM socialname_worker_claim_webhook_delivery($1, $2, $3)",
-        )
-        .bind(worker_id)
-        .bind(i32::try_from(lease_ms).map_err(|_| DeliveryError::InvalidConfiguration)?)
-        .bind(i32::try_from(maximum_attempts).map_err(|_| DeliveryError::InvalidConfiguration)?)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(|_| DeliveryError::DatabaseUnavailable)?;
+        let claim_query = match channel {
+            NotificationChannel::Webhook => {
+                "SELECT tenant_id, notification_delivery_id, attempt_count \
+                 FROM socialname_worker_claim_webhook_delivery($1, $2, $3)"
+            }
+            NotificationChannel::Email => {
+                "SELECT tenant_id, notification_delivery_id, attempt_count \
+                 FROM socialname_worker_claim_email_delivery($1, $2, $3)"
+            }
+        };
+        let coordinate: Option<ClaimCoordinate> = sqlx::query_as(claim_query)
+            .bind(worker_id)
+            .bind(i32::try_from(lease_ms).map_err(|_| DeliveryError::InvalidConfiguration)?)
+            .bind(i32::try_from(maximum_attempts).map_err(|_| DeliveryError::InvalidConfiguration)?)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|_| DeliveryError::DatabaseUnavailable)?;
         let Some(coordinate) = coordinate else {
             transaction
                 .commit()
@@ -240,7 +462,7 @@ impl DeliveryStore {
             .await
             .map_err(DeliveryError::from_job)?;
         let row: ClaimedDeliveryRow = sqlx::query_as(
-            "SELECT delivery.id, delivery.endpoint_id, \
+            "SELECT delivery.id, delivery.endpoint_id, endpoint.channel AS endpoint_channel, \
                     endpoint.destination_ciphertext, endpoint.encryption_key_id, \
                     transition.id AS transition_id, watch.id AS watch_id, \
                     target.normalized_username, target.site_id, \
@@ -279,6 +501,9 @@ impl DeliveryStore {
         .fetch_one(&mut *transaction)
         .await
         .map_err(|_| DeliveryError::StorageInvariant)?;
+        if notification_channel(&row.endpoint_channel)? != channel {
+            return Err(DeliveryError::StorageInvariant);
+        }
         let supporting_observation_ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT observation_id \
              FROM transition_basis \
@@ -294,17 +519,28 @@ impl DeliveryStore {
             &mut transaction,
             coordinate.tenant_id,
             coordinate.notification_delivery_id,
+            channel,
         )
         .await?;
         let transition = protocol_transition(&row, supporting_observation_ids)?;
-        let payload = WebhookNotification::for_confirmed_transition(
-            NotificationDeliveryId::new(row.id.to_string())
-                .map_err(|_| DeliveryError::StorageInvariant)?,
-            transition,
-        )
+        let delivery_id = NotificationDeliveryId::new(row.id.to_string())
+            .map_err(|_| DeliveryError::StorageInvariant)?;
+        let body = match channel {
+            NotificationChannel::Webhook => serde_json::to_vec(
+                &WebhookNotification::for_confirmed_transition(delivery_id, transition)
+                    .map_err(|_| DeliveryError::StorageInvariant)?,
+            ),
+            NotificationChannel::Email => serde_json::to_vec(
+                &EmailNotification::for_confirmed_transition(delivery_id, transition)
+                    .map_err(|_| DeliveryError::StorageInvariant)?,
+            ),
+        }
         .map_err(|_| DeliveryError::StorageInvariant)?;
-        let body = serde_json::to_vec(&payload).map_err(|_| DeliveryError::StorageInvariant)?;
-        if !(1..=MAXIMUM_WEBHOOK_BODY_BYTES).contains(&body.len()) {
+        let maximum_body_bytes = match channel {
+            NotificationChannel::Webhook => MAXIMUM_WEBHOOK_BODY_BYTES,
+            NotificationChannel::Email => MAXIMUM_EMAIL_BODY_BYTES,
+        };
+        if !(1..=maximum_body_bytes).contains(&body.len()) {
             return Err(DeliveryError::StorageInvariant);
         }
         transaction
@@ -315,6 +551,7 @@ impl DeliveryStore {
             tenant_id: coordinate.tenant_id,
             delivery_id: row.id,
             endpoint_id: row.endpoint_id,
+            channel,
             attempt_count: u32::try_from(coordinate.attempt_count)
                 .map_err(|_| DeliveryError::StorageInvariant)?,
             worker_id: worker_id.to_owned(),
@@ -330,10 +567,32 @@ impl DeliveryStore {
         result: Result<u16, WebhookSendError>,
         maximum_attempts: u32,
     ) -> Result<DeliveryProcessOutcome, DeliveryError> {
+        if claim.channel != NotificationChannel::Webhook {
+            return Err(DeliveryError::StorageInvariant);
+        }
         let request_body_sha256: [u8; 32] = Sha256::digest(&claim.body).into();
         self.record(
             claim,
             DeliveryAttemptOutcome::from_send_result(result),
+            maximum_attempts,
+            request_body_sha256,
+        )
+        .await
+    }
+
+    pub async fn record_email_send_result(
+        &self,
+        claim: &DeliveryClaim,
+        result: Result<u16, EmailSendError>,
+        maximum_attempts: u32,
+    ) -> Result<DeliveryProcessOutcome, DeliveryError> {
+        if claim.channel != NotificationChannel::Email {
+            return Err(DeliveryError::StorageInvariant);
+        }
+        let request_body_sha256: [u8; 32] = Sha256::digest(&claim.body).into();
+        self.record(
+            claim,
+            DeliveryAttemptOutcome::from_email_send_result(result),
             maximum_attempts,
             request_body_sha256,
         )
@@ -360,7 +619,7 @@ impl DeliveryStore {
                     delivery.lease_owner, \
                     COALESCE(delivery.lease_expires_at > clock_timestamp(), false) \
                         AS lease_is_current, \
-                    endpoint.state AS endpoint_state \
+                    endpoint.state AS endpoint_state, endpoint.channel AS endpoint_channel \
              FROM notification_deliveries AS delivery \
              JOIN notification_endpoints AS endpoint \
                ON endpoint.tenant_id = delivery.tenant_id \
@@ -379,6 +638,7 @@ impl DeliveryStore {
             || attempt_count != claim.attempt_count
             || locked.lease_owner.as_deref() != Some(claim.worker_id.as_str())
             || !locked.lease_is_current
+            || notification_channel(&locked.endpoint_channel)? != claim.channel
         {
             return Err(DeliveryError::StaleLease);
         }
@@ -463,7 +723,7 @@ impl DeliveryStore {
             claim.delivery_id,
             "notification_delivery_attempt",
             attempt_event_id,
-            "webhook_attempt",
+            attempt_lineage_purpose(claim.channel),
         )
         .await?;
         insert_audit(
@@ -478,6 +738,7 @@ impl DeliveryStore {
             },
             claim.delivery_id,
             json!({
+                "channel": notification_channel_name(claim.channel),
                 "attempt": claim.attempt_count,
                 "error_code": persisted.error_code,
                 "http_status": persisted.http_status,
@@ -514,6 +775,7 @@ pub struct DeliveryClaim {
     tenant_id: Uuid,
     delivery_id: Uuid,
     endpoint_id: Uuid,
+    channel: NotificationChannel,
     attempt_count: u32,
     worker_id: String,
     destination_ciphertext: Vec<u8>,
@@ -527,6 +789,7 @@ impl fmt::Debug for DeliveryClaim {
             .debug_struct("DeliveryClaim")
             .field("delivery_id", &self.delivery_id)
             .field("attempt_count", &self.attempt_count)
+            .field("channel", &self.channel)
             .field("destination", &"[REDACTED]")
             .finish()
     }
@@ -548,6 +811,9 @@ impl DeliveryClaim {
         secrets: &DeliverySecrets,
         timestamp_unix_ms: i64,
     ) -> Result<WebhookRequest, DeliveryError> {
+        if self.channel != NotificationChannel::Webhook {
+            return Err(DeliveryError::StorageInvariant);
+        }
         let destination = secrets.open_destination(
             self.tenant_id,
             self.endpoint_id,
@@ -560,9 +826,53 @@ impl DeliveryClaim {
             delivery_id: self.delivery_id.to_string(),
             timestamp_unix_ms,
             signature,
-            signing_key_id: secrets.webhook_signing_key_id.clone(),
+            signing_key_id: secrets
+                .webhook_signing_key_id
+                .clone()
+                .ok_or(DeliveryError::InvalidConfiguration)?,
             attempt_count: self.attempt_count,
             body: self.body.clone(),
+        })
+    }
+
+    fn prepare_email(
+        &self,
+        secrets: &DeliverySecrets,
+        gateway: &EmailGatewayConfig,
+    ) -> Result<EmailRequest, DeliveryError> {
+        if self.channel != NotificationChannel::Email {
+            return Err(DeliveryError::StorageInvariant);
+        }
+        let destination = secrets.open_email_destination(
+            self.tenant_id,
+            self.endpoint_id,
+            &self.encryption_key_id,
+            &self.destination_ciphertext,
+        )?;
+        let payload: EmailNotification =
+            serde_json::from_slice(&self.body).map_err(|_| DeliveryError::StorageInvariant)?;
+        payload
+            .validate()
+            .map_err(|_| DeliveryError::StorageInvariant)?;
+        let (subject, text) = render_email_message(&payload)?;
+        let gateway_body = serde_json::to_vec(&EmailGatewayBody {
+            schema: "socialname.dev/email-gateway/v1",
+            delivery_id: self.delivery_id.to_string(),
+            from: gateway.from.clone(),
+            to: destination.as_str().to_owned(),
+            subject,
+            text,
+        })
+        .map_err(|_| DeliveryError::StorageInvariant)?;
+        if !(1..=MAXIMUM_EMAIL_BODY_BYTES).contains(&gateway_body.len()) {
+            return Err(DeliveryError::StorageInvariant);
+        }
+        Ok(EmailRequest {
+            gateway: Zeroizing::new(gateway.gateway.clone()),
+            bearer_token: gateway.bearer_token.clone(),
+            delivery_id: self.delivery_id.to_string(),
+            attempt_count: self.attempt_count,
+            body: Zeroizing::new(gateway_body),
         })
     }
 }
@@ -692,6 +1002,127 @@ impl WebhookSendError {
     }
 }
 
+#[derive(Serialize)]
+struct EmailGatewayBody {
+    schema: &'static str,
+    delivery_id: String,
+    from: String,
+    to: String,
+    subject: &'static str,
+    text: String,
+}
+
+pub struct EmailRequest {
+    gateway: Zeroizing<String>,
+    bearer_token: Zeroizing<String>,
+    delivery_id: String,
+    attempt_count: u32,
+    body: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for EmailRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmailRequest")
+            .field("delivery_id", &self.delivery_id)
+            .field("attempt_count", &self.attempt_count)
+            .field("gateway", &"[REDACTED]")
+            .field("bearer_token", &"[REDACTED]")
+            .field("body", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl EmailRequest {
+    #[must_use]
+    pub fn gateway(&self) -> &str {
+        self.gateway.as_str()
+    }
+
+    #[must_use]
+    pub fn bearer_token(&self) -> &str {
+        self.bearer_token.as_str()
+    }
+
+    #[must_use]
+    pub fn delivery_id(&self) -> &str {
+        &self.delivery_id
+    }
+
+    #[must_use]
+    pub const fn attempt_count(&self) -> u32 {
+        self.attempt_count
+    }
+
+    #[must_use]
+    pub fn body(&self) -> &[u8] {
+        self.body.as_slice()
+    }
+}
+
+pub trait EmailGatewayTransport: Send + Sync {
+    fn send<'a>(
+        &'a self,
+        request: &'a EmailRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<u16, EmailSendError>> + Send + 'a>>;
+}
+
+#[derive(Clone, Debug)]
+pub struct ManagedEmailGatewayTransport {
+    client: ManagedEmailGatewayClient,
+}
+
+impl ManagedEmailGatewayTransport {
+    pub fn new(timeout: Duration) -> Result<Self, DeliveryError> {
+        ManagedEmailGatewayClient::new(timeout)
+            .map(|client| Self { client })
+            .map_err(|_| DeliveryError::InvalidConfiguration)
+    }
+}
+
+impl EmailGatewayTransport for ManagedEmailGatewayTransport {
+    fn send<'a>(
+        &'a self,
+        request: &'a EmailRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<u16, EmailSendError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.client
+                .post_json(&EngineEmailGatewayRequest {
+                    gateway: request.gateway(),
+                    bearer_token: request.bearer_token(),
+                    delivery_id: request.delivery_id(),
+                    attempt_count: request.attempt_count(),
+                    body: request.body(),
+                })
+                .await
+                .map(|response| response.status)
+                .map_err(EmailSendError::from_engine)
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmailSendError {
+    Timeout,
+    Connection,
+    Transport,
+    DestinationRejected,
+    RequestRejected,
+}
+
+impl EmailSendError {
+    const fn from_engine(error: ManagedEmailGatewayError) -> Self {
+        match error {
+            ManagedEmailGatewayError::Timeout => Self::Timeout,
+            ManagedEmailGatewayError::Connection => Self::Connection,
+            ManagedEmailGatewayError::DestinationRejected => Self::DestinationRejected,
+            ManagedEmailGatewayError::RequestRejected
+            | ManagedEmailGatewayError::InvalidConfiguration => Self::RequestRejected,
+            ManagedEmailGatewayError::Transport => Self::Transport,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeliveryProcessOutcome {
     Idle,
@@ -747,6 +1178,33 @@ where
         .await
 }
 
+pub async fn process_one_email_delivery<T>(
+    store: &DeliveryStore,
+    secrets: &DeliverySecrets,
+    gateway: &EmailGatewayConfig,
+    transport: &T,
+    config: DeliveryProcessConfig<'_>,
+) -> Result<DeliveryProcessOutcome, DeliveryError>
+where
+    T: EmailGatewayTransport,
+{
+    let Some(claim) = store
+        .claim_email(config.worker_id, config.lease, config.maximum_attempts)
+        .await?
+    else {
+        return Ok(DeliveryProcessOutcome::Idle);
+    };
+    let request = claim.prepare_email(secrets, gateway)?;
+    let result = tokio::select! {
+        biased;
+        () = config.cancellation.cancelled() => return Err(DeliveryError::Cancelled),
+        result = transport.send(&request) => result,
+    };
+    store
+        .record_email_send_result(&claim, result, config.maximum_attempts)
+        .await
+}
+
 pub(crate) async fn enqueue_confirmed_transition(
     transaction: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -754,8 +1212,8 @@ pub(crate) async fn enqueue_confirmed_transition(
     transition_id: Uuid,
     confirmation_basis: &str,
 ) -> Result<(), JobError> {
-    let endpoints: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT endpoint.id \
+    let endpoints: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT endpoint.id, endpoint.channel \
          FROM watch_targets AS target \
          JOIN watch_notification_endpoints AS link \
            ON link.tenant_id = target.tenant_id \
@@ -764,7 +1222,8 @@ pub(crate) async fn enqueue_confirmed_transition(
            ON endpoint.tenant_id = link.tenant_id \
           AND endpoint.id = link.endpoint_id \
          WHERE target.tenant_id = $1 AND target.id = $2 \
-           AND endpoint.state = 'active' AND endpoint.channel = 'webhook' \
+           AND endpoint.state = 'active' \
+           AND endpoint.channel IN ('email', 'webhook') \
          ORDER BY link.ordinal, endpoint.id",
     )
     .bind(tenant_id)
@@ -772,9 +1231,18 @@ pub(crate) async fn enqueue_confirmed_transition(
     .fetch_all(&mut **transaction)
     .await
     .map_err(|_| JobError::StorageInvariant)?;
-    for endpoint_id in endpoints {
+    for (endpoint_id, channel_name) in endpoints {
+        let channel =
+            notification_channel(&channel_name).map_err(|_| JobError::StorageInvariant)?;
         let delivery_id = Uuid::new_v4();
-        let logical_key = logical_notification_key(tenant_id, transition_id, endpoint_id);
+        let logical_key = match channel {
+            NotificationChannel::Webhook => {
+                logical_notification_key(tenant_id, transition_id, endpoint_id)
+            }
+            NotificationChannel::Email => {
+                email_logical_notification_key(tenant_id, transition_id, endpoint_id)
+            }
+        };
         let inserted: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO notification_deliveries (\
                 id, tenant_id, transition_id, endpoint_id, \
@@ -805,7 +1273,7 @@ pub(crate) async fn enqueue_confirmed_transition(
             transition_id,
             "notification_delivery",
             delivery_id,
-            "confirmed_webhook",
+            confirmed_lineage_purpose(channel),
         )
         .await
         .map_err(|_| JobError::StorageInvariant)?;
@@ -814,7 +1282,7 @@ pub(crate) async fn enqueue_confirmed_transition(
             tenant_id,
             "notification.delivery.queued",
             delivery_id,
-            json!({"channel":"webhook"}),
+            json!({"channel":notification_channel_name(channel)}),
         )
         .await
         .map_err(|_| JobError::StorageInvariant)?;
@@ -833,6 +1301,7 @@ struct ClaimCoordinate {
 struct ClaimedDeliveryRow {
     id: Uuid,
     endpoint_id: Uuid,
+    endpoint_channel: String,
     destination_ciphertext: Vec<u8>,
     encryption_key_id: String,
     transition_id: Uuid,
@@ -855,6 +1324,7 @@ struct LockedDelivery {
     lease_owner: Option<String>,
     lease_is_current: bool,
     endpoint_state: String,
+    endpoint_channel: String,
 }
 
 #[derive(Clone, Copy)]
@@ -906,6 +1376,49 @@ impl DeliveryAttemptOutcome {
                 retryable: false,
             },
             Err(WebhookSendError::RequestRejected) => Self::Failed {
+                error_code: "request_rejected",
+                http_status: None,
+                retryable: false,
+            },
+        }
+    }
+
+    const fn from_email_send_result(result: Result<u16, EmailSendError>) -> Self {
+        match result {
+            Ok(status @ 200..=299) => Self::Delivered {
+                http_status: status,
+            },
+            Ok(status @ (408 | 425 | 429 | 500..=599)) => Self::Failed {
+                error_code: "http_retryable",
+                http_status: Some(status),
+                retryable: true,
+            },
+            Ok(status) => Self::Failed {
+                error_code: "http_permanent",
+                http_status: Some(status),
+                retryable: false,
+            },
+            Err(EmailSendError::Timeout) => Self::Failed {
+                error_code: "timeout",
+                http_status: None,
+                retryable: true,
+            },
+            Err(EmailSendError::Connection) => Self::Failed {
+                error_code: "connection_failed",
+                http_status: None,
+                retryable: true,
+            },
+            Err(EmailSendError::Transport) => Self::Failed {
+                error_code: "transport_failed",
+                http_status: None,
+                retryable: true,
+            },
+            Err(EmailSendError::DestinationRejected) => Self::Failed {
+                error_code: "destination_rejected",
+                http_status: None,
+                retryable: false,
+            },
+            Err(EmailSendError::RequestRejected) => Self::Failed {
                 error_code: "request_rejected",
                 http_status: None,
                 retryable: false,
@@ -969,6 +1482,73 @@ fn persisted_outcome(
             http_status,
             next_attempt_at_unix_ms: None,
         }),
+    }
+}
+
+fn render_email_message(
+    notification: &EmailNotification,
+) -> Result<(&'static str, String), DeliveryError> {
+    let transition = &notification.transition;
+    let target = format!(
+        "{} on {}",
+        transition.target.username.as_str(),
+        transition.target.site_id.as_str()
+    );
+    let delivery_id = notification.delivery_id.as_str();
+    match &transition.change {
+        TransitionChange::AccountState { from, to } => Ok((
+            "SocialName account state changed",
+            format!(
+                "SocialName observed a time- and vantage-specific account-state change.\n\n\
+                 Target: {target}\n\
+                 Change: {} -> {}\n\
+                 Observed at (Unix ms): {}\n\
+                 Delivery ID: {delivery_id}\n\n\
+                 This observation is not timeless truth. A matching public username does not \
+                 prove common ownership.",
+                account_state_name(*from),
+                account_state_name(*to),
+                transition.detected_at_unix_ms,
+            ),
+        )),
+        TransitionChange::MeasurementHealth {
+            region_class,
+            from,
+            to,
+            ..
+        } => Ok((
+            "SocialName measurement health changed",
+            format!(
+                "SocialName observed a time- and vantage-specific measurement-health change.\n\n\
+                 Target: {target}\n\
+                 Region: {}\n\
+                 Change: {} -> {}\n\
+                 Observed at (Unix ms): {}\n\
+                 Delivery ID: {delivery_id}\n\n\
+                 Measurement degradation is not an account-state change.",
+                region_class.as_str(),
+                measurement_state_name(*from),
+                measurement_state_name(*to),
+                transition.detected_at_unix_ms,
+            ),
+        )),
+    }
+}
+
+const fn account_state_name(value: AccountState) -> &'static str {
+    match value {
+        AccountState::Found => "found",
+        AccountState::NotFound => "not_found",
+    }
+}
+
+const fn measurement_state_name(value: MeasurementState) -> &'static str {
+    match value {
+        MeasurementState::Healthy => "healthy",
+        MeasurementState::Degraded => "degraded",
+        MeasurementState::Quarantined => "quarantined",
+        MeasurementState::Recovering => "recovering",
+        MeasurementState::Unavailable => "unavailable",
     }
 }
 
@@ -1072,8 +1652,22 @@ const fn confirmation_basis(value: &str) -> Result<ConfirmationBasis, DeliveryEr
 }
 
 fn destination_aad(tenant_id: Uuid, endpoint_id: Uuid, encryption_key_id: &str) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(80 + encryption_key_id.len());
-    aad.extend_from_slice(b"socialname/webhook-destination/v1");
+    destination_aad_for_domain(
+        tenant_id,
+        endpoint_id,
+        encryption_key_id,
+        b"socialname/webhook-destination/v1",
+    )
+}
+
+fn destination_aad_for_domain(
+    tenant_id: Uuid,
+    endpoint_id: Uuid,
+    encryption_key_id: &str,
+    domain: &[u8],
+) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(domain.len() + 40 + encryption_key_id.len());
+    aad.extend_from_slice(domain);
     aad.extend_from_slice(tenant_id.as_bytes());
     aad.extend_from_slice(endpoint_id.as_bytes());
     aad.extend_from_slice(
@@ -1092,6 +1686,48 @@ fn logical_notification_key(tenant_id: Uuid, transition_id: Uuid, endpoint_id: U
     hash.update(transition_id.as_bytes());
     hash.update(endpoint_id.as_bytes());
     hash.finalize().into()
+}
+
+fn email_logical_notification_key(
+    tenant_id: Uuid,
+    transition_id: Uuid,
+    endpoint_id: Uuid,
+) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"socialname/logical-email/v1");
+    hash.update(tenant_id.as_bytes());
+    hash.update(transition_id.as_bytes());
+    hash.update(endpoint_id.as_bytes());
+    hash.finalize().into()
+}
+
+fn notification_channel(value: &str) -> Result<NotificationChannel, DeliveryError> {
+    match value {
+        "email" => Ok(NotificationChannel::Email),
+        "webhook" => Ok(NotificationChannel::Webhook),
+        _ => Err(DeliveryError::StorageInvariant),
+    }
+}
+
+const fn notification_channel_name(channel: NotificationChannel) -> &'static str {
+    match channel {
+        NotificationChannel::Email => "email",
+        NotificationChannel::Webhook => "webhook",
+    }
+}
+
+const fn attempt_lineage_purpose(channel: NotificationChannel) -> &'static str {
+    match channel {
+        NotificationChannel::Email => "email_attempt",
+        NotificationChannel::Webhook => "webhook_attempt",
+    }
+}
+
+const fn confirmed_lineage_purpose(channel: NotificationChannel) -> &'static str {
+    match channel {
+        NotificationChannel::Email => "confirmed_email",
+        NotificationChannel::Webhook => "confirmed_webhook",
+    }
 }
 
 fn required_env(name: &'static str) -> Result<String, DeliveryError> {
@@ -1164,7 +1800,9 @@ async fn attach_attempt_lineage(
     transaction: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     delivery_id: Uuid,
+    channel: NotificationChannel,
 ) -> Result<(), DeliveryError> {
+    let purpose = attempt_lineage_purpose(channel);
     let attempt_ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT attempt.id \
          FROM notification_delivery_attempts AS attempt \
@@ -1176,12 +1814,13 @@ async fn attach_attempt_lineage(
                  AND lineage.parent_id = attempt.delivery_id \
                  AND lineage.child_kind = 'notification_delivery_attempt' \
                  AND lineage.child_id = attempt.id \
-                 AND lineage.purpose = 'webhook_attempt'\
+                 AND lineage.purpose = $3\
            ) \
          ORDER BY attempt.occurred_at, attempt.id",
     )
     .bind(tenant_id)
     .bind(delivery_id)
+    .bind(purpose)
     .fetch_all(&mut **transaction)
     .await
     .map_err(|_| DeliveryError::StorageInvariant)?;
@@ -1193,7 +1832,7 @@ async fn attach_attempt_lineage(
             delivery_id,
             "notification_delivery_attempt",
             attempt_id,
-            "webhook_attempt",
+            purpose,
         )
         .await?;
     }
@@ -1260,19 +1899,19 @@ async fn insert_lineage(
 
 #[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DeliveryError {
-    #[error("webhook delivery configuration is invalid")]
+    #[error("notification delivery configuration is invalid")]
     InvalidConfiguration,
-    #[error("webhook destination is invalid")]
+    #[error("notification destination is invalid")]
     InvalidDestination,
-    #[error("webhook cryptographic operation failed")]
+    #[error("notification delivery cryptographic operation failed")]
     CryptographicFailure,
-    #[error("webhook delivery database is unavailable")]
+    #[error("notification delivery database is unavailable")]
     DatabaseUnavailable,
-    #[error("webhook delivery storage invariant failed")]
+    #[error("notification delivery storage invariant failed")]
     StorageInvariant,
-    #[error("webhook delivery lease is stale")]
+    #[error("notification delivery lease is stale")]
     StaleLease,
-    #[error("webhook delivery was cancelled")]
+    #[error("notification delivery was cancelled")]
     Cancelled,
 }
 
@@ -1325,6 +1964,56 @@ mod tests {
     }
 
     #[test]
+    fn email_destination_uses_a_separate_envelope_domain() {
+        let secrets = DeliverySecrets::new_email("endpoint-key-1", [7; 32]).unwrap();
+        let tenant_id = Uuid::from_u128(1);
+        let endpoint_id = Uuid::from_u128(2);
+        let destination = "private-alerts@example.test";
+        let envelope = secrets
+            .seal_email_destination(tenant_id, endpoint_id, destination)
+            .unwrap();
+        assert_eq!(
+            secrets
+                .open_email_destination(tenant_id, endpoint_id, "endpoint-key-1", &envelope)
+                .unwrap()
+                .as_str(),
+            destination
+        );
+        assert_eq!(
+            secrets.open_destination(tenant_id, endpoint_id, "endpoint-key-1", &envelope),
+            Err(DeliveryError::CryptographicFailure)
+        );
+        assert!(
+            secrets
+                .signature(Uuid::from_u128(3), 1_000, b"body")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn email_gateway_configuration_and_request_debug_are_redacted() {
+        let token = "private-token-that-must-not-appear";
+        let address = "sender@example.test";
+        let config =
+            EmailGatewayConfig::new("https://email.example.test/v1/send", token, address).unwrap();
+        let debug = format!("{config:?}");
+        assert!(!debug.contains(token));
+        assert!(!debug.contains(address));
+        assert!(EmailGatewayConfig::new("https://127.0.0.1/send", token, address).is_err());
+
+        let request = EmailRequest {
+            gateway: Zeroizing::new("https://email.example.test/v1/send".to_owned()),
+            bearer_token: Zeroizing::new(token.to_owned()),
+            delivery_id: "delivery_01".to_owned(),
+            attempt_count: 1,
+            body: Zeroizing::new(address.as_bytes().to_vec()),
+        };
+        let debug = format!("{request:?}");
+        assert!(!debug.contains(token));
+        assert!(!debug.contains(address));
+    }
+
+    #[test]
     fn webhook_signature_binds_timestamp_delivery_and_body() {
         let secrets = secrets();
         let delivery_id = Uuid::from_u128(10);
@@ -1359,6 +2048,20 @@ mod tests {
         ));
         assert_eq!(retry_delay_ms(1), 5_000);
         assert_eq!(retry_delay_ms(10), MAXIMUM_RETRY_DELAY_MS);
+        assert!(matches!(
+            DeliveryAttemptOutcome::from_email_send_result(Err(EmailSendError::Timeout)),
+            DeliveryAttemptOutcome::Failed {
+                retryable: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            DeliveryAttemptOutcome::from_email_send_result(Ok(400)),
+            DeliveryAttemptOutcome::Failed {
+                retryable: false,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1370,5 +2073,9 @@ mod tests {
         let other = logical_notification_key(tenant_id, transition_id, Uuid::from_u128(4));
         assert_eq!(first, replay);
         assert_ne!(first, other);
+        assert_ne!(
+            first,
+            email_logical_notification_key(tenant_id, transition_id, Uuid::from_u128(3))
+        );
     }
 }

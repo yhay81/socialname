@@ -4,7 +4,7 @@ use socialname_protocol::{
     ConsentSubjectKind, ContributorDeletionCreateRequest, DefinitiveVerdict,
     DeletionReceiptResource, DeletionReceiptState, DeletionRequestId, DeletionRequestResource,
     DeletionRequestState, DeletionScope, DeletionStoreKind, DeletionStoreReceipt,
-    DeletionStoreState, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
+    DeletionStoreState, EmailNotification, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
     EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
     EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
     EvidenceTransportOutcome, EvidenceVantage, InstallationId,
@@ -480,6 +480,42 @@ fn webhook_notification_has_one_exact_v1_wire_shape() {
                 "detected_at_unix_ms": 2_000
             }
         })
+    );
+}
+
+#[test]
+fn email_notification_has_one_exact_v1_wire_shape() {
+    let transition = Transition {
+        schema: ProtocolVersion::ApiV1,
+        transition_id: TransitionId::new("transition_01").unwrap(),
+        watch_id: WatchId::new("watch_01").unwrap(),
+        target: target(),
+        change: TransitionChange::AccountState {
+            from: AccountState::NotFound,
+            to: AccountState::Found,
+        },
+        confirmation: TransitionConfirmation::Confirmed {
+            basis: ConfirmationBasis::ManagedE4,
+        },
+        supporting_observation_ids: vec![ObservationId::new("observation_01").unwrap()],
+        detected_at_unix_ms: 2_000,
+    };
+    let notification = EmailNotification::for_confirmed_transition(
+        NotificationDeliveryId::new("delivery_01").unwrap(),
+        transition,
+    )
+    .unwrap();
+    let json = serde_json::to_value(notification).unwrap();
+    assert_eq!(json["schema"], API_V1_SCHEMA);
+    assert_eq!(json["delivery_id"], "delivery_01");
+    assert_eq!(
+        json["transition"]["target"]["username"],
+        "alice-private-target"
+    );
+    assert_eq!(json["transition"]["confirmation"]["status"], "confirmed");
+    assert_eq!(
+        json["transition"]["supporting_observation_ids"],
+        serde_json::json!(["observation_01"])
     );
 }
 

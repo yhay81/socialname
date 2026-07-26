@@ -29,7 +29,12 @@ Capsules, independent database-time deadlines, payload-free purge receipts,
 and a bounded retention-enforcement function. Migration
 `0012_lineage_backed_deletion.sql` adds immutable resource-match tombstones,
 exact software deadlines and monotonic progress, target/job redaction,
-suppression-key identity, and a fenced cross-tenant deletion claim.
+suppression-key identity, and a fenced cross-tenant deletion claim. Migration
+`0013_deletion_receipts_and_restore.sql` adds fixed-shape completion receipts,
+backup-expiry evidence, and restore-ledger readiness. Migration
+`0014_notification_acknowledgements.sql` adds one delivered-only append-only
+operator receipt. Migration `0015_email_delivery.sql` adds a channel-isolated
+email claim coordinator over the same fenced delivery and attempt state.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -124,14 +129,15 @@ The worker is also a non-owner `NOSUPERUSER NOBYPASSRLS` role, but it must
 select the next tenant before it can set transaction-local RLS. Migrations
 `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
 `0007_webhook_delivery.sql`, `0009_rule_pack_distribution.sql`,
-`0011_evidence_capsule_retention.sql`, and
-`0012_lineage_backed_deletion.sql` therefore provide eleven fixed-search-path
+`0011_evidence_capsule_retention.sql`, `0012_lineage_backed_deletion.sql`, and
+`0015_email_delivery.sql` therefore provide twelve fixed-search-path
 `SECURITY DEFINER` functions. They can resolve
 an exact eligible signed rule including metadata and promotion identity,
 recheck that one rule version is still active, lock one eligible search
 target, lock one due watch, lock one eligible watch-run target, claim one job
 with an incremented attempt fence, lock the consent attached to an exact
-current lease, claim one due webhook with an incremented attempt fence,
+current lease, claim one due webhook or one due email with an incremented
+channel-specific attempt fence,
 enforce a bounded due-evidence batch, redact exactly one tenant/request's
 matched job targets, or claim one due deletion request with an incremented
 attempt fence. They return only opaque IDs, an attempt number, a boolean,
@@ -241,7 +247,7 @@ withdrawal unambiguously later. See
   Measurement degradation remains distinct from account-state change.
 - Logical delivery identity and transition/endpoint binding are immutable. One
   unique SHA-256 key covers each tenant/transition/endpoint, while a bounded
-  lease and one-through-ten attempt counter fence stale webhook workers.
+  lease and one-through-ten attempt counter fence stale channel workers.
 - Notification attempt rows are append-only. They retain a closed event/error
   class, bounded status, request-body digest, worker label, and time, never the
   destination, signature, request body, or response body.
@@ -304,11 +310,11 @@ payload-free receipts, bounded idempotent retention batches, lineage-backed
 contributor/target hiding and primary purge, suppression-key mismatch
 fail-closed behavior, remaining-support recomputation, private target
 preservation, invalid targets,
-measurement degradation,
-revision cancellation, consent
-withdrawal, regional rule degradation, logical webhook enqueue, timeout/retry,
-same-ID success, permanent 4xx, lease reclamation, stale fencing, final
-dead-letter state, attempt audit, lineage, and bounded watch/transition page
+measurement degradation, revision cancellation, consent withdrawal, regional
+rule degradation, channel-separated logical webhook/email enqueue,
+timeout/retry, same-ID and same-body success, permanent 4xx, lease reclamation,
+stale fencing, final dead-letter state, attempt audit, lineage, secret
+exclusion, and bounded watch/transition page
 reads with scope, tenant, cursor, account/measurement, and secret-exclusion
 checks. The same real-database test also pins initial rule trust, applies
 canary then general metadata, rejects persistent replay, stages an overlapping

@@ -78,7 +78,8 @@ person.
   attempt fencing, bounded retry, continuous authorization checks, and
   idempotent observation/event/lineage ingestion under forced tenant RLS.
 - Revisioned watch scheduling, assertion/transition recomputation, signed
-  deduplicated webhook delivery, and bounded retry/dead-letter audit lineage.
+  deduplicated webhook delivery, provider-neutral HTTPS email delivery, and
+  bounded retry/dead-letter audit lineage.
 - A React/TypeScript/Vite monitoring console using tenant-RLS watch and
   transition/delivery pages without direct database access or browser key
   persistence.
@@ -87,9 +88,10 @@ person.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The next repository-completable slice adds daily delete-through tests,
-completed deletion receipts, restore-ledger replay, and backup-expiry
-verification. Real regional deployment remains an external evidence gate.
+The next repository-completable slice adds operational dashboards and SLO
+reporting over the existing monitoring, deletion, acknowledgement, webhook,
+and email delivery state. Real regional deployment and production notification
+evidence remain external gates.
 
 ## Build and verify
 

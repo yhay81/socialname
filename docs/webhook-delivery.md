@@ -172,3 +172,8 @@ uses a real non-owner worker and injected bounded transport to prove:
 
 The test does not claim that an external receiver is owned, reachable, or
 correctly verifies signatures.
+
+Email uses a separate destination-envelope domain, logical-key domain, claim
+coordinator, lineage purpose, gateway credential, and operator command. See
+[Email delivery](email-delivery.md); neither channel can claim or decrypt the
+other channel's work.

@@ -5,11 +5,12 @@ use schemars::{Schema, schema_for};
 use crate::{
     ApiErrorResponse, ConsentGrantCreateRequest, ConsentGrantListPage, ConsentGrantResource,
     ConsentWithdrawalRequest, ContributorDeletionCreateRequest, DeletionReceiptResource,
-    DeletionRequestResource, EvidenceCapsuleResource, NotificationAcknowledgementCreateRequest,
-    NotificationAcknowledgementResource, NotificationDelivery, NotificationEndpointCreateRequest,
-    NotificationEndpointResource, SearchCreateRequest, SearchEvent, SearchResource, Transition,
-    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchTransitionPage,
-    WebhookNotification, WorkspaceResource,
+    DeletionRequestResource, EmailNotification, EvidenceCapsuleResource,
+    NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
+    NotificationDelivery, NotificationEndpointCreateRequest, NotificationEndpointResource,
+    SearchCreateRequest, SearchEvent, SearchResource, Transition, WatchCreateRequest,
+    WatchListPage, WatchPatchRequest, WatchResource, WatchTransitionPage, WebhookNotification,
+    WorkspaceResource,
 };
 
 #[must_use]
@@ -69,6 +70,7 @@ pub fn api_v1_schemas() -> BTreeMap<&'static str, Schema> {
         ("watch_resource", schema_for!(WatchResource)),
         ("watch_transition_page", schema_for!(WatchTransitionPage)),
         ("webhook_notification", schema_for!(WebhookNotification)),
+        ("email_notification", schema_for!(EmailNotification)),
         ("workspace_resource", schema_for!(WorkspaceResource)),
     ])
 }
@@ -91,6 +93,7 @@ mod tests {
                 "contributor_deletion_create_request",
                 "deletion_receipt_resource",
                 "deletion_request_resource",
+                "email_notification",
                 "evidence_capsule_resource",
                 "notification_acknowledgement_create_request",
                 "notification_acknowledgement_resource",

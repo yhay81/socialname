@@ -183,6 +183,15 @@ so status does not diverge across design records.
   public-address-only, proxy-free, redirect-free, time-bounded, lease-fenced,
   and response-body-blind. Attempt history, audit, and lineage retain closed
   metadata rather than destinations or bodies.
+- Email is a second channel-specific logical delivery, not a webhook-shaped
+  special case. It uses a distinct logical-key/envelope domain and claim
+  coordinator, derives a fixed plain-text message from a confirmed
+  `EmailNotification`, and submits one bounded JSON request to an
+  operator-owned HTTPS gateway. The stable delivery ID is the gateway
+  idempotency key. Provider SDKs, SMTP credentials, HTML/tracking content,
+  response bodies, recipients, and gateway secrets stay outside persisted
+  attempt/audit/lineage metadata. Sending-domain, endpoint-ownership,
+  bounce/complaint, and live delivery evidence remain external gates.
 - Notification acknowledgement is one authenticated, tenant-local,
   append-only receipt per successfully delivered logical notification. It is
   idempotent, records private membership/API-key attribution, exposes only the
@@ -227,6 +236,7 @@ so status does not diverge across design records.
 - [Managed probe jobs and observation ingestion](managed-jobs.md)
 - [Assertion recomputation and transition persistence](assertion-recomputation.md)
 - [Signed webhook delivery](webhook-delivery.md)
+- [Email delivery](email-delivery.md)
 - [Notification acknowledgement](notification-acknowledgement.md)
 - [Minimal monitoring console](monitoring-console.md)
 - [Purpose-specific consent grant lifecycle](consent-api.md)
@@ -313,6 +323,10 @@ so status does not diverge across design records.
 24. **Done:** Add delivered-only notification acknowledgement with closed
     protocol resources, exact replay, forced tenant RLS, private audit
     attribution, deletion hiding, and same-origin console action.
+25. **Done:** Add provider-neutral HTTPS email delivery with a confirmed-only
+    canonical DTO, channel-separated logical identity, encryption and claim
+    domains, stable gateway idempotency, fixed plain text, public-only
+    networking, bounded retry/dead letter, and secret-free audit/lineage.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -320,6 +334,7 @@ deployment evidence remains pending, with affected capabilities disabled.
 Milestone 3's deployment/operator artifact, regional assertion behavior,
 signed rule-pack distribution, purpose-specific consent lifecycle, bounded
 Evidence Capsule retention, lineage-backed deletion and restore drills, and
-notification acknowledgement are repository-complete, while actual
-multi-region deployment remains an external gate. The next executable work is
-email delivery.
+notification acknowledgement and email delivery are repository-complete,
+while actual multi-region deployment and production mail-provider evidence
+remain external gates. The next executable work is operational dashboards and
+SLO reporting.

@@ -16,8 +16,10 @@ use socialname_engine::SearchResult;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_worker::{
     DeletionProcessOutcome, DeletionStore, DeliveryProcessConfig, DeliveryProcessOutcome,
-    DeliverySecrets, DeliveryStore, ExpandOutcome, JobDisposition, JobExecutionError, JobStore,
-    ManagedRule, ManagedWebhookTransport, WatchPlanOutcome, WorkerError, process_one_delivery,
+    DeliverySecrets, DeliveryStore, EmailGatewayConfig, ExpandOutcome, JobDisposition,
+    JobExecutionError, JobStore, ManagedEmailGatewayTransport, ManagedRule,
+    ManagedWebhookTransport, WatchPlanOutcome, WorkerError, process_one_delivery,
+    process_one_email_delivery,
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -42,6 +44,8 @@ enum Command {
     ProcessOne(ProcessOneArgs),
     /// Claim and attempt at most one queued signed webhook delivery.
     DeliverOne(DeliverOneArgs),
+    /// Claim and attempt at most one queued email delivery through the configured HTTPS gateway.
+    DeliverEmailOne(DeliverOneArgs),
     /// Purge one bounded batch of Evidence Capsule data whose DB deadline has passed.
     EnforceRetention(EnforceRetentionArgs),
     /// Withdraw support and purge primary data for at most one deletion request.
@@ -198,6 +202,7 @@ async fn run() -> Result<()> {
         Command::Probe(args) => probe(args).await,
         Command::ProcessOne(args) => process_one(args).await,
         Command::DeliverOne(args) => deliver_one(args).await,
+        Command::DeliverEmailOne(args) => deliver_email_one(args).await,
         Command::EnforceRetention(args) => enforce_retention(args).await,
         Command::ProcessDeletion(args) => process_deletion(args).await,
     }
@@ -295,6 +300,41 @@ async fn deliver_one(args: DeliverOneArgs) -> Result<()> {
     .await;
     store.close().await;
     let output = deliver_one_output(outcome?);
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+async fn deliver_email_one(args: DeliverOneArgs) -> Result<()> {
+    if !args.allow_live {
+        bail!("email delivery requires --allow-live");
+    }
+    validate_delivery_limits(
+        args.lease_seconds,
+        args.maximum_attempts,
+        args.request_timeout_seconds,
+    )?;
+    validate_worker_id(&args.worker_id)?;
+    let secrets = DeliverySecrets::from_email_env()?;
+    let gateway = EmailGatewayConfig::from_env()?;
+    let transport =
+        ManagedEmailGatewayTransport::new(Duration::from_secs(args.request_timeout_seconds))?;
+    let store = DeliveryStore::connect_from_env().await?;
+    let outcome = process_one_email_delivery(
+        &store,
+        &secrets,
+        &gateway,
+        &transport,
+        DeliveryProcessConfig {
+            worker_id: &args.worker_id,
+            lease: Duration::from_secs(args.lease_seconds),
+            maximum_attempts: args.maximum_attempts,
+            timestamp_unix_ms: now_unix_ms()?,
+            cancellation: &shutdown_token(),
+        },
+    )
+    .await;
+    store.close().await;
+    let output = deliver_email_one_output(outcome?);
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
@@ -588,9 +628,20 @@ const fn disposition_name(disposition: JobDisposition) -> &'static str {
 }
 
 const fn deliver_one_output(outcome: DeliveryProcessOutcome) -> DeliverOneOutput {
+    delivery_output(outcome, "socialname.dev/webhook-delivery-process/v1")
+}
+
+const fn deliver_email_one_output(outcome: DeliveryProcessOutcome) -> DeliverOneOutput {
+    delivery_output(outcome, "socialname.dev/email-delivery-process/v1")
+}
+
+const fn delivery_output(
+    outcome: DeliveryProcessOutcome,
+    schema: &'static str,
+) -> DeliverOneOutput {
     match outcome {
         DeliveryProcessOutcome::Idle => DeliverOneOutput {
-            schema: "socialname.dev/webhook-delivery-process/v1",
+            schema,
             status: "idle",
             delivery_id: None,
             attempt_count: None,
@@ -599,7 +650,7 @@ const fn deliver_one_output(outcome: DeliveryProcessOutcome) -> DeliverOneOutput
             delivery_id,
             attempt_count,
         } => DeliverOneOutput {
-            schema: "socialname.dev/webhook-delivery-process/v1",
+            schema,
             status: "delivered",
             delivery_id: Some(delivery_id),
             attempt_count: Some(attempt_count),
@@ -608,7 +659,7 @@ const fn deliver_one_output(outcome: DeliveryProcessOutcome) -> DeliverOneOutput
             delivery_id,
             attempt_count,
         } => DeliverOneOutput {
-            schema: "socialname.dev/webhook-delivery-process/v1",
+            schema,
             status: "retry_scheduled",
             delivery_id: Some(delivery_id),
             attempt_count: Some(attempt_count),
@@ -617,7 +668,7 @@ const fn deliver_one_output(outcome: DeliveryProcessOutcome) -> DeliverOneOutput
             delivery_id,
             attempt_count,
         } => DeliverOneOutput {
-            schema: "socialname.dev/webhook-delivery-process/v1",
+            schema,
             status: "permanently_failed",
             delivery_id: Some(delivery_id),
             attempt_count: Some(attempt_count),
@@ -626,7 +677,7 @@ const fn deliver_one_output(outcome: DeliveryProcessOutcome) -> DeliverOneOutput
             delivery_id,
             attempt_count,
         } => DeliverOneOutput {
-            schema: "socialname.dev/webhook-delivery-process/v1",
+            schema,
             status: "cancelled",
             delivery_id: Some(delivery_id),
             attempt_count: Some(attempt_count),
@@ -782,6 +833,18 @@ mod tests {
             "{\"schema\":\"socialname.dev/webhook-delivery-process/v1\",\"status\":\"retry_scheduled\",\"delivery_id\":\"00000000-0000-0000-0000-000000000000\",\"attempt_count\":1}"
         );
         assert!(!delivery.contains("destination"));
+        let email_delivery = serde_json::to_string(&deliver_email_one_output(
+            DeliveryProcessOutcome::Delivered {
+                delivery_id: Uuid::nil(),
+                attempt_count: 2,
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            email_delivery,
+            "{\"schema\":\"socialname.dev/email-delivery-process/v1\",\"status\":\"delivered\",\"delivery_id\":\"00000000-0000-0000-0000-000000000000\",\"attempt_count\":2}"
+        );
+        assert!(!email_delivery.contains("address"));
 
         let retention = serde_json::to_string(&EnforceRetentionOutput {
             schema: "socialname.dev/evidence-retention-run/v1",
@@ -797,6 +860,32 @@ mod tests {
         assert!(!retention.contains("target"));
         assert!(!retention.contains("username"));
         assert!(!retention.contains("payload"));
+    }
+
+    #[test]
+    fn email_delivery_command_has_a_closed_one_shot_shape() {
+        let cli = Cli::try_parse_from([
+            "socialname-worker",
+            "deliver-email-one",
+            "--worker-id",
+            "email-worker",
+            "--lease-seconds",
+            "15",
+            "--maximum-attempts",
+            "5",
+            "--request-timeout-seconds",
+            "10",
+            "--allow-live",
+        ])
+        .unwrap();
+        let Command::DeliverEmailOne(args) = cli.command else {
+            panic!("expected email delivery command");
+        };
+        assert_eq!(args.worker_id, "email-worker");
+        assert_eq!(args.lease_seconds, 15);
+        assert_eq!(args.maximum_attempts, 5);
+        assert_eq!(args.request_timeout_seconds, 10);
+        assert!(args.allow_live);
     }
 
     #[tokio::test]

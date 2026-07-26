@@ -65,9 +65,12 @@ The probe workload receives only:
   non-secret arguments; and
 - a closed lowercase worker ID that contains no target or tenant data.
 
-Do not mount the endpoint-encryption or webhook-signing keys into this
-workload. `deliver-one` is a separate workload with separate secrets and
-operator access even if it uses the same immutable binary.
+Do not mount endpoint-encryption, webhook-signing, email-gateway, or sender
+configuration into this workload. `deliver-one` and `deliver-email-one` are
+separate workloads with channel-specific secrets and operator access even
+when they use the same immutable binary. See
+[Signed webhook delivery](webhook-delivery.md) and
+[Email delivery](email-delivery.md).
 
 The runtime shape is:
 
