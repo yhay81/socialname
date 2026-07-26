@@ -1,19 +1,20 @@
 use socialname_protocol::{
     API_V1_SCHEMA, AccountState, ConfirmationBasis, ConsentCollectionProfileVersion,
     ConsentGrantCreateRequest, ConsentGrantId, ConsentNoticeVersion, ConsentPurpose,
-    ConsentSubjectKind, ContributorDeletionCreateRequest, DefinitiveVerdict, DeletionRequestId,
-    DeletionRequestResource, DeletionRequestState, DeletionScope, EventId, EvidenceCapsuleId,
-    EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
-    EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
-    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
-    NotificationChannel, NotificationDelivery, NotificationDeliveryId, NotificationEndpointId,
-    NotificationLogicalKey, ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget,
-    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent,
-    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId,
-    SuppressionReason, SyncPolicy, Target, TargetSelection, Transition, TransitionChange,
-    TransitionConfirmation, TransitionId, Username, Validate, WatchCreateRequest, WatchId,
-    WatchListPage, WatchResource, WatchSchedule, WatchState, WatchTransitionEntry,
-    WatchTransitionPage, WebhookNotification,
+    ConsentSubjectKind, ContributorDeletionCreateRequest, DefinitiveVerdict,
+    DeletionReceiptResource, DeletionReceiptState, DeletionRequestId, DeletionRequestResource,
+    DeletionRequestState, DeletionScope, DeletionStoreKind, DeletionStoreReceipt,
+    DeletionStoreState, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
+    EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
+    EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
+    EvidenceTransportOutcome, EvidenceVantage, InstallationId, NotificationChannel,
+    NotificationDelivery, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
+    ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion,
+    RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent, SearchEventData,
+    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason,
+    SyncPolicy, Target, TargetSelection, Transition, TransitionChange, TransitionConfirmation,
+    TransitionId, Username, Validate, WatchCreateRequest, WatchId, WatchListPage, WatchResource,
+    WatchSchedule, WatchState, WatchTransitionEntry, WatchTransitionPage, WebhookNotification,
 };
 
 fn target() -> Target {
@@ -100,6 +101,74 @@ fn contributor_deletion_has_one_selector_free_v1_wire_shape() {
             "hidden_resources": 5,
             "support_withdrawn_at_unix_ms": null,
             "primary_completed_at_unix_ms": null,
+            "completed_at_unix_ms": null
+        })
+    );
+}
+
+#[test]
+fn deletion_receipt_has_one_store_complete_v1_wire_shape() {
+    let receipt = DeletionReceiptResource {
+        schema: ProtocolVersion::ApiV1,
+        deletion_request_id: DeletionRequestId::new("deletion_01").unwrap(),
+        state: DeletionReceiptState::Pending,
+        evaluated_at_unix_ms: 2_000,
+        stores: vec![
+            DeletionStoreReceipt {
+                store: DeletionStoreKind::Primary,
+                state: DeletionStoreState::Completed,
+                deadline_at_unix_ms: 1_500,
+                completed_at_unix_ms: Some(1_800),
+            },
+            DeletionStoreReceipt {
+                store: DeletionStoreKind::Derived,
+                state: DeletionStoreState::Completed,
+                deadline_at_unix_ms: 3_000,
+                completed_at_unix_ms: Some(1_800),
+            },
+            DeletionStoreReceipt {
+                store: DeletionStoreKind::Backup,
+                state: DeletionStoreState::Pending,
+                deadline_at_unix_ms: 5_000,
+                completed_at_unix_ms: None,
+            },
+        ],
+        primary_completed_at_unix_ms: Some(1_800),
+        backup_expiry_by_unix_ms: 5_000,
+        remaining_backup_expiry_ms: 3_000,
+        completed_at_unix_ms: None,
+    };
+    assert!(receipt.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(receipt).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "deletion_request_id": "deletion_01",
+            "state": "pending",
+            "evaluated_at_unix_ms": 2_000,
+            "stores": [
+                {
+                    "store": "primary",
+                    "state": "completed",
+                    "deadline_at_unix_ms": 1_500,
+                    "completed_at_unix_ms": 1_800
+                },
+                {
+                    "store": "derived",
+                    "state": "completed",
+                    "deadline_at_unix_ms": 3_000,
+                    "completed_at_unix_ms": 1_800
+                },
+                {
+                    "store": "backup",
+                    "state": "pending",
+                    "deadline_at_unix_ms": 5_000,
+                    "completed_at_unix_ms": null
+                }
+            ],
+            "primary_completed_at_unix_ms": 1_800,
+            "backup_expiry_by_unix_ms": 5_000,
+            "remaining_backup_expiry_ms": 3_000,
             "completed_at_unix_ms": null
         })
     );

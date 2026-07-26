@@ -248,7 +248,8 @@ impl DeletionStore {
              SET state = 'completed', attempt_count = attempt_count + 1, \
                  completed_at = clock_timestamp(), last_error_code = NULL \
              WHERE tenant_id = $1 AND deletion_request_id = $2 \
-               AND store_kind = 'primary' AND state <> 'completed'",
+               AND store_kind IN ('primary', 'analytics') \
+               AND state <> 'completed'",
         )
         .bind(claimed.tenant_id)
         .bind(claimed.deletion_request_id)
@@ -257,7 +258,11 @@ impl DeletionStore {
         .map_err(|_| DeletionError::StorageInvariant)?;
         sqlx::query(
             "UPDATE deletion_requests \
-             SET state = 'rebuilding', primary_completed_at = clock_timestamp(), \
+             SET state = 'rebuilding', primary_completed_at = (\
+                    SELECT completed_at FROM deletion_tasks \
+                    WHERE tenant_id = $1 AND deletion_request_id = $2 \
+                      AND store_kind = 'primary'\
+                 ), \
                  lease_owner = NULL, lease_expires_at = NULL, last_error_code = NULL \
              WHERE tenant_id = $1 AND id = $2 AND state = 'deleting'",
         )
@@ -271,7 +276,8 @@ impl DeletionStore {
                 id, tenant_id, action, resource_kind, resource_id, \
                 occurred_at, details\
              ) VALUES (\
-                $1, $2, 'deletion.primary.completed', 'deletion_request', $3, \
+                $1, $2, 'deletion.primary_and_derived.completed', \
+                'deletion_request', $3, \
                 clock_timestamp(), jsonb_build_object(\
                     'processing_attempt', $4::integer, \
                     'matched_resources', $5::bigint\

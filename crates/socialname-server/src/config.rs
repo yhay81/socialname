@@ -3,6 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::Duration,
 };
+use uuid::Uuid;
 
 const DEFAULT_BIND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8_080);
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
@@ -20,6 +21,7 @@ pub const REQUEST_TIMEOUT_ENV: &str = "SOCIALNAME_SERVER_REQUEST_TIMEOUT_MS";
 pub const MAXIMUM_BODY_BYTES_ENV: &str = "SOCIALNAME_SERVER_MAXIMUM_BODY_BYTES";
 pub const MAXIMUM_IN_FLIGHT_ENV: &str = "SOCIALNAME_SERVER_MAXIMUM_IN_FLIGHT";
 pub const SUPPRESSION_HMAC_KEY_ENV: &str = "SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX";
+pub const EXPECTED_RESTORE_LEDGER_ID_ENV: &str = "SOCIALNAME_EXPECTED_RESTORE_LEDGER_ID";
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct SuppressionHmacKey([u8; 32]);
@@ -70,6 +72,7 @@ pub struct ServerConfig {
     maximum_body_bytes: usize,
     maximum_in_flight: usize,
     suppression_hmac_key: Option<SuppressionHmacKey>,
+    expected_restore_ledger_id: Option<Uuid>,
 }
 
 impl Default for ServerConfig {
@@ -80,6 +83,7 @@ impl Default for ServerConfig {
             maximum_body_bytes: DEFAULT_MAXIMUM_BODY_BYTES,
             maximum_in_flight: DEFAULT_MAXIMUM_IN_FLIGHT,
             suppression_hmac_key: None,
+            expected_restore_ledger_id: None,
         }
     }
 }
@@ -128,6 +132,7 @@ impl ServerConfig {
             maximum_body_bytes,
             maximum_in_flight,
             suppression_hmac_key: None,
+            expected_restore_ledger_id: None,
         })
     }
 
@@ -182,6 +187,13 @@ impl ServerConfig {
             )
         })?;
         config.suppression_hmac_key = Some(SuppressionHmacKey::from_hex(&key)?);
+        config.expected_restore_ledger_id = lookup(EXPECTED_RESTORE_LEDGER_ID_ENV)?
+            .map(|value| {
+                Uuid::parse_str(&value).map_err(|_| {
+                    ConfigError::new(EXPECTED_RESTORE_LEDGER_ID_ENV, "must be a canonical UUID")
+                })
+            })
+            .transpose()?;
         Ok(config)
     }
 
@@ -211,8 +223,19 @@ impl ServerConfig {
     }
 
     #[must_use]
+    pub const fn expected_restore_ledger_id(&self) -> Option<Uuid> {
+        self.expected_restore_ledger_id
+    }
+
+    #[must_use]
     pub fn with_suppression_hmac_key(mut self, key: SuppressionHmacKey) -> Self {
         self.suppression_hmac_key = Some(key);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_expected_restore_ledger_id(mut self, id: Uuid) -> Self {
+        self.expected_restore_ledger_id = Some(id);
         self
     }
 }
@@ -300,6 +323,30 @@ mod tests {
         assert!(!invalid.to_string().contains(secret));
         let key = SuppressionHmacKey::from_hex(&"33".repeat(32)).unwrap();
         assert!(!format!("{key:?}").contains(&"33".repeat(32)));
+    }
+
+    #[test]
+    fn restore_ledger_id_is_optional_but_strict_when_present() {
+        let expected = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
+        let config = ServerConfig::from_lookup(|name| {
+            Ok(match name {
+                SUPPRESSION_HMAC_KEY_ENV => Some("44".repeat(32)),
+                EXPECTED_RESTORE_LEDGER_ID_ENV => Some(expected.to_string()),
+                _ => None,
+            })
+        })
+        .unwrap();
+        assert_eq!(config.expected_restore_ledger_id(), Some(expected));
+        let invalid = ServerConfig::from_lookup(|name| {
+            Ok(match name {
+                SUPPRESSION_HMAC_KEY_ENV => Some("44".repeat(32)),
+                EXPECTED_RESTORE_LEDGER_ID_ENV => Some("private-invalid-value".to_owned()),
+                _ => None,
+            })
+        })
+        .unwrap_err();
+        assert!(invalid.to_string().contains(EXPECTED_RESTORE_LEDGER_ID_ENV));
+        assert!(!invalid.to_string().contains("private-invalid-value"));
     }
 
     #[test]

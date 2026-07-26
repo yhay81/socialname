@@ -29,8 +29,9 @@ pub use consent::{
     ConsentSubjectKind, ConsentWithdrawalRequest, MAX_CONSENT_PAGE_ITEMS,
 };
 pub use deletion::{
-    ContributorDeletionCreateRequest, DeletionRequestResource, DeletionRequestState, DeletionScope,
-    MAXIMUM_DELETION_MATCH_COUNT,
+    ContributorDeletionCreateRequest, DeletionReceiptResource, DeletionReceiptState,
+    DeletionRequestResource, DeletionRequestState, DeletionScope, DeletionStoreKind,
+    DeletionStoreReceipt, DeletionStoreState, MAXIMUM_DELETION_MATCH_COUNT,
 };
 pub use error::{ApiError, ApiErrorCode, ApiErrorResponse, FieldViolation};
 pub use evidence::{

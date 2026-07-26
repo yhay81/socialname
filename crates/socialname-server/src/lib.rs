@@ -6,6 +6,7 @@ mod config;
 mod consent;
 mod database;
 mod deletion;
+mod deletion_operator;
 mod evidence;
 mod monitoring;
 mod rule_registry_operator;
@@ -48,12 +49,19 @@ use tower::{ServiceBuilder, limit::ConcurrencyLimitLayer};
 use tracing::Instrument;
 
 pub use config::{
-    BIND_ENV, ConfigError, MAXIMUM_BODY_BYTES_ENV, MAXIMUM_IN_FLIGHT_ENV, REQUEST_TIMEOUT_ENV,
-    SUPPRESSION_HMAC_KEY_ENV, ServerConfig, SuppressionHmacKey,
+    BIND_ENV, ConfigError, EXPECTED_RESTORE_LEDGER_ID_ENV, MAXIMUM_BODY_BYTES_ENV,
+    MAXIMUM_IN_FLIGHT_ENV, REQUEST_TIMEOUT_ENV, SUPPRESSION_HMAC_KEY_ENV, ServerConfig,
+    SuppressionHmacKey,
 };
 pub use database::{
     DATABASE_URL_ENV, DatabaseError, MIGRATOR, RUNTIME_DATABASE_URL_ENV,
     connect_runtime_database_from_env, migrate_database, migrate_database_from_env,
+};
+pub use deletion_operator::{
+    BackupExpiryVerificationInput, BackupExpiryVerificationOutput, DeletionOperatorError,
+    RestoreLedgerArtifact, RestoreLedgerEntry, RestoreLedgerPayload, RestoreLedgerReplayOutput,
+    export_restore_ledger, export_restore_ledger_from_env, replay_restore_ledger,
+    replay_restore_ledger_from_env, verify_backup_expiry, verify_backup_expiry_from_env,
 };
 pub use rule_registry_operator::{
     AppliedRulePack, AppliedRulePackOutput, INITIAL_RULE_TRUST_FILE_ENV, INITIAL_RULE_TRUST_ID_ENV,
@@ -245,6 +253,10 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             "/v1/deletion-requests/{deletion_request_id}",
             get(deletion::get_deletion_request),
         )
+        .route(
+            "/v1/deletion-requests/{deletion_request_id}/receipt",
+            get(deletion::get_deletion_receipt),
+        )
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
@@ -306,12 +318,23 @@ async fn live() -> Json<HealthResponse> {
 
 async fn ready(State(state): State<ServerState>) -> Response {
     let database_timeout = (state.config.request_timeout() / 2).min(Duration::from_secs(1));
-    let available = tokio::time::timeout(
-        database_timeout,
-        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&state.database),
-    )
-    .await
-    .is_ok_and(|result| matches!(result, Ok(1)));
+    let available = if let Some(restore_run_id) = state.config.expected_restore_ledger_id() {
+        tokio::time::timeout(
+            database_timeout,
+            sqlx::query_scalar::<_, bool>("SELECT socialname_restore_ledger_ready($1)")
+                .bind(restore_run_id)
+                .fetch_one(&state.database),
+        )
+        .await
+        .is_ok_and(|result| matches!(result, Ok(true)))
+    } else {
+        tokio::time::timeout(
+            database_timeout,
+            sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&state.database),
+        )
+        .await
+        .is_ok_and(|result| matches!(result, Ok(1)))
+    };
     let status = if available {
         StatusCode::OK
     } else {

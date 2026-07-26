@@ -1,0 +1,51 @@
+name: Daily deletion drill
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-deletion-drill
+  cancel-in-progress: false
+
+jobs:
+  delete-through:
+    name: PostgreSQL 18 delete-through and restore replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SOCIALNAME_DATABASE_URL: postgres://postgres:postgres@localhost:5432/socialname_test
+      SOCIALNAME_TEST_APPLICATION_DATABASE_URL: postgres://socialname_migration_test_app:socialname-test-password@localhost:5432/socialname_test
+      SOCIALNAME_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/socialname_test
+      SOCIALNAME_TEST_WORKER_DATABASE_URL: postgres://socialname_migration_test_worker:socialname-worker-test-password@localhost:5432/socialname_test
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: socialname_test
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d socialname_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run bounded deletion and restore drill
+        run: >-
+          cargo test --locked -p socialname-server
+          --test postgres_migrations
+          initial_migration_enforces_tenant_evidence_and_deletion_boundaries
+          -- --exact

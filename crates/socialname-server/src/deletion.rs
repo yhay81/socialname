@@ -7,9 +7,10 @@ use axum::{
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use socialname_protocol::{
-    ApiErrorCode, ApiKeyScope, ContributorDeletionCreateRequest, DeletionRequestId,
-    DeletionRequestResource, DeletionRequestState, DeletionScope, RequestId, Validate,
-    ValidationCode, ValidationErrors,
+    ApiErrorCode, ApiKeyScope, ContributorDeletionCreateRequest, DeletionReceiptResource,
+    DeletionReceiptState, DeletionRequestId, DeletionRequestResource, DeletionRequestState,
+    DeletionScope, DeletionStoreKind, DeletionStoreReceipt, DeletionStoreState, RequestId,
+    Validate, ValidationCode, ValidationErrors,
 };
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -103,6 +104,27 @@ pub(crate) async fn get_deletion_request(
         }
     };
     match load_deletion_request(&state.database, &principal, deletion_request_id).await {
+        Ok(resource) => Json(resource).into_response(),
+        Err(error) => error_response(request_id, error),
+    }
+}
+
+pub(crate) async fn get_deletion_receipt(
+    State(state): State<ServerState>,
+    Extension(request_id): Extension<RequestId>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
+    Path(deletion_request_id): Path<String>,
+) -> Response {
+    let deletion_request_id = match Uuid::parse_str(&deletion_request_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return error_response(
+                request_id,
+                DeletionError::InvalidRequest("deletion_request_id", ValidationCode::InvalidFormat),
+            );
+        }
+    };
+    match load_deletion_receipt(&state.database, &principal, deletion_request_id).await {
         Ok(resource) => Json(resource).into_response(),
         Err(error) => error_response(request_id, error),
     }
@@ -559,6 +581,100 @@ async fn load_deletion_request(
     Ok(resource)
 }
 
+async fn load_deletion_receipt(
+    pool: &PgPool,
+    principal: &AuthenticatedPrincipal,
+    deletion_request_id: Uuid,
+) -> Result<DeletionReceiptResource, DeletionError> {
+    let mut transaction =
+        auth::begin_authorized_transaction(pool, principal, ApiKeyScope::DataDelete).await?;
+    let request: Option<StoredReceiptRequest> = sqlx::query_as(
+        "SELECT request.id, request.state, \
+                (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint \
+                    AS evaluated_at_unix_ms, \
+                (EXTRACT(EPOCH FROM request.backup_expiry_by) * 1000)::bigint \
+                    AS backup_expiry_by_unix_ms, \
+                (EXTRACT(EPOCH FROM request.primary_completed_at) * 1000)::bigint \
+                    AS primary_completed_at_unix_ms, \
+                (EXTRACT(EPOCH FROM request.completed_at) * 1000)::bigint \
+                    AS completed_at_unix_ms, \
+                EXISTS (\
+                    SELECT 1 FROM deletion_receipts AS receipt \
+                    WHERE receipt.tenant_id = request.tenant_id \
+                      AND receipt.deletion_request_id = request.id\
+                ) AS receipt_exists \
+         FROM deletion_requests AS request \
+         WHERE request.tenant_id = $1 AND request.id = $2 \
+           AND request.requested_by_membership_id = $3 \
+           AND request.request_origin = 'contributor_api'",
+    )
+    .bind(principal.workspace_id)
+    .bind(deletion_request_id)
+    .bind(principal.membership_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| DeletionError::Unavailable)?;
+    let request = request.ok_or(DeletionError::NotFound)?;
+    let tasks: Vec<StoredReceiptTask> = sqlx::query_as(
+        "SELECT store_kind, state, \
+                (EXTRACT(EPOCH FROM deadline_at) * 1000)::bigint \
+                    AS deadline_at_unix_ms, \
+                (EXTRACT(EPOCH FROM completed_at) * 1000)::bigint \
+                    AS completed_at_unix_ms \
+         FROM deletion_tasks \
+         WHERE tenant_id = $1 AND deletion_request_id = $2 \
+           AND store_kind IN ('primary', 'analytics', 'backup') \
+         ORDER BY CASE store_kind \
+            WHEN 'primary' THEN 1 WHEN 'analytics' THEN 2 ELSE 3 END",
+    )
+    .bind(principal.workspace_id)
+    .bind(deletion_request_id)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| DeletionError::Unavailable)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| DeletionError::Unavailable)?;
+
+    if tasks.len() != 3 || (request.state == "completed" && !request.receipt_exists) {
+        return Err(DeletionError::Unavailable);
+    }
+    let stores: Vec<DeletionStoreReceipt> = tasks
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect::<Result<_, _>>()?;
+    let state = if request.state == "completed" {
+        DeletionReceiptState::Completed
+    } else if stores
+        .iter()
+        .any(|store| store.state == DeletionStoreState::Failed)
+    {
+        DeletionReceiptState::Failed
+    } else {
+        DeletionReceiptState::Pending
+    };
+    let resource = DeletionReceiptResource {
+        schema: socialname_protocol::ProtocolVersion::ApiV1,
+        deletion_request_id: DeletionRequestId::new(request.id.to_string())
+            .map_err(|_| DeletionError::Unavailable)?,
+        state,
+        evaluated_at_unix_ms: request.evaluated_at_unix_ms,
+        stores,
+        primary_completed_at_unix_ms: request.primary_completed_at_unix_ms,
+        backup_expiry_by_unix_ms: request.backup_expiry_by_unix_ms,
+        remaining_backup_expiry_ms: request
+            .backup_expiry_by_unix_ms
+            .saturating_sub(request.evaluated_at_unix_ms)
+            .max(0),
+        completed_at_unix_ms: request.completed_at_unix_ms,
+    };
+    resource
+        .validate()
+        .map_err(|_| DeletionError::Unavailable)?;
+    Ok(resource)
+}
+
 async fn load_owned_resource(
     transaction: &mut Transaction<'_, Postgres>,
     principal: &AuthenticatedPrincipal,
@@ -727,6 +843,52 @@ struct StoredDeletionRequest {
     support_withdrawn_at_unix_ms: Option<i64>,
     primary_completed_at_unix_ms: Option<i64>,
     completed_at_unix_ms: Option<i64>,
+}
+
+#[derive(FromRow)]
+struct StoredReceiptRequest {
+    id: Uuid,
+    state: String,
+    evaluated_at_unix_ms: i64,
+    backup_expiry_by_unix_ms: i64,
+    primary_completed_at_unix_ms: Option<i64>,
+    completed_at_unix_ms: Option<i64>,
+    receipt_exists: bool,
+}
+
+#[derive(FromRow)]
+struct StoredReceiptTask {
+    store_kind: String,
+    state: String,
+    deadline_at_unix_ms: i64,
+    completed_at_unix_ms: Option<i64>,
+}
+
+impl TryFrom<StoredReceiptTask> for DeletionStoreReceipt {
+    type Error = DeletionError;
+
+    fn try_from(stored: StoredReceiptTask) -> Result<Self, Self::Error> {
+        let receipt = Self {
+            store: match stored.store_kind.as_str() {
+                "primary" => DeletionStoreKind::Primary,
+                "analytics" => DeletionStoreKind::Derived,
+                "backup" => DeletionStoreKind::Backup,
+                _ => return Err(DeletionError::Unavailable),
+            },
+            state: match stored.state.as_str() {
+                "pending" => DeletionStoreState::Pending,
+                "running" => DeletionStoreState::Running,
+                "retry_wait" => DeletionStoreState::RetryWait,
+                "completed" => DeletionStoreState::Completed,
+                "failed" => DeletionStoreState::Failed,
+                _ => return Err(DeletionError::Unavailable),
+            },
+            deadline_at_unix_ms: stored.deadline_at_unix_ms,
+            completed_at_unix_ms: stored.completed_at_unix_ms,
+        };
+        receipt.validate().map_err(|_| DeletionError::Unavailable)?;
+        Ok(receipt)
+    }
 }
 
 impl TryFrom<StoredDeletionRequest> for DeletionRequestResource {

@@ -4,11 +4,11 @@ use schemars::{Schema, schema_for};
 
 use crate::{
     ApiErrorResponse, ConsentGrantCreateRequest, ConsentGrantListPage, ConsentGrantResource,
-    ConsentWithdrawalRequest, ContributorDeletionCreateRequest, DeletionRequestResource,
-    EvidenceCapsuleResource, NotificationDelivery, NotificationEndpointCreateRequest,
-    NotificationEndpointResource, SearchCreateRequest, SearchEvent, SearchResource, Transition,
-    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchTransitionPage,
-    WebhookNotification, WorkspaceResource,
+    ConsentWithdrawalRequest, ContributorDeletionCreateRequest, DeletionReceiptResource,
+    DeletionRequestResource, EvidenceCapsuleResource, NotificationDelivery,
+    NotificationEndpointCreateRequest, NotificationEndpointResource, SearchCreateRequest,
+    SearchEvent, SearchResource, Transition, WatchCreateRequest, WatchListPage, WatchPatchRequest,
+    WatchResource, WatchTransitionPage, WebhookNotification, WorkspaceResource,
 };
 
 #[must_use]
@@ -36,6 +36,10 @@ pub fn api_v1_schemas() -> BTreeMap<&'static str, Schema> {
         (
             "deletion_request_resource",
             schema_for!(DeletionRequestResource),
+        ),
+        (
+            "deletion_receipt_resource",
+            schema_for!(DeletionReceiptResource),
         ),
         ("notification_delivery", schema_for!(NotificationDelivery)),
         (
@@ -76,6 +80,7 @@ mod tests {
                 "consent_grant_resource",
                 "consent_withdrawal_request",
                 "contributor_deletion_create_request",
+                "deletion_receipt_resource",
                 "deletion_request_resource",
                 "evidence_capsule_resource",
                 "notification_delivery",

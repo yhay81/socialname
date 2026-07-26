@@ -33,22 +33,24 @@ use socialname_protocol::{
     ConsentGrantId, ConsentGrantListPage, ConsentGrantResource, ConsentGrantState,
     ConsentNoticeVersion, ConsentPurpose, ConsentSource, ConsentSubjectKind,
     ConsentWithdrawalRequest, ContributorDeletionCreateRequest, DefinitiveVerdict,
-    DeletionRequestResource, DeletionRequestState, EventId, EvidenceCapsuleId,
-    EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
-    EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
-    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
-    NotificationEndpointId, OperationalFailure, OperationalFailureKind, ProbeBudget,
-    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent,
-    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState,
-    SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection, Username, Validate,
-    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchSchedule, WatchState,
-    WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
+    DeletionReceiptResource, DeletionReceiptState, DeletionRequestResource, DeletionRequestState,
+    DeletionStoreKind, DeletionStoreState, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
+    EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
+    EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
+    EvidenceTransportOutcome, EvidenceVantage, InstallationId, NotificationEndpointId,
+    OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass,
+    ResultSource, RuleHash, SearchCreateRequest, SearchEvent, SearchEventData, SearchId,
+    SearchMode, SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId,
+    SyncPolicy, Target, TargetSelection, Username, Validate, WatchCreateRequest, WatchListPage,
+    WatchPatchRequest, WatchResource, WatchSchedule, WatchState, WatchStateUpdate,
+    WatchTransitionPage, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
-    InitialRulePackTrust, RuleRegistryError, ServerConfig, TargetDeletionSelector,
-    VerifiedTargetDeletionInput, apply_rule_pack_metadata, build_router, migrate_database,
-    request_verified_target_deletion,
+    BackupExpiryVerificationInput, InitialRulePackTrust, RuleRegistryError, ServerConfig,
+    TargetDeletionSelector, VerifiedTargetDeletionInput, apply_rule_pack_metadata, build_router,
+    export_restore_ledger, migrate_database, replay_restore_ledger,
+    request_verified_target_deletion, verify_backup_expiry,
 };
 use socialname_worker::{
     DeletionProcessOutcome, DeletionStore, DeliveryError, DeliveryProcessConfig,
@@ -118,7 +120,9 @@ async fn reset_test_state(pool: &PgPool) {
             notification_delivery_attempts, audit_events,
             data_lineage_edges, deletion_requests, deletion_tasks,
             deletion_receipts, suppression_tokens, evidence_capsules,
-            evidence_retention_receipts, deletion_resource_matches
+            evidence_retention_receipts, deletion_resource_matches,
+            deletion_backup_verifications, deletion_restore_request_links,
+            deletion_restore_runs
         CASCADE;
 
         DO $$
@@ -175,7 +179,9 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('audit_events'), ('data_lineage_edges'),
                 ('deletion_requests'), ('deletion_tasks'), ('deletion_receipts'),
                 ('suppression_tokens'), ('evidence_capsules'),
-                ('evidence_retention_receipts'), ('deletion_resource_matches')
+                ('evidence_retention_receipts'), ('deletion_resource_matches'),
+                ('deletion_backup_verifications'), ('deletion_restore_runs'),
+                ('deletion_restore_request_links')
         )
         SELECT count(*)
         FROM required
@@ -185,7 +191,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 45);
+    assert_eq!(required_tables, 48);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -194,7 +200,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 35);
+    assert_eq!(tenant_policies, 36);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -204,7 +210,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 35);
+    assert_eq!(forced_rls_tables, 36);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -632,7 +638,8 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             notification_endpoints, watch_runs, watch_run_targets,
             transitions, transition_basis, notification_deliveries,
             rule_versions, evidence_capsules, suppression_tokens,
-            deletion_requests, deletion_resource_matches, observations,
+            deletion_requests, deletion_tasks, deletion_receipts,
+            deletion_resource_matches, observations,
             data_lineage_edges, probe_jobs, probe_job_consumers
             TO socialname_migration_test_app;
         GRANT INSERT ON
@@ -668,6 +675,8 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION
             socialname_redact_deletion_job_targets(uuid, uuid)
+            TO socialname_migration_test_app;
+        GRANT EXECUTE ON FUNCTION socialname_restore_ledger_ready(uuid)
             TO socialname_migration_test_app;
         "#,
     ))
@@ -4842,7 +4851,8 @@ async fn assert_lineage_backed_deletion_boundary(administrator_pool: &PgPool) {
                AND support.observation_id = $2), \
             (SELECT count(*) FROM deletion_tasks \
              WHERE tenant_id = $4 AND deletion_request_id = $3 \
-               AND store_kind = 'primary' AND state = 'completed')",
+               AND store_kind IN ('primary', 'analytics') \
+               AND state = 'completed')",
     )
     .bind(deleted_observation)
     .bind(retained_observation)
@@ -4853,7 +4863,25 @@ async fn assert_lineage_backed_deletion_boundary(administrator_pool: &PgPool) {
     .unwrap();
     assert_eq!(
         contributor_result,
-        (false, true, "rebuilding".to_owned(), 1, 1, 1)
+        (false, true, "rebuilding".to_owned(), 1, 1, 2)
+    );
+    let pending_receipt = server_request(
+        &application_pool,
+        &format!("{location}/receipt"),
+        Some(&owner_token),
+    )
+    .await;
+    assert_eq!(pending_receipt.status(), StatusCode::OK);
+    let pending_receipt: DeletionReceiptResource =
+        serde_json::from_value(json_body(pending_receipt).await).unwrap();
+    assert!(pending_receipt.validate().is_ok());
+    assert_eq!(pending_receipt.state, DeletionReceiptState::Pending);
+    assert!(
+        pending_receipt.remaining_backup_expiry_ms > 0
+            && pending_receipt.stores.iter().any(|store| {
+                store.store == DeletionStoreKind::Derived
+                    && store.state == DeletionStoreState::Completed
+            })
     );
     assert_eq!(
         deletion_store
@@ -5032,6 +5060,250 @@ async fn assert_lineage_backed_deletion_boundary(administrator_pool: &PgPool) {
         target_output.deletion_request_ids
     );
     assert_eq!(replayed_after_purge.matched_observations, 1);
+
+    let backup_request_id = Uuid::new_v4();
+    sqlx::query(
+        "WITH moment AS (SELECT clock_timestamp() - interval '40 days' AS requested) \
+         INSERT INTO deletion_requests (\
+            id, tenant_id, scope_kind, selector_token, state, requested_at, hide_by, \
+            support_withdrawal_by, primary_delete_by, derived_rebuild_by, \
+            backup_expiry_by, support_withdrawn_at, primary_completed_at, \
+            request_origin, request_group_id, verification_reference_digest\
+         ) SELECT $1, $2, 'target', $3, 'rebuilding', requested, \
+                  requested + interval '5 minutes', requested + interval '1 hour', \
+                  requested + interval '24 hours', requested + interval '7 days', \
+                  requested + interval '35 days', requested + interval '1 hour', \
+                  requested + interval '2 days', 'restore_ledger', $4, $5 \
+           FROM moment",
+    )
+    .bind(backup_request_id)
+    .bind(tenant_one)
+    .bind([0x77_u8; 32].as_slice())
+    .bind(Uuid::new_v4())
+    .bind([0x78_u8; 32].as_slice())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    for (store, deadline_days, completed_days) in [
+        ("primary", 39_i32, Some(38_i32)),
+        ("analytics", 33_i32, Some(33_i32)),
+        ("backup", 5_i32, None),
+    ] {
+        sqlx::query(
+            "INSERT INTO deletion_tasks (\
+                id, tenant_id, deletion_request_id, store_kind, state, \
+                deadline_at, attempt_count, available_at, completed_at\
+             ) VALUES (\
+                $1, $2, $3, $4, CASE WHEN $5::integer IS NULL \
+                    THEN 'pending' ELSE 'completed' END, \
+                clock_timestamp() - make_interval(days => $6), \
+                CASE WHEN $5::integer IS NULL THEN 0 ELSE 1 END, \
+                clock_timestamp() - interval '40 days', \
+                CASE WHEN $5::integer IS NULL THEN NULL \
+                     ELSE clock_timestamp() - make_interval(days => $5) END\
+             )",
+        )
+        .bind(Uuid::new_v4())
+        .bind(tenant_one)
+        .bind(backup_request_id)
+        .bind(store)
+        .bind(completed_days)
+        .bind(deadline_days)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    }
+    let premature_inventory = BackupExpiryVerificationInput {
+        schema: "socialname.dev/backup-expiry-verification/v1".to_owned(),
+        tenant_id: tenant_one,
+        deletion_request_id: backup_request_id,
+        verification_reference: "backup-case-premature-inventory".to_owned(),
+        inventory_evidence_reference: "inventory-digest-reference-1".to_owned(),
+        oldest_restorable_at_unix_ms: Some(current_unix_ms() - 39_i64 * 24 * 60 * 60 * 1_000),
+    };
+    assert!(
+        verify_backup_expiry(administrator_pool, premature_inventory)
+            .await
+            .is_err()
+    );
+    let verified_backup = BackupExpiryVerificationInput {
+        schema: "socialname.dev/backup-expiry-verification/v1".to_owned(),
+        tenant_id: tenant_one,
+        deletion_request_id: backup_request_id,
+        verification_reference: "backup-case-verified".to_owned(),
+        inventory_evidence_reference: "inventory-digest-reference-2".to_owned(),
+        oldest_restorable_at_unix_ms: None,
+    };
+    let backup_output = verify_backup_expiry(administrator_pool, verified_backup.clone())
+        .await
+        .unwrap();
+    assert!(!backup_output.exact_replay);
+    let backup_replay = verify_backup_expiry(administrator_pool, verified_backup.clone())
+        .await
+        .unwrap();
+    assert!(backup_replay.exact_replay);
+    let mut conflicting_backup = verified_backup;
+    conflicting_backup.inventory_evidence_reference =
+        "different-inventory-digest-reference".to_owned();
+    assert!(
+        verify_backup_expiry(administrator_pool, conflicting_backup)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM deletion_receipts AS receipt \
+             JOIN deletion_requests AS request \
+               ON request.tenant_id = receipt.tenant_id \
+              AND request.id = receipt.deletion_request_id \
+             WHERE receipt.deletion_request_id = $1 \
+               AND request.state = 'completed' \
+               AND (receipt.stores -> 'backup' ->> 'state') = 'completed'",
+        )
+        .bind(backup_request_id)
+        .fetch_one(administrator_pool)
+        .await
+        .unwrap(),
+        1
+    );
+
+    let restored_job = Uuid::new_v4();
+    let restored_observation = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO probe_jobs (\
+            id, tenant_id, normalized_username, site_id, rule_version_id, \
+            region_class, work_key_hash, consent_grant_id, visibility, state, \
+            available_at, created_at, updated_at, completed_at\
+         ) VALUES (\
+            $1, $2, 'verified-target-alias', 'github', $3, 'jp', $4, $5, \
+            'shared', 'succeeded', clock_timestamp(), clock_timestamp(), \
+            clock_timestamp(), clock_timestamp()\
+         )",
+    )
+    .bind(restored_job)
+    .bind(tenant_two)
+    .bind(rule_version_id)
+    .bind([0xb1_u8; 32].as_slice())
+    .bind(target_grant)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO observations (\
+            id, tenant_id, probe_job_id, consent_grant_id, normalized_username, \
+            site_id, rule_version_id, outcome_kind, verdict, evidence_class, \
+            evidence_digest, source, producer_kind, visibility, region_class, \
+            rule_health_green, observed_at, expires_at, created_at\
+         ) VALUES (\
+            $1, $2, $3, $4, 'verified-target-alias', 'github', $5, \
+            'definitive', 'found', 'e4_structured_identity', $6, \
+            'managed_probe', 'managed_worker', 'shared', 'jp', true, \
+            clock_timestamp(), clock_timestamp() + interval '1 day', \
+            clock_timestamp()\
+         )",
+    )
+    .bind(restored_observation)
+    .bind(tenant_two)
+    .bind(restored_job)
+    .bind(target_grant)
+    .bind(rule_version_id)
+    .bind([0xb2_u8; 32].as_slice())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let incompatible_restore_token = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO suppression_tokens (\
+            id, tenant_id, purpose, token_hmac, key_fingerprint, \
+            created_at, expires_at\
+         ) VALUES (\
+            $1, $2, 'target_reingestion', $3, $4, \
+            clock_timestamp(), clock_timestamp() + interval '1 day'\
+         )",
+    )
+    .bind(incompatible_restore_token)
+    .bind(tenant_two)
+    .bind([0xc1_u8; 32].as_slice())
+    .bind([0xc2_u8; 32].as_slice())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    assert!(
+        export_restore_ledger(administrator_pool, &[0x11; 32])
+            .await
+            .is_err()
+    );
+    sqlx::query("DELETE FROM suppression_tokens WHERE id = $1")
+        .bind(incompatible_restore_token)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    let restore_artifact = export_restore_ledger(administrator_pool, &[0x11; 32])
+        .await
+        .unwrap();
+    let restore_json = serde_json::to_string(&restore_artifact).unwrap();
+    assert!(!restore_json.contains("verified-target-alias"));
+    let restore_output =
+        replay_restore_ledger(administrator_pool, &[0x11; 32], restore_artifact.clone())
+            .await
+            .unwrap();
+    assert!(!restore_output.exact_replay);
+    assert!(restore_output.matched_observations >= 1);
+    assert!(restore_output.deletion_requests >= 1);
+    assert!(
+        replay_restore_ledger(administrator_pool, &[0x11; 32], restore_artifact)
+            .await
+            .unwrap()
+            .exact_replay
+    );
+    let restore_hidden: (bool, bool) = sqlx::query_as(
+        "SELECT \
+            EXISTS(SELECT 1 FROM observations WHERE id = $1), \
+            EXISTS(\
+                SELECT 1 FROM deletion_resource_matches AS matched \
+                JOIN deletion_restore_request_links AS link \
+                  ON link.tenant_id = matched.tenant_id \
+                 AND link.deletion_request_id = matched.deletion_request_id \
+                WHERE link.restore_run_id = $2 \
+                  AND matched.resource_kind = 'observation' \
+                  AND matched.resource_id = $1\
+            )",
+    )
+    .bind(restored_observation)
+    .bind(restore_output.ledger_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(restore_hidden, (true, true));
+    let restore_ready = build_router(
+        test_server_config().with_expected_restore_ledger_id(restore_output.ledger_id),
+        application_pool.clone(),
+    )
+    .oneshot(
+        Request::builder()
+            .uri("/health/ready")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(restore_ready.status(), StatusCode::OK);
+    let missing_restore_ready = build_router(
+        test_server_config().with_expected_restore_ledger_id(Uuid::new_v4()),
+        application_pool.clone(),
+    )
+    .oneshot(
+        Request::builder()
+            .uri("/health/ready")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        missing_restore_ready.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
 
     deletion_store.close().await;
     application_pool.close().await;

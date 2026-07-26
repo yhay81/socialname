@@ -38,6 +38,159 @@ pub enum DeletionRequestState {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeletionStoreKind {
+    Primary,
+    Derived,
+    Backup,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeletionStoreState {
+    Pending,
+    Running,
+    RetryWait,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeletionStoreReceipt {
+    pub store: DeletionStoreKind,
+    pub state: DeletionStoreState,
+    pub deadline_at_unix_ms: i64,
+    pub completed_at_unix_ms: Option<i64>,
+}
+
+impl Validate for DeletionStoreReceipt {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        if self.deadline_at_unix_ms < 0 {
+            return Err(ValidationErrors::new(
+                "deadline_at_unix_ms",
+                ValidationCode::OutOfRange,
+            ));
+        }
+        if (self.state == DeletionStoreState::Completed) != self.completed_at_unix_ms.is_some()
+            || self
+                .completed_at_unix_ms
+                .is_some_and(|completed| completed < 0)
+        {
+            return Err(ValidationErrors::new(
+                "completed_at_unix_ms",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeletionReceiptState {
+    Pending,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeletionReceiptResource {
+    pub schema: ProtocolVersion,
+    pub deletion_request_id: DeletionRequestId,
+    pub state: DeletionReceiptState,
+    pub evaluated_at_unix_ms: i64,
+    pub stores: Vec<DeletionStoreReceipt>,
+    pub primary_completed_at_unix_ms: Option<i64>,
+    pub backup_expiry_by_unix_ms: i64,
+    pub remaining_backup_expiry_ms: i64,
+    pub completed_at_unix_ms: Option<i64>,
+}
+
+impl Validate for DeletionReceiptResource {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        if self.evaluated_at_unix_ms < 0
+            || self.backup_expiry_by_unix_ms < 0
+            || self.remaining_backup_expiry_ms
+                != self
+                    .backup_expiry_by_unix_ms
+                    .saturating_sub(self.evaluated_at_unix_ms)
+                    .max(0)
+        {
+            return Err(ValidationErrors::new(
+                "remaining_backup_expiry_ms",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        if self.stores.len() != 3 {
+            return Err(ValidationErrors::new(
+                "stores",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        let mut seen = [false; 3];
+        for store in &self.stores {
+            store.validate()?;
+            let index = match store.store {
+                DeletionStoreKind::Primary => 0,
+                DeletionStoreKind::Derived => 1,
+                DeletionStoreKind::Backup => 2,
+            };
+            if seen[index] {
+                return Err(ValidationErrors::new("stores", ValidationCode::Duplicate));
+            }
+            seen[index] = true;
+        }
+        let primary = self
+            .stores
+            .iter()
+            .find(|store| store.store == DeletionStoreKind::Primary)
+            .ok_or_else(|| ValidationErrors::new("stores", ValidationCode::InvalidRelation))?;
+        if self.primary_completed_at_unix_ms != primary.completed_at_unix_ms {
+            return Err(ValidationErrors::new(
+                "primary_completed_at_unix_ms",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        let all_complete = self
+            .stores
+            .iter()
+            .all(|store| store.state == DeletionStoreState::Completed);
+        let state_valid = match self.state {
+            DeletionReceiptState::Pending => !all_complete && self.completed_at_unix_ms.is_none(),
+            DeletionReceiptState::Completed => {
+                all_complete
+                    && self.completed_at_unix_ms.is_some()
+                    && self.remaining_backup_expiry_ms == 0
+            }
+            DeletionReceiptState::Failed => {
+                self.stores
+                    .iter()
+                    .any(|store| store.state == DeletionStoreState::Failed)
+                    && self.completed_at_unix_ms.is_none()
+            }
+        };
+        if !state_valid {
+            return Err(ValidationErrors::new(
+                "state",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        if self
+            .completed_at_unix_ms
+            .is_some_and(|completed| completed > self.evaluated_at_unix_ms)
+        {
+            return Err(ValidationErrors::new(
+                "completed_at_unix_ms",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeletionRequestResource {
@@ -164,5 +317,47 @@ mod tests {
             .unwrap()
             .insert("selector".to_owned(), serde_json::json!("private-target"));
         assert!(serde_json::from_value::<DeletionRequestResource>(value).is_err());
+    }
+
+    #[test]
+    fn receipt_tracks_all_stores_and_remaining_backup_time() {
+        let mut receipt = DeletionReceiptResource {
+            schema: ProtocolVersion::ApiV1,
+            deletion_request_id: DeletionRequestId::new("deletion_01").unwrap(),
+            state: DeletionReceiptState::Pending,
+            evaluated_at_unix_ms: 2_000,
+            stores: vec![
+                DeletionStoreReceipt {
+                    store: DeletionStoreKind::Primary,
+                    state: DeletionStoreState::Completed,
+                    deadline_at_unix_ms: 1_000,
+                    completed_at_unix_ms: Some(1_500),
+                },
+                DeletionStoreReceipt {
+                    store: DeletionStoreKind::Derived,
+                    state: DeletionStoreState::Completed,
+                    deadline_at_unix_ms: 3_000,
+                    completed_at_unix_ms: Some(1_500),
+                },
+                DeletionStoreReceipt {
+                    store: DeletionStoreKind::Backup,
+                    state: DeletionStoreState::Pending,
+                    deadline_at_unix_ms: 5_000,
+                    completed_at_unix_ms: None,
+                },
+            ],
+            primary_completed_at_unix_ms: Some(1_500),
+            backup_expiry_by_unix_ms: 5_000,
+            remaining_backup_expiry_ms: 3_000,
+            completed_at_unix_ms: None,
+        };
+        assert!(receipt.validate().is_ok());
+        receipt.stores[2].state = DeletionStoreState::Completed;
+        receipt.stores[2].completed_at_unix_ms = Some(5_000);
+        receipt.state = DeletionReceiptState::Completed;
+        receipt.evaluated_at_unix_ms = 5_000;
+        receipt.remaining_backup_expiry_ms = 0;
+        receipt.completed_at_unix_ms = Some(5_000);
+        assert!(receipt.validate().is_ok());
     }
 }
