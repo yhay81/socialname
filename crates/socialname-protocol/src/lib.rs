@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod common;
+mod consent;
 mod error;
 mod monitoring;
 mod notification;
@@ -11,13 +12,18 @@ mod watch;
 mod workspace;
 
 pub use common::{
-    API_V1_SCHEMA, ApiKeyId, ConsentGrantId, DefinitiveVerdict, DeliveryErrorCode, EmailAddress,
-    EventId, EvidenceClass, EvidenceDigest, Freshness, FreshnessState, HttpsUrl, IdempotencyKey,
-    IdentifierError, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
-    ObservationId, ProtocolVersion, RegionClass, RequestId, ResultSource, RuleHash,
-    RuleHealthStatus, SearchId, SearchMode, SiteId, SyncPolicy, Target, TargetSelection,
-    TransitionId, Username, Validate, ValidationCode, ValidationErrors, ValidationIssue, WatchId,
-    WorkspaceId,
+    API_V1_SCHEMA, ApiKeyId, ConsentGrantId, ConsentSubjectId, DefinitiveVerdict,
+    DeliveryErrorCode, EmailAddress, EventId, EvidenceClass, EvidenceDigest, Freshness,
+    FreshnessState, HttpsUrl, IdempotencyKey, IdentifierError, InstallationId,
+    NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey, ObservationId,
+    ProtocolVersion, RegionClass, RequestId, ResultSource, RuleHash, RuleHealthStatus, SearchId,
+    SearchMode, SiteId, SyncPolicy, Target, TargetSelection, TransitionId, Username, Validate,
+    ValidationCode, ValidationErrors, ValidationIssue, WatchId, WorkspaceId,
+};
+pub use consent::{
+    ConsentCollectionProfileVersion, ConsentGrantCreateRequest, ConsentGrantListPage,
+    ConsentGrantResource, ConsentGrantState, ConsentNoticeVersion, ConsentPurpose, ConsentSource,
+    ConsentSubjectKind, ConsentWithdrawalRequest, MAX_CONSENT_PAGE_ITEMS,
 };
 pub use error::{ApiError, ApiErrorCode, ApiErrorResponse, FieldViolation};
 pub use monitoring::{

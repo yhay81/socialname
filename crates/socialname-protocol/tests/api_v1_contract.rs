@@ -1,12 +1,14 @@
 use socialname_protocol::{
-    API_V1_SCHEMA, AccountState, ConfirmationBasis, ConsentGrantId, EventId, NotificationChannel,
-    NotificationDelivery, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
-    ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion,
-    RegionClass, ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId,
-    SearchMode, SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy,
-    Target, TargetSelection, Transition, TransitionChange, TransitionConfirmation, TransitionId,
-    Username, Validate, WatchCreateRequest, WatchId, WatchListPage, WatchResource, WatchSchedule,
-    WatchState, WatchTransitionEntry, WatchTransitionPage, WebhookNotification,
+    API_V1_SCHEMA, AccountState, ConfirmationBasis, ConsentCollectionProfileVersion,
+    ConsentGrantCreateRequest, ConsentGrantId, ConsentNoticeVersion, ConsentPurpose,
+    ConsentSubjectKind, EventId, InstallationId, NotificationChannel, NotificationDelivery,
+    NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey, ObservationId,
+    OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass,
+    ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
+    SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy, Target,
+    TargetSelection, Transition, TransitionChange, TransitionConfirmation, TransitionId, Username,
+    Validate, WatchCreateRequest, WatchId, WatchListPage, WatchResource, WatchSchedule, WatchState,
+    WatchTransitionEntry, WatchTransitionPage, WebhookNotification,
 };
 
 fn target() -> Target {
@@ -14,6 +16,33 @@ fn target() -> Target {
         username: Username::new("alice-private-target").unwrap(),
         site_id: SiteId::new("github").unwrap(),
     }
+}
+
+#[test]
+fn installation_consent_has_one_exact_redacted_v1_wire_shape() {
+    let request = ConsentGrantCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        subject_kind: ConsentSubjectKind::Installation,
+        installation_id: Some(InstallationId::new("11111111-1111-4111-8111-111111111111").unwrap()),
+        purpose: ConsentPurpose::SharedObservation,
+        collection_profile_version: ConsentCollectionProfileVersion::V1,
+        notice_version: ConsentNoticeVersion::V1,
+        expires_at_unix_ms: None,
+    };
+    assert!(request.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(&request).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "subject_kind": "installation",
+            "installation_id": "11111111-1111-4111-8111-111111111111",
+            "purpose": "shared_observation",
+            "collection_profile_version": "profile-v1",
+            "notice_version": "notice-v1",
+            "expires_at_unix_ms": null
+        })
+    );
+    assert!(!format!("{request:?}").contains("11111111-1111-4111-8111-111111111111"));
 }
 
 fn watch_resource() -> WatchResource {

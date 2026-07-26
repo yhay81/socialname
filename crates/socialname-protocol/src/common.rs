@@ -188,8 +188,57 @@ opaque_id!(DeliveryErrorCode, "delivery_error_code");
 opaque_id!(EventId, "event_id");
 opaque_id!(RequestId, "request_id");
 opaque_id!(ConsentGrantId, "consent_grant_id");
+opaque_id!(ConsentSubjectId, "consent_subject_id");
 opaque_id!(WorkspaceId, "workspace_id");
 opaque_id!(ApiKeyId, "api_key_id");
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct InstallationId(String);
+
+impl InstallationId {
+    pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
+        let value = value.into();
+        if valid_uuid_v4(&value) {
+            Ok(Self(value))
+        } else {
+            Err(IdentifierError::new(
+                "installation_id",
+                "expected a canonical lowercase UUID v4",
+            ))
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+fn valid_uuid_v4(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            14 => byte == b'4',
+            19 => matches!(byte, b'8' | b'9' | b'a' | b'b'),
+            _ => byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase(),
+        })
+}
+
+impl<'de> Deserialize<'de> for InstallationId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_validated(deserializer, Self::new)
+    }
+}
+
+impl fmt::Debug for InstallationId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("InstallationId([REDACTED])")
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, JsonSchema)]
 #[serde(transparent)]

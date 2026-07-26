@@ -27,6 +27,10 @@ pub enum ApiKeyScope {
     DataExport,
     #[serde(rename = "data:delete")]
     DataDelete,
+    #[serde(rename = "consent:read")]
+    ConsentRead,
+    #[serde(rename = "consent:write")]
+    ConsentWrite,
 }
 
 impl ApiKeyScope {
@@ -42,6 +46,8 @@ impl ApiKeyScope {
             Self::NotificationWrite => "notification:write",
             Self::DataExport => "data:export",
             Self::DataDelete => "data:delete",
+            Self::ConsentRead => "consent:read",
+            Self::ConsentWrite => "consent:write",
         }
     }
 
@@ -56,6 +62,8 @@ impl ApiKeyScope {
             "notification:write" => Ok(Self::NotificationWrite),
             "data:export" => Ok(Self::DataExport),
             "data:delete" => Ok(Self::DataDelete),
+            "consent:read" => Ok(Self::ConsentRead),
+            "consent:write" => Ok(Self::ConsentWrite),
             _ => Err(ValidationErrors::new(
                 "scopes",
                 ValidationCode::InvalidFormat,

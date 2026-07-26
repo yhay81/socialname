@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use schemars::{Schema, schema_for};
 
 use crate::{
-    ApiErrorResponse, NotificationDelivery, NotificationEndpointCreateRequest,
+    ApiErrorResponse, ConsentGrantCreateRequest, ConsentGrantListPage, ConsentGrantResource,
+    ConsentWithdrawalRequest, NotificationDelivery, NotificationEndpointCreateRequest,
     NotificationEndpointResource, SearchCreateRequest, SearchEvent, SearchResource, Transition,
     WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchTransitionPage,
     WebhookNotification, WorkspaceResource,
@@ -13,6 +14,16 @@ use crate::{
 pub fn api_v1_schemas() -> BTreeMap<&'static str, Schema> {
     BTreeMap::from([
         ("api_error_response", schema_for!(ApiErrorResponse)),
+        (
+            "consent_grant_create_request",
+            schema_for!(ConsentGrantCreateRequest),
+        ),
+        ("consent_grant_list_page", schema_for!(ConsentGrantListPage)),
+        ("consent_grant_resource", schema_for!(ConsentGrantResource)),
+        (
+            "consent_withdrawal_request",
+            schema_for!(ConsentWithdrawalRequest),
+        ),
         ("notification_delivery", schema_for!(NotificationDelivery)),
         (
             "notification_endpoint_create_request",
@@ -47,6 +58,10 @@ mod tests {
             schemas.keys().copied().collect::<Vec<_>>(),
             vec![
                 "api_error_response",
+                "consent_grant_create_request",
+                "consent_grant_list_page",
+                "consent_grant_resource",
+                "consent_withdrawal_request",
                 "notification_delivery",
                 "notification_endpoint_create_request",
                 "notification_endpoint_resource",
