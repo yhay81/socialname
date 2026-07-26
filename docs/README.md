@@ -124,6 +124,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Private search API and ordered event stream](search-api.md) — consented
   idempotent creation, polling/cancellation, append-only events, and bounded
   resumable SSE without premature worker execution.
+- [Signed managed worker boundary](managed-worker.md) — signed-rule-only
+  activation, DNS-rebinding/SSRF defenses, byte budgets, and one-shot
+  operation.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,

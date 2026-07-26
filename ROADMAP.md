@@ -64,9 +64,9 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add `socialname-worker` with signed-rule-only execution
-and managed-probe SSRF/DNS-rebinding defenses, consuming accepted searches
-without weakening the now-persisted consent and event boundaries.
+Next executable item: transactionally expand accepted targets into coalesced
+`probe_jobs`, then add claims, leases, retries, and idempotent
+observation/result ingestion through the signed managed worker.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -463,7 +463,7 @@ derives a trustworthy transition, and delivers one auditable notification.
       notification endpoints, deliveries, consent, lineage, and deletion tasks.
 - [x] Add authenticated private workspaces and hashed, scoped API keys.
 - [x] Implement idempotent search creation and SSE partial-result streaming.
-- [ ] Add `socialname-worker` with signed-rule-only execution and managed-probe
+- [x] Add `socialname-worker` with signed-rule-only execution and managed-probe
       SSRF/DNS-rebinding defenses.
 - [ ] Implement transactional PostgreSQL job claims, leases, retries, and
       idempotent observation ingestion.
@@ -623,8 +623,44 @@ bounds batch, polling, lifetime, keep-alive, and connection count. The
 PostgreSQL 18 test proves exact/conflicting replay, scope and consent denial,
 target-free errors, two-tenant isolation, digest-only storage, ordered partial
 and terminal replay, resume, append-only rejection, cancellation uniqueness,
-column-limited privileges, and connection-cap recovery. This slice performs no
-probe; accepted searches remain quarantined for the signed worker gate.
+column-limited privileges, and connection-cap recovery. This API slice performs
+no probe; accepted searches remain quarantined until the database job/ingestion
+gate connects them to the signed worker.
+
+Signed-managed-worker evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked -p socialname-engine -p socialname-worker --all-targets
+# engine: 10; worker: 3 library + 2 binary tests
+cargo clippy --locked -p socialname-engine -p socialname-worker --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-worker -- --help
+# probe without --allow-live exits before reading files or stdin
+```
+
+`ManagedRule` can be constructed only from an opaque verified Ed25519
+promotion and the exact compiled pack. Activation rechecks region, promotion
+and evidence time, recompiles the complete pack, and binds its candidate to the
+signed site/rule/pack hashes. Execution rechecks expiry and gives cancellation
+priority before polling the network future. The one-shot binary requires an
+explicit live acknowledgement, reads one bounded closed stdin JSON target
+instead of accepting it in process arguments, and emits only a minimized
+result.
+
+The managed engine uses a separate proxy-free client and a custom Reqwest
+resolver. Every new connection resolves to concrete addresses, rejects empty,
+oversized, mixed, private, loopback, link-local, metadata, transition,
+documentation, multicast, and reserved answers, and therefore cannot rebind
+from a public answer to a forbidden destination. Initial and redirected URLs
+still require HTTPS and the signed rule's exact host allowlist. Parsed header
+names and values, streamed compressed bytes, decoded bytes, and inspected text
+have independent rule bounds; size/decode/DNS failures remain operational and
+cannot become absence.
+
+This slice deliberately does not poll PostgreSQL or mutate accepted searches.
+The next item must connect those searches through transactional job
+claim/lease/retry and idempotent observation/result ingestion without adding a
+raw-rule execution path.
 
 Software acceptance gate:
 
@@ -793,3 +829,8 @@ Choose these only when their trigger is measured:
   ordered resumable SSE with mid-stream authorization checks, least-privilege
   PostgreSQL event storage, and repeatable PostgreSQL 18 boundary tests; kept
   probing quarantined behind the signed-worker gate.
+- **2026-07-26:** Added the signed-only managed worker, exact regional
+  promotion/pack revalidation, conservative DNS rebinding and SSRF rejection,
+  independent response byte budgets, cancellation, and a live-acknowledged
+  stdin-only operator probe; left database claims and ingestion to the next
+  ordered slice.

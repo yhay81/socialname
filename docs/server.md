@@ -100,6 +100,8 @@ Every other path returns a protocol `not_found` response. Unsupported methods
 return a protocol `invalid_request` response. Watches, notification endpoints,
 worker control, and HTTP key-administration routes do not exist yet, so
 authentication cannot accidentally make later product capabilities available.
+The separate one-shot signed worker does not share the server's HTTP router or
+database pool; PostgreSQL job integration remains closed.
 
 ## Request boundary
 

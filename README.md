@@ -1,9 +1,10 @@
 # SocialName
 
 SocialName is being rebuilt as a Rust-based public-identifier observability
-platform. The first implementation slice provides a private local CLI, one
-shared probe/classification engine, a strict Site Rule v1 compiler, and
-explainable assertion derivation.
+platform. The current implementation provides private local clients, one
+shared probe/classification engine, strict rule and trust artifacts, a local
+cache, authenticated managed search persistence, and the first signed worker
+security boundary.
 
 > Turn public-identifier presence and change into fast, continuous,
 > evidence-backed, privacy-respecting, actionable knowledge.
@@ -24,8 +25,8 @@ person.
 
 ## Implemented
 
-- Rust workspace with domain, schema, compiler, engine, application core, CLI,
-  desktop, and testkit crates.
+- Rust workspace with domain, schema, compiler, engine, cache, application,
+  protocol, server, worker, CLI, desktop, and testkit crates.
 - Deterministic `found`, `not_found`, `inconclusive`, and conflict
   classification with matcher traces and evidence digests.
 - Context-safe path, query, and subdomain URL templates.
@@ -47,14 +48,26 @@ person.
 - Regional rule-health state transitions with quarantined initialization,
   evidence-bound recovery, operational degradation, immediate drift
   quarantine, and account-notification suppression.
+- Ed25519 regional rule promotions with exact pack/predecessor/evidence
+  binding, expiry, sequence replay protection, last-known-good retention, and
+  rollback.
 - Assertion v1 trust thresholds for managed and opt-in shared observations.
+- A user-owned SQLite cache with freshness/source policy, pruning, export,
+  migration, quarantine, and deletion.
+- An Axum/PostgreSQL server with private workspaces, hashed scoped API keys,
+  consent-bound idempotent searches, polling/cancellation, and ordered
+  resumable SSE under forced tenant RLS.
+- A signed-rule-only managed worker with per-connection DNS validation,
+  DNS-rebinding/SSRF rejection, independent response byte limits,
+  cancellation, and a live-acknowledged stdin-only one-shot probe.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The central server, SQLite cache, signed rule-pack publication, managed
-canaries, and monitoring pipeline are the next implementation slices.
+The next implementation slice connects accepted searches to the worker through
+transactional PostgreSQL job expansion, claims, leases, retries, and
+idempotent observation/result ingestion.
 
 ## Build and verify
 
@@ -92,20 +105,25 @@ npm run tauri -- dev
 
 Windows and macOS CI compile the complete native desktop target separately.
 
-All representative rules remain `discovery` until the managed multi-region
-live-canary gate exists. They are blocked from live execution unless
-`--allow-disabled` is supplied deliberately.
+All representative rules remain `discovery` until the external managed
+multi-region live-canary gate passes. Local probing requires the deliberate
+`--allow-disabled` override; the managed worker has no equivalent bypass and
+requires a valid signed promotion.
 
 ## Workspace
 
 ```text
 crates/
   socialname-app-core/       UI-independent local search orchestration
+  socialname-cache/          user-owned SQLite observations and freshness
   socialname-canary/         typed canary manifests and strict validation
   socialname-domain/         observations and assertion/v1 derivation
   socialname-rule-schema/    strict Site Rule v1 source types
   socialname-rule-compiler/  validation and canonical compilation
   socialname-engine/         HTTP probing and deterministic classification
+  socialname-protocol/       versioned REST, SSE, watch, and delivery DTOs
+  socialname-server/         authenticated Axum/PostgreSQL managed boundary
+  socialname-worker/         signed-only managed probe boundary
   socialname-cli/            local command-line entry point
   socialname-testkit/        offline fixture verification
 apps/

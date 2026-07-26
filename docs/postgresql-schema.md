@@ -5,9 +5,9 @@ Migration `0001_initial.sql` creates the storage needed by the ordered
 Milestone 2 monitoring loop. Migration `0002_api_key_authentication.sql` adds
 the restricted credential lookup needed by the authenticated private-workspace
 slice. Migration `0003_search_event_stream.sql` separates requested from
-site-normalized usernames and adds append-only ordered search events. Job
-claims, worker execution, assertion recomputation, and delivery workers remain
-closed for their own vertical slices.
+site-normalized usernames and adds append-only ordered search events.
+Database-backed job claims and worker invocation, assertion recomputation, and
+delivery workers remain closed for their own vertical slices.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -108,8 +108,8 @@ for the complete request and operator contract.
   relational/JSON identity check, and a 128 KiB payload ceiling. The API
   requires a finished event before returning terminal state.
 - Search targets preserve `requested_username`; nullable
-  `normalized_username` is reserved for a later signed-rule worker's explicit
-  per-site identity policy.
+  `normalized_username` is reserved for the next database job slice to populate
+  through the signed worker's explicit per-site identity policy.
 - Operational probe failure remains job state. `observations` contain only a
   definitive `found`/`not_found` result or bounded uncertainty, and observation
   rows reject updates.

@@ -123,7 +123,7 @@ so status does not diverge across design records.
   tenant-RLS records with an explicit per-search sequence and target relation.
   SSE uses event UUIDs for bounded `Last-Event-ID` replay and rechecks
   authorization while connected. The API creates/cancels work but cannot probe
-  before the signed worker gate.
+  until the database job/ingestion gate connects it to the signed worker.
 
 ## Detailed records
 
@@ -166,8 +166,16 @@ so status does not diverge across design records.
 11. **Done:** Add consented idempotent private-search creation, polling,
     cancellation, append-only ordered event persistence, and bounded resumable
     SSE without enabling managed probe execution.
+12. **Done:** Add a separate `socialname-worker` whose execution capability can
+    only be constructed from a verified regional rule promotion and an exactly
+    recompiled pack. Managed transport disables proxies, revalidates every DNS
+    answer at connection/redirect time, rejects any special/private/mixed
+    answer set, and independently bounds parsed headers, compressed bytes,
+    decompressed bytes, and inspected text. The only operator probe reads its
+    target from bounded stdin JSON and requires explicit live acknowledgement.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
 work is the first paid monitoring loop in Milestone 2, continuing with
-the signed-rule-only managed worker and its SSRF/DNS-rebinding boundary.
+transactional job claims, leases, retries, and idempotent observation ingestion
+that connect accepted searches to the signed managed worker.

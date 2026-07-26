@@ -268,6 +268,12 @@ Every probe has bounded:
 
 A limit violation produces an inconclusive reason, not `not_found`.
 
+The managed engine enforces all four byte budgets below classification by
+disabling automatic decompression, bounding streamed wire bytes, decoding only
+under the declared decompressed ceiling, retaining only the inspected prefix,
+and checking every response's complete parsed header map. See
+[`managed-worker.md`](managed-worker.md).
+
 ### Transport profiles
 
 A small set of reviewed profiles can supply defaults:

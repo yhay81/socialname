@@ -390,7 +390,7 @@ in [Public protocol v1](protocol-v1.md).
 
 ## Rust workspace
 
-Implemented first slice and planned inward-compatible additions:
+Implemented workspace boundaries and planned inward-compatible additions:
 
 ```text
 crates/
@@ -404,8 +404,7 @@ crates/
   socialname-protocol/      versioned API, event, watch, and delivery DTOs
   socialname-server/        Axum/Tower modular-monolith process boundary
   socialname-testkit/       mock sites, fixtures, deterministic clocks
-  # next slices
-  socialname-worker/        managed probe and canary worker binary
+  socialname-worker/        signed managed probe worker binary
 rules/
   sites/
   fixtures/
@@ -503,18 +502,23 @@ The local engine already requires HTTPS, validates request and redirect hosts
 against the compiled rule, rejects literal private/loopback destinations, and
 enforces bounded redirects, total time, and inspected body bytes.
 
-Before this engine is exposed through a managed worker, the worker boundary
-must additionally guarantee:
+The first managed worker boundary now guarantees:
 
 - only signed rules from the registry execute;
 - hostname resolution rejects private, loopback, link-local, metadata, and
   reserved addresses;
 - DNS answers are pinned or revalidated at connect and redirect time to prevent
   rebinding;
-- compressed, decompressed, and raw header byte budgets are enforced below the
-  classifier;
+- compressed, decompressed, and parsed-header byte budgets are enforced below
+  the classifier;
 - user API input can select known sites but cannot provide arbitrary probe
   URLs.
+
+It also disables ambient proxies and independently caps raw response headers,
+wire-compressed bytes, decompressed bytes, and matcher-inspected bytes. The
+exact signed activation, resolver, address, one-shot operator, and remaining
+database-job boundaries are documented in
+[Signed managed worker boundary](managed-worker.md).
 
 ### Sensitive evidence
 

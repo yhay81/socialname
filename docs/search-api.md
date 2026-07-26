@@ -184,7 +184,9 @@ polling, three ordered partial/terminal events, `Last-Event-ID` resumption,
 append-only rejection, idempotent cancellation, terminal-event uniqueness,
 least-privilege columns, and bounded SSE connection recovery.
 
-The remaining next gate is the signed-rule-only worker with managed-probe
-SSRF/DNS-rebinding defenses. Until that passes, a newly accepted search remains
-accepted unless explicitly cancelled or test/operator evidence is appended; no
-network request is initiated by this API slice.
+The signed-rule-only worker and its managed-probe SSRF/DNS-rebinding boundary
+are implemented separately. The remaining next gate is transactional job
+expansion, claim/lease/retry, and idempotent observation/result ingestion that
+connects an accepted search to that worker. Until then, a newly accepted search
+remains accepted unless explicitly cancelled or test/operator evidence is
+appended; the API itself initiates no network request.
