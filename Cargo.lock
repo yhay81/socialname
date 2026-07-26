@@ -4210,6 +4210,7 @@ dependencies = [
  "socialname-engine",
  "socialname-protocol",
  "socialname-rule-compiler",
+ "socialname-rule-schema",
  "sqlx",
  "thiserror 2.0.19",
  "tokio",

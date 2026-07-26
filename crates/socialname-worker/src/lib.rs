@@ -16,8 +16,8 @@ pub use delivery::{
     WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
 };
 pub use job::{
-    ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError, JobStore, RuleBinding,
-    WORKER_DATABASE_URL_ENV, WatchPlanOutcome,
+    EvidenceRetentionOutcome, ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError,
+    JobStore, RuleBinding, WORKER_DATABASE_URL_ENV, WatchPlanOutcome,
 };
 
 #[derive(Clone, Debug)]
@@ -28,6 +28,7 @@ pub struct ManagedRule {
     promotion_id: String,
     promotion_sequence: u64,
     rule_pack_hash: String,
+    engine_hash: String,
     region_class: String,
     metadata_expires_at_unix_ms: i64,
     promotion_expires_at_unix_ms: i64,
@@ -118,6 +119,7 @@ impl ManagedRule {
             promotion_id: validated_promotion.envelope().promotion_id.clone(),
             promotion_sequence: promotion.sequence,
             rule_pack_hash: promotion.rule_pack_hash.clone(),
+            engine_hash: promotion.engine_hash.clone(),
             region_class,
             metadata_expires_at_unix_ms: metadata.expires_at_unix_ms,
             promotion_expires_at_unix_ms: promotion.expires_at_unix_ms,
@@ -173,6 +175,11 @@ impl ManagedRule {
     #[must_use]
     pub fn rule_pack_hash(&self) -> &str {
         &self.rule_pack_hash
+    }
+
+    #[must_use]
+    pub fn engine_hash(&self) -> &str {
+        &self.engine_hash
     }
 
     #[must_use]

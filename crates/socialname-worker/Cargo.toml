@@ -21,6 +21,7 @@ socialname-domain = { path = "../socialname-domain" }
 socialname-engine = { path = "../socialname-engine" }
 socialname-protocol = { path = "../socialname-protocol" }
 socialname-rule-compiler = { path = "../socialname-rule-compiler" }
+socialname-rule-schema = { path = "../socialname-rule-schema" }
 sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true

@@ -5,6 +5,7 @@ mod auth;
 mod config;
 mod consent;
 mod database;
+mod evidence;
 mod monitoring;
 mod rule_registry_operator;
 mod search;
@@ -216,6 +217,18 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let evidence_read_routes = Router::new()
+        .route(
+            "/v1/observations/{observation_id}/evidence-capsule",
+            get(evidence::get_evidence_capsule),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::EvidenceRead,
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
@@ -227,6 +240,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(watch_read_routes)
         .merge(consent_write_routes)
         .merge(consent_read_routes)
+        .merge(evidence_read_routes)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state.clone());

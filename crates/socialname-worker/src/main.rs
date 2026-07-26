@@ -42,6 +42,8 @@ enum Command {
     ProcessOne(ProcessOneArgs),
     /// Claim and attempt at most one queued signed webhook delivery.
     DeliverOne(DeliverOneArgs),
+    /// Purge one bounded batch of Evidence Capsule data whose DB deadline has passed.
+    EnforceRetention(EnforceRetentionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -107,6 +109,15 @@ struct DeliverOneArgs {
     allow_live: bool,
 }
 
+#[derive(Debug, Args)]
+struct EnforceRetentionArgs {
+    #[arg(long, default_value_t = 128)]
+    batch_limit: u32,
+    /// Acknowledge irreversible deletion of evidence whose retention deadline has passed.
+    #[arg(long)]
+    allow_live: bool,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProbeInput {
@@ -142,6 +153,14 @@ struct DeliverOneOutput {
     attempt_count: Option<u32>,
 }
 
+#[derive(Serialize)]
+struct EnforceRetentionOutput {
+    schema: &'static str,
+    research_excerpts_purged: u32,
+    structured_capsules_purged: u32,
+    expired_receipts_deleted: u32,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -155,7 +174,31 @@ async fn run() -> Result<()> {
         Command::Probe(args) => probe(args).await,
         Command::ProcessOne(args) => process_one(args).await,
         Command::DeliverOne(args) => deliver_one(args).await,
+        Command::EnforceRetention(args) => enforce_retention(args).await,
     }
+}
+
+async fn enforce_retention(args: EnforceRetentionArgs) -> Result<()> {
+    if !args.allow_live {
+        bail!("evidence retention enforcement requires --allow-live");
+    }
+    if !(1..=1_000).contains(&args.batch_limit) {
+        bail!("evidence retention batch limit must be between 1 and 1000");
+    }
+    let store = JobStore::connect_from_env().await?;
+    let outcome = store.enforce_evidence_retention(args.batch_limit).await;
+    store.close().await;
+    let outcome = outcome?;
+    println!(
+        "{}",
+        serde_json::to_string(&EnforceRetentionOutput {
+            schema: "socialname.dev/evidence-retention-run/v1",
+            research_excerpts_purged: outcome.research_excerpts_purged,
+            structured_capsules_purged: outcome.structured_capsules_purged,
+            expired_receipts_deleted: outcome.expired_receipts_deleted,
+        })?
+    );
+    Ok(())
 }
 
 async fn deliver_one(args: DeliverOneArgs) -> Result<()> {
@@ -668,6 +711,21 @@ mod tests {
             "{\"schema\":\"socialname.dev/webhook-delivery-process/v1\",\"status\":\"retry_scheduled\",\"delivery_id\":\"00000000-0000-0000-0000-000000000000\",\"attempt_count\":1}"
         );
         assert!(!delivery.contains("destination"));
+
+        let retention = serde_json::to_string(&EnforceRetentionOutput {
+            schema: "socialname.dev/evidence-retention-run/v1",
+            research_excerpts_purged: 1,
+            structured_capsules_purged: 2,
+            expired_receipts_deleted: 3,
+        })
+        .unwrap();
+        assert_eq!(
+            retention,
+            "{\"schema\":\"socialname.dev/evidence-retention-run/v1\",\"research_excerpts_purged\":1,\"structured_capsules_purged\":2,\"expired_receipts_deleted\":3}"
+        );
+        assert!(!retention.contains("target"));
+        assert!(!retention.contains("username"));
+        assert!(!retention.contains("payload"));
     }
 
     #[tokio::test]

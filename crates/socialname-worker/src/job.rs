@@ -4,12 +4,15 @@ use sha2::{Digest, Sha256};
 use socialname_domain::{EvidenceClass as DomainEvidenceClass, InconclusiveReason, Verdict};
 use socialname_engine::SearchResult;
 use socialname_protocol::{
-    DefinitiveResult, DefinitiveVerdict, EventId, EvidenceClass, EvidenceDigest, Freshness,
-    HttpsUrl, ObservationId, OperationalFailure, OperationalFailureKind, ProtocolVersion,
-    RegionClass, ResultSource, RuleHash, RuleHealthStatus, SearchEvent, SearchEventData, SearchId,
-    SearchProgress, SearchTerminalState, SiteId, Target, UncertainResult, UncertaintyReason,
-    Username, Validate,
+    DefinitiveResult, DefinitiveVerdict, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
+    EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
+    EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
+    EvidenceTransportOutcome, EvidenceVantage, Freshness, HttpsUrl, ObservationId,
+    OperationalFailure, OperationalFailureKind, ProtocolVersion, RegionClass, ResultSource,
+    RuleHash, RuleHealthStatus, SearchEvent, SearchEventData, SearchId, SearchProgress,
+    SearchTerminalState, SiteId, Target, UncertainResult, UncertaintyReason, Username, Validate,
 };
+use socialname_rule_schema::TransportOutcome;
 use sqlx::{FromRow, PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -36,6 +39,12 @@ const MAXIMUM_LEASE_MS: u64 = 300_000;
 const MAXIMUM_ATTEMPTS: u32 = 10;
 const INITIAL_RETRY_DELAY_MS: i64 = 5_000;
 const MAXIMUM_RETRY_DELAY_MS: i64 = 5 * 60 * 1_000;
+const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
+const PRIVATE_INTERACTIVE_RETENTION_DAYS: i64 = 90;
+const SHARED_CAPSULE_RETENTION_DAYS: i64 = 400;
+const MINIMUM_RETENTION_DAYS: i64 = 30;
+const MAXIMUM_RETENTION_DAYS: i64 = 730;
+const MAXIMUM_RETENTION_BATCH: u32 = 1_000;
 
 #[derive(Clone)]
 pub struct JobStore {
@@ -60,6 +69,36 @@ impl JobStore {
 
     pub async fn close(&self) {
         self.pool.close().await;
+    }
+
+    pub async fn enforce_evidence_retention(
+        &self,
+        batch_limit: u32,
+    ) -> Result<EvidenceRetentionOutcome, JobError> {
+        if !(1..=MAXIMUM_RETENTION_BATCH).contains(&batch_limit) {
+            return Err(JobError::InvalidConfiguration);
+        }
+        let (research_excerpts_purged, structured_capsules_purged, expired_receipts_deleted): (
+            i32,
+            i32,
+            i32,
+        ) = sqlx::query_as(
+            "SELECT research_excerpts_purged, structured_capsules_purged, \
+                        expired_receipts_deleted \
+                 FROM socialname_worker_enforce_evidence_retention($1)",
+        )
+        .bind(i32::try_from(batch_limit).map_err(|_| JobError::InvalidConfiguration)?)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+        Ok(EvidenceRetentionOutcome {
+            research_excerpts_purged: u32::try_from(research_excerpts_purged)
+                .map_err(|_| JobError::StorageInvariant)?,
+            structured_capsules_purged: u32::try_from(structured_capsules_purged)
+                .map_err(|_| JobError::StorageInvariant)?,
+            expired_receipts_deleted: u32::try_from(expired_receipts_deleted)
+                .map_err(|_| JobError::StorageInvariant)?,
+        })
     }
 
     pub async fn bind_rule(&self, rule: &ManagedRule) -> Result<RuleBinding, JobError> {
@@ -91,6 +130,7 @@ impl JobStore {
             site_id: rule.site_id().to_owned(),
             rule_hash: rule.rule_hash().to_owned(),
             rule_pack_hash: rule.rule_pack_hash().to_owned(),
+            engine_hash: rule.engine_hash().to_owned(),
             region_class: rule.region_class().to_owned(),
             metadata_id: rule.metadata_id().to_owned(),
             metadata_sequence: rule.metadata_sequence(),
@@ -891,7 +931,10 @@ impl JobStore {
             rule_version_id: row.rule_version_id,
             rule_hash: binding.rule_hash.clone(),
             rule_pack_hash: binding.rule_pack_hash.clone(),
+            engine_hash: binding.engine_hash.clone(),
             region_class: row.region_class,
+            metadata_id: binding.metadata_id.clone(),
+            promotion_id: binding.promotion_id.clone(),
             consent_grant_id,
             visibility,
             attempt_count,
@@ -1037,6 +1080,33 @@ impl JobStore {
             .checked_add(outcome.ttl_ms())
             .ok_or(JobError::StorageInvariant)?;
         let observation_id = Uuid::new_v4();
+        let (capsule_profile, capsule_retention_days) = evidence_retention_policy(
+            &claim.visibility,
+            !search_consumers.is_empty(),
+            &watch_consumers,
+        )?;
+        let capsule_retained_until_unix_ms = observed_at_unix_ms
+            .checked_add(
+                capsule_retention_days
+                    .checked_mul(DAY_MS)
+                    .ok_or(JobError::StorageInvariant)?,
+            )
+            .ok_or(JobError::StorageInvariant)?;
+        let capsule_id = Uuid::new_v4();
+        let capsule = build_evidence_capsule(
+            claim,
+            result,
+            outcome,
+            capsule_id,
+            observation_id,
+            capsule_profile,
+            observed_at_unix_ms,
+            capsule_retained_until_unix_ms,
+        )?;
+        let capsule_payload =
+            serde_json::to_value(&capsule).map_err(|_| JobError::InvalidProtocol)?;
+        let capsule_bytes = serde_json::to_vec(&capsule).map_err(|_| JobError::InvalidProtocol)?;
+        let capsule_digest = Sha256::digest(&capsule_bytes);
         let evidence_digest = decode_digest(&result.classification.evidence_digest)?;
         let (outcome_kind, verdict, uncertainty_reason) = outcome.database_values();
         sqlx::query(
@@ -1071,6 +1141,30 @@ impl JobStore {
         .execute(&mut *transaction)
         .await
         .map_err(|_| JobError::StorageInvariant)?;
+        sqlx::query(
+            "INSERT INTO evidence_capsules (\
+                id, tenant_id, observation_id, collection_profile, \
+                structured_payload, structured_payload_digest, \
+                structured_payload_bytes, collected_at, \
+                structured_retained_until, created_at\
+             ) VALUES (\
+                $1, $2, $3, $4, $5, $6, $7, \
+                to_timestamp($8::double precision / 1000.0), \
+                to_timestamp($9::double precision / 1000.0), clock_timestamp()\
+             )",
+        )
+        .bind(capsule_id)
+        .bind(claim.tenant_id)
+        .bind(observation_id)
+        .bind(evidence_capsule_profile_name(capsule_profile))
+        .bind(capsule_payload)
+        .bind(capsule_digest.as_slice())
+        .bind(i32::try_from(capsule_bytes.len()).map_err(|_| JobError::StorageInvariant)?)
+        .bind(observed_at_unix_ms)
+        .bind(capsule_retained_until_unix_ms)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
         transition_job_to_final(&mut transaction, claim, "succeeded", None).await?;
         insert_lineage(
             &mut transaction,
@@ -1080,6 +1174,16 @@ impl JobStore {
             "observation",
             observation_id,
             "managed_measurement",
+        )
+        .await?;
+        insert_lineage(
+            &mut transaction,
+            claim.tenant_id,
+            "observation",
+            observation_id,
+            "evidence_capsule",
+            capsule_id,
+            "bounded_evidence",
         )
         .await?;
         let derived =
@@ -1442,6 +1546,7 @@ pub struct RuleBinding {
     site_id: String,
     rule_hash: String,
     rule_pack_hash: String,
+    engine_hash: String,
     region_class: String,
     metadata_id: String,
     metadata_sequence: u64,
@@ -1469,6 +1574,7 @@ impl RuleBinding {
         if self.site_id == rule.site_id()
             && self.rule_hash == rule.rule_hash()
             && self.rule_pack_hash == rule.rule_pack_hash()
+            && self.engine_hash == rule.engine_hash()
             && self.region_class == rule.region_class()
             && self.metadata_id == rule.metadata_id()
             && self.metadata_sequence == rule.metadata_sequence()
@@ -1491,7 +1597,10 @@ pub struct JobClaim {
     rule_version_id: Uuid,
     rule_hash: String,
     rule_pack_hash: String,
+    engine_hash: String,
     region_class: String,
+    metadata_id: String,
+    promotion_id: String,
     consent_grant_id: Uuid,
     visibility: String,
     attempt_count: u32,
@@ -1513,7 +1622,10 @@ impl JobClaim {
         if self.site_id != rule.site_id()
             || self.rule_hash != rule.rule_hash()
             || self.rule_pack_hash != rule.rule_pack_hash()
+            || self.engine_hash != rule.engine_hash()
             || self.region_class != rule.region_class()
+            || self.metadata_id != rule.metadata_id()
+            || self.promotion_id != rule.promotion_id()
         {
             return Err(WorkerError::RulePackMismatch);
         }
@@ -1558,6 +1670,13 @@ pub enum ExpandOutcome {
 pub enum WatchPlanOutcome {
     Idle,
     Planned { run_id: Uuid, target_count: u32 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EvidenceRetentionOutcome {
+    pub research_excerpts_purged: u32,
+    pub structured_capsules_purged: u32,
+    pub expired_receipts_deleted: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1692,6 +1811,7 @@ struct LiveWatchConsumer {
     watch_run_target_id: Uuid,
     watch_run_id: Uuid,
     watch_target_id: Uuid,
+    retention_days: i16,
 }
 
 #[derive(Clone, Copy)]
@@ -1993,7 +2113,8 @@ async fn load_live_watch_consumers(
 ) -> Result<Vec<LiveWatchConsumer>, JobError> {
     sqlx::query_as(
         "SELECT run_target.id AS watch_run_target_id, \
-                run_target.watch_run_id, run_target.watch_target_id \
+                run_target.watch_run_id, run_target.watch_target_id, \
+                watch.retention_days \
          FROM probe_job_consumers AS consumer \
          JOIN watch_run_targets AS run_target \
            ON run_target.tenant_id = consumer.tenant_id \
@@ -2425,6 +2546,188 @@ fn operational_reason(
     }
 }
 
+fn evidence_retention_policy(
+    visibility: &str,
+    has_search_consumer: bool,
+    watch_consumers: &[LiveWatchConsumer],
+) -> Result<(EvidenceCapsuleProfile, i64), JobError> {
+    match visibility {
+        "private" => {
+            let mut retention_days =
+                has_search_consumer.then_some(PRIVATE_INTERACTIVE_RETENTION_DAYS);
+            for consumer in watch_consumers {
+                let watch_retention = i64::from(consumer.retention_days);
+                if !(MINIMUM_RETENTION_DAYS..=MAXIMUM_RETENTION_DAYS).contains(&watch_retention) {
+                    return Err(JobError::StorageInvariant);
+                }
+                retention_days = Some(
+                    retention_days.map_or(watch_retention, |current| current.max(watch_retention)),
+                );
+            }
+            Ok((
+                EvidenceCapsuleProfile::PrivateHistory,
+                retention_days.ok_or(JobError::StorageInvariant)?,
+            ))
+        }
+        "shared" if has_search_consumer && watch_consumers.is_empty() => Ok((
+            EvidenceCapsuleProfile::SharedObservation,
+            SHARED_CAPSULE_RETENTION_DAYS,
+        )),
+        _ => Err(JobError::StorageInvariant),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_evidence_capsule(
+    claim: &JobClaim,
+    result: &SearchResult,
+    outcome: RecordedOutcome,
+    capsule_id: Uuid,
+    observation_id: Uuid,
+    profile: EvidenceCapsuleProfile,
+    collected_at_unix_ms: i64,
+    structured_retained_until_unix_ms: i64,
+) -> Result<EvidenceCapsuleResource, JobError> {
+    let target = Target {
+        username: Username::new(result.username.clone()).map_err(|_| JobError::InvalidProtocol)?,
+        site_id: SiteId::new(result.site_id.clone()).map_err(|_| JobError::InvalidProtocol)?,
+    };
+    let outcome = match outcome {
+        RecordedOutcome::Definitive(verdict) => EvidenceOutcome::Definitive { verdict },
+        RecordedOutcome::Uncertain(reason) => EvidenceOutcome::Uncertain { reason },
+    };
+    let probes = result
+        .probes
+        .iter()
+        .map(|probe| {
+            Ok(EvidenceProbe {
+                probe_id: probe.probe_id.clone(),
+                transport: evidence_transport_outcome(probe.transport),
+                status: probe.status,
+                final_url: probe
+                    .final_url
+                    .as_ref()
+                    .map(|value| HttpsUrl::new(value.clone()))
+                    .transpose()
+                    .map_err(|_| JobError::InvalidProtocol)?,
+                content_type: probe
+                    .content_type
+                    .as_deref()
+                    .and_then(|value| sanitized_bounded_text(value, 256, None)),
+                body_bytes: u64::try_from(probe.body_bytes)
+                    .map_err(|_| JobError::InvalidProtocol)?,
+                body_truncated: probe.body_truncated,
+                latency_bucket_ms: latency_bucket_ms(probe.elapsed_ms),
+            })
+        })
+        .collect::<Result<Vec<_>, JobError>>()?;
+    let matcher_trace = result
+        .classification
+        .matcher_trace
+        .iter()
+        .map(|trace| EvidenceMatcherTrace {
+            path: sanitized_bounded_text(&trace.path, 512, Some("matcher"))
+                .expect("fallback produces a nonempty bounded matcher path"),
+            matched: trace.matched,
+            detail: sanitized_bounded_text(&trace.detail, 256, Some("detail"))
+                .expect("fallback produces nonempty bounded matcher detail"),
+        })
+        .collect();
+    let capsule = EvidenceCapsuleResource {
+        schema: ProtocolVersion::ApiV1,
+        capsule_schema: EvidenceCapsuleSchema::V1,
+        evidence_capsule_id: EvidenceCapsuleId::new(capsule_id.to_string())
+            .map_err(|_| JobError::InvalidProtocol)?,
+        observation_id: ObservationId::new(observation_id.to_string())
+            .map_err(|_| JobError::InvalidProtocol)?,
+        profile,
+        target,
+        outcome,
+        provenance: EvidenceProvenance {
+            rule_hash: RuleHash::new(claim.rule_hash.clone())
+                .map_err(|_| JobError::InvalidProtocol)?,
+            rule_pack_hash: claim.rule_pack_hash.clone(),
+            engine_hash: claim.engine_hash.clone(),
+            rule_pack_metadata_id: claim.metadata_id.clone(),
+            rule_promotion_id: claim.promotion_id.clone(),
+        },
+        vantage: EvidenceVantage {
+            region_class: RegionClass::new(claim.region_class.clone())
+                .map_err(|_| JobError::InvalidProtocol)?,
+            network_class: EvidenceNetworkClass::Managed,
+        },
+        evidence_class: protocol_evidence_class(result.classification.evidence_class),
+        evidence_digest: EvidenceDigest::new(result.classification.evidence_digest.clone())
+            .map_err(|_| JobError::InvalidProtocol)?,
+        profile_url: result
+            .profile_url
+            .as_ref()
+            .map(|value| HttpsUrl::new(value.clone()))
+            .transpose()
+            .map_err(|_| JobError::InvalidProtocol)?,
+        probes,
+        matcher_trace,
+        collected_at_unix_ms,
+        structured_retained_until_unix_ms,
+        research_extension: None,
+        research_retained_until_unix_ms: None,
+    };
+    capsule.validate().map_err(|_| JobError::InvalidProtocol)?;
+    Ok(capsule)
+}
+
+fn sanitized_bounded_text(
+    value: &str,
+    maximum_bytes: usize,
+    fallback: Option<&str>,
+) -> Option<String> {
+    let mut output = String::with_capacity(value.len().min(maximum_bytes));
+    for character in value.chars().filter(|character| !character.is_control()) {
+        if output.len() + character.len_utf8() > maximum_bytes {
+            break;
+        }
+        output.push(character);
+    }
+    if output.is_empty() {
+        fallback.map(str::to_owned)
+    } else {
+        Some(output)
+    }
+}
+
+fn latency_bucket_ms(elapsed_ms: u64) -> u32 {
+    const BUCKETS: [u32; 15] = [
+        0, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 90_000, 120_000,
+    ];
+    BUCKETS
+        .into_iter()
+        .find(|bucket| elapsed_ms <= u64::from(*bucket))
+        .unwrap_or(120_000)
+}
+
+const fn evidence_transport_outcome(value: TransportOutcome) -> EvidenceTransportOutcome {
+    match value {
+        TransportOutcome::Completed => EvidenceTransportOutcome::Completed,
+        TransportOutcome::Blocked => EvidenceTransportOutcome::Blocked,
+        TransportOutcome::RateLimited => EvidenceTransportOutcome::RateLimited,
+        TransportOutcome::Timeout => EvidenceTransportOutcome::Timeout,
+        TransportOutcome::Dns => EvidenceTransportOutcome::Dns,
+        TransportOutcome::Connect => EvidenceTransportOutcome::Connect,
+        TransportOutcome::Tls => EvidenceTransportOutcome::Tls,
+        TransportOutcome::RedirectRejected => EvidenceTransportOutcome::RedirectRejected,
+        TransportOutcome::ResponseTooLarge => EvidenceTransportOutcome::ResponseTooLarge,
+        TransportOutcome::Decode => EvidenceTransportOutcome::Decode,
+    }
+}
+
+const fn evidence_capsule_profile_name(value: EvidenceCapsuleProfile) -> &'static str {
+    match value {
+        EvidenceCapsuleProfile::PrivateHistory => "private_history",
+        EvidenceCapsuleProfile::SharedObservation => "shared_observation",
+        EvidenceCapsuleProfile::SharedResearch => "shared_research",
+    }
+}
+
 fn result_event(
     result: &SearchResult,
     outcome: RecordedOutcome,
@@ -2824,6 +3127,7 @@ mod tests {
             site_id: "managed-test".to_owned(),
             rule_hash: "11".repeat(32),
             rule_pack_hash: "22".repeat(32),
+            engine_hash: "55".repeat(32),
             region_class: "jp".to_owned(),
             metadata_id: "33".repeat(32),
             metadata_sequence: 1,
@@ -2865,6 +3169,59 @@ mod tests {
     }
 
     #[test]
+    fn evidence_retention_is_consumer_specific_and_bounded() {
+        let watch = LiveWatchConsumer {
+            watch_run_target_id: Uuid::from_u128(10),
+            watch_run_id: Uuid::from_u128(11),
+            watch_target_id: Uuid::from_u128(12),
+            retention_days: 30,
+        };
+        assert_eq!(
+            evidence_retention_policy("private", true, &[]).unwrap(),
+            (
+                EvidenceCapsuleProfile::PrivateHistory,
+                PRIVATE_INTERACTIVE_RETENTION_DAYS,
+            )
+        );
+        assert_eq!(
+            evidence_retention_policy("private", false, std::slice::from_ref(&watch)).unwrap(),
+            (EvidenceCapsuleProfile::PrivateHistory, 30)
+        );
+        assert_eq!(
+            evidence_retention_policy("private", true, std::slice::from_ref(&watch)).unwrap(),
+            (
+                EvidenceCapsuleProfile::PrivateHistory,
+                PRIVATE_INTERACTIVE_RETENTION_DAYS,
+            )
+        );
+        assert_eq!(
+            evidence_retention_policy("shared", true, &[]).unwrap(),
+            (
+                EvidenceCapsuleProfile::SharedObservation,
+                SHARED_CAPSULE_RETENTION_DAYS,
+            )
+        );
+        assert!(evidence_retention_policy("shared", true, &[watch]).is_err());
+        assert!(evidence_retention_policy("private", false, &[]).is_err());
+    }
+
+    #[test]
+    fn evidence_transport_metrics_are_coarsened_and_sanitized() {
+        assert_eq!(latency_bucket_ms(0), 0);
+        assert_eq!(latency_bucket_ms(1), 10);
+        assert_eq!(latency_bucket_ms(26), 50);
+        assert_eq!(latency_bucket_ms(u64::MAX), 120_000);
+        assert_eq!(
+            sanitized_bounded_text("application/json\r\nsecret", 16, None),
+            Some("application/json".to_owned())
+        );
+        assert_eq!(
+            sanitized_bounded_text("\r\n", 16, Some("redacted")),
+            Some("redacted".to_owned())
+        );
+    }
+
+    #[test]
     fn watch_jitter_is_deterministic_and_bounded_per_scheduled_run() {
         let watch_id = Uuid::from_u128(7);
         let delay = watch_schedule_delay_ms(watch_id, 3, 1_000_000, 300, 20).unwrap();
@@ -2891,7 +3248,10 @@ mod tests {
             rule_version_id: Uuid::from_u128(3),
             rule_hash: "11".repeat(32),
             rule_pack_hash: "22".repeat(32),
+            engine_hash: "55".repeat(32),
             region_class: "jp".to_owned(),
+            metadata_id: "33".repeat(32),
+            promotion_id: "44".repeat(32),
             consent_grant_id: Uuid::from_u128(4),
             visibility: "private".to_owned(),
             attempt_count: 1,

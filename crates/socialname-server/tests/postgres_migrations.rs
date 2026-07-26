@@ -32,12 +32,16 @@ use socialname_protocol::{
     ApiErrorCode, ApiErrorResponse, ConsentCollectionProfileVersion, ConsentGrantCreateRequest,
     ConsentGrantId, ConsentGrantListPage, ConsentGrantResource, ConsentGrantState,
     ConsentNoticeVersion, ConsentPurpose, ConsentSource, ConsentSubjectKind,
-    ConsentWithdrawalRequest, EventId, InstallationId, NotificationEndpointId, OperationalFailure,
-    OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass, ResultSource,
-    SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode, SearchProgress,
-    SearchResource, SearchState, SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection,
-    Username, Validate, WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource,
-    WatchSchedule, WatchState, WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
+    ConsentWithdrawalRequest, DefinitiveVerdict, EventId, EvidenceCapsuleId,
+    EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
+    EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
+    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
+    NotificationEndpointId, OperationalFailure, OperationalFailureKind, ProbeBudget,
+    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent,
+    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState,
+    SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection, Username, Validate,
+    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchSchedule, WatchState,
+    WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
@@ -46,8 +50,9 @@ use socialname_server::{
 };
 use socialname_worker::{
     DeliveryError, DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets, DeliveryStore,
-    ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule,
-    WatchPlanOutcome, WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
+    EvidenceRetentionOutcome, ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore,
+    ManagedRule, WatchPlanOutcome, WebhookRequest, WebhookSendError, WebhookTransport,
+    process_one_delivery,
 };
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -87,6 +92,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_private_search_and_event_stream_boundary(&pool).await;
     assert_watch_api_boundary(&pool).await;
     assert_managed_probe_job_boundary(&pool).await;
+    assert_evidence_capsule_retention_boundary(&pool).await;
     assert_monitoring_console_boundary(&pool).await;
 
     pool.close().await;
@@ -108,7 +114,8 @@ async fn reset_test_state(pool: &PgPool) {
             notification_endpoints, notification_deliveries,
             notification_delivery_attempts, audit_events,
             data_lineage_edges, deletion_requests, deletion_tasks,
-            deletion_receipts, suppression_tokens
+            deletion_receipts, suppression_tokens, evidence_capsules,
+            evidence_retention_receipts
         CASCADE;
 
         DO $$
@@ -164,7 +171,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('notification_deliveries'), ('notification_delivery_attempts'),
                 ('audit_events'), ('data_lineage_edges'),
                 ('deletion_requests'), ('deletion_tasks'), ('deletion_receipts'),
-                ('suppression_tokens')
+                ('suppression_tokens'), ('evidence_capsules'),
+                ('evidence_retention_receipts')
         )
         SELECT count(*)
         FROM required
@@ -174,7 +182,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 42);
+    assert_eq!(required_tables, 44);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -183,7 +191,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 32);
+    assert_eq!(tenant_policies, 34);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -193,7 +201,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 32);
+    assert_eq!(forced_rls_tables, 34);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -464,6 +472,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "watch:write",
                 "consent:read",
                 "consent:write",
+                "evidence:read",
             ],
             state: "active",
             expires_at_unix_ms: None,
@@ -482,6 +491,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "watch:write",
                 "consent:read",
                 "consent:write",
+                "evidence:read",
             ],
             state: "active",
             expires_at_unix_ms: None,
@@ -616,7 +626,7 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             watches, watch_targets, watch_notification_endpoints,
             notification_endpoints, watch_runs, watch_run_targets,
             transitions, transition_basis, notification_deliveries,
-            rule_versions
+            rule_versions, evidence_capsules
             TO socialname_migration_test_app;
         GRANT INSERT ON
             clients, consent_grants, consent_events,
@@ -2079,7 +2089,8 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
              'socialname_worker_lock_next_watch_target', \
              'socialname_worker_claim_job', \
              'socialname_worker_lock_claim_consent', \
-             'socialname_worker_claim_webhook_delivery'\
+             'socialname_worker_claim_webhook_delivery', \
+             'socialname_worker_enforce_evidence_retention'\
          )",
     )
     .fetch_one(administrator_pool)
@@ -2264,6 +2275,78 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             .unwrap(),
         JobDisposition::AlreadyFinal
     );
+    let stored_capsule: (Uuid, String, i64, serde_json::Value) = sqlx::query_as(
+        "SELECT observation.id, capsule.collection_profile, \
+                (EXTRACT(EPOCH FROM \
+                    capsule.structured_retained_until - capsule.collected_at\
+                ) / 86400)::bigint AS retention_days, \
+                capsule.structured_payload \
+         FROM observations AS observation \
+         JOIN evidence_capsules AS capsule \
+           ON capsule.tenant_id = observation.tenant_id \
+          AND capsule.observation_id = observation.id \
+         WHERE observation.probe_job_id = $1",
+    )
+    .bind(second_job_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(stored_capsule.1, "private_history");
+    assert_eq!(stored_capsule.2, 400);
+    let capsule: EvidenceCapsuleResource =
+        serde_json::from_value(stored_capsule.3.clone()).unwrap();
+    assert!(capsule.validate().is_ok());
+    assert_eq!(
+        capsule.observation_id.as_str(),
+        stored_capsule.0.to_string()
+    );
+    assert_eq!(capsule.provenance.engine_hash, MANAGED_ENGINE_HASH);
+    assert_eq!(capsule.target.username.as_str(), "private-search-target");
+    let serialized_capsule = stored_capsule.3.to_string().to_ascii_lowercase();
+    assert!(!serialized_capsule.contains("\"body\":"));
+    assert!(!serialized_capsule.contains("\"headers\":"));
+    assert!(!serialized_capsule.contains("cookie"));
+    assert!(!serialized_capsule.contains("authorization"));
+
+    let capsule_path = format!("/v1/observations/{}/evidence-capsule", stored_capsule.0);
+    let capsule_response = server_request(
+        &application_pool,
+        &capsule_path,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+    )
+    .await;
+    assert_eq!(capsule_response.status(), StatusCode::OK);
+    let capsule_resource: EvidenceCapsuleResource =
+        serde_json::from_value(json_body(capsule_response).await).unwrap();
+    assert!(capsule_resource.validate().is_ok());
+    assert_eq!(capsule_resource, capsule);
+    let wrong_scope = server_request(
+        &application_pool,
+        &capsule_path,
+        Some(&api_key_token("cccccccccccccccc", 0x33)),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    let other_tenant = server_request(
+        &application_pool,
+        &capsule_path,
+        Some(&api_key_token("bbbbbbbbbbbbbbbb", 0x22)),
+    )
+    .await;
+    assert_eq!(other_tenant.status(), StatusCode::NOT_FOUND);
+    let capsule_lineage: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM data_lineage_edges \
+         WHERE parent_kind = 'observation' AND parent_id = $1 \
+           AND child_kind = 'evidence_capsule' \
+           AND child_id = $2 AND purpose = 'bounded_evidence'",
+    )
+    .bind(stored_capsule.0)
+    .bind(Uuid::parse_str(capsule.evidence_capsule_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(capsule_lineage, 1);
+
     let completed_watch_run: (String, i32, i32, i64, i64, String) = sqlx::query_as(
         "SELECT run.state, run.reserved_probes, run.maximum_probes, \
                 run.reserved_bytes, run.maximum_bytes, target.state \
@@ -3904,6 +3987,358 @@ async fn assert_persisted_rule_pack_rotation_and_rollback(
     );
 }
 
+async fn assert_evidence_capsule_retention_boundary(administrator_pool: &PgPool) {
+    let now = current_unix_ms();
+    let research = insert_retention_capsule_fixture(
+        administrator_pool,
+        "retention-research",
+        EvidenceCapsuleProfile::SharedResearch,
+        now - 31 * 24 * 60 * 60 * 1_000,
+        Some("bounded sanitized research excerpt"),
+    )
+    .await;
+    let expired_first = insert_retention_capsule_fixture(
+        administrator_pool,
+        "retention-expired-first",
+        EvidenceCapsuleProfile::SharedObservation,
+        now - 402 * 24 * 60 * 60 * 1_000,
+        None,
+    )
+    .await;
+    let expired_second = insert_retention_capsule_fixture(
+        administrator_pool,
+        "retention-expired-second",
+        EvidenceCapsuleProfile::SharedObservation,
+        now - 401 * 24 * 60 * 60 * 1_000,
+        None,
+    )
+    .await;
+
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let research_path = format!(
+        "/v1/observations/{}/evidence-capsule",
+        research.observation_id
+    );
+    let visible = server_request(&application_pool, &research_path, Some(&token)).await;
+    assert_eq!(visible.status(), StatusCode::OK);
+    let visible: EvidenceCapsuleResource =
+        serde_json::from_value(json_body(visible).await).unwrap();
+    assert!(visible.validate().is_ok());
+    assert_eq!(visible.profile, EvidenceCapsuleProfile::SharedResearch);
+    assert_eq!(visible.research_extension, None);
+    assert_eq!(visible.research_retained_until_unix_ms, None);
+
+    for expired in [&expired_first, &expired_second] {
+        let path = format!(
+            "/v1/observations/{}/evidence-capsule",
+            expired.observation_id
+        );
+        let hidden = server_request(&application_pool, &path, Some(&token)).await;
+        assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+    }
+
+    let research_still_stored: bool = sqlx::query_scalar(
+        "SELECT research_excerpt IS NOT NULL \
+         FROM evidence_capsules WHERE id = $1",
+    )
+    .bind(research.capsule_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(research_still_stored);
+
+    let mutation = sqlx::query(
+        "UPDATE evidence_capsules \
+         SET structured_payload = structured_payload \
+             || '{\"raw_http_body\":\"forbidden\"}'::jsonb \
+         WHERE id = $1",
+    )
+    .bind(research.capsule_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(mutation, "55000");
+
+    let can_mutate_payload: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'evidence_capsules', \
+            'structured_payload', 'UPDATE'\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(!can_mutate_payload);
+
+    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
+        .expect("worker database URL must accompany the PostgreSQL integration test");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&worker_database_url)
+        .await
+        .unwrap();
+    let store = JobStore::new(worker_pool);
+    assert_eq!(
+        store.enforce_evidence_retention(0).await.unwrap_err(),
+        JobError::InvalidConfiguration
+    );
+    assert_eq!(
+        store.enforce_evidence_retention(1).await.unwrap(),
+        EvidenceRetentionOutcome {
+            research_excerpts_purged: 1,
+            structured_capsules_purged: 1,
+            expired_receipts_deleted: 0,
+        }
+    );
+    let first_payload_state: (bool, bool) = sqlx::query_as(
+        "SELECT \
+            (SELECT structured_payload IS NULL FROM evidence_capsules WHERE id = $1), \
+            (SELECT structured_payload IS NULL FROM evidence_capsules WHERE id = $2)",
+    )
+    .bind(expired_first.capsule_id)
+    .bind(expired_second.capsule_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(first_payload_state, (true, false));
+    assert_eq!(
+        store.enforce_evidence_retention(1).await.unwrap(),
+        EvidenceRetentionOutcome {
+            research_excerpts_purged: 0,
+            structured_capsules_purged: 1,
+            expired_receipts_deleted: 0,
+        }
+    );
+    assert_eq!(
+        store.enforce_evidence_retention(1).await.unwrap(),
+        EvidenceRetentionOutcome {
+            research_excerpts_purged: 0,
+            structured_capsules_purged: 0,
+            expired_receipts_deleted: 0,
+        }
+    );
+    store.close().await;
+
+    let purged_state: (bool, bool, bool, i64) = sqlx::query_as(
+        "SELECT \
+            (SELECT research_excerpt IS NULL AND research_purged_at IS NOT NULL \
+             FROM evidence_capsules WHERE id = $1), \
+            (SELECT structured_payload IS NULL AND structured_purged_at IS NOT NULL \
+             FROM evidence_capsules WHERE id = $2), \
+            (SELECT structured_payload IS NULL AND structured_purged_at IS NOT NULL \
+             FROM evidence_capsules WHERE id = $3), \
+            (SELECT count(*) FROM evidence_retention_receipts \
+             WHERE evidence_capsule_id IN ($1, $2, $3))",
+    )
+    .bind(research.capsule_id)
+    .bind(expired_first.capsule_id)
+    .bind(expired_second.capsule_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(purged_state, (true, true, true, 3));
+    let receipt_shape: (i64, bool) = sqlx::query_as(
+        "SELECT count(*), bool_and(expires_at = completed_at + interval '3 years') \
+         FROM evidence_retention_receipts \
+         WHERE evidence_capsule_id IN ($1, $2, $3)",
+    )
+    .bind(research.capsule_id)
+    .bind(expired_first.capsule_id)
+    .bind(expired_second.capsule_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(receipt_shape, (3, true));
+    let receipt_payload_columns: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns \
+         WHERE table_schema = 'public' \
+           AND table_name = 'evidence_retention_receipts' \
+           AND column_name IN (\
+               'target', 'username', 'site_id', 'payload', 'excerpt'\
+           )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(receipt_payload_columns, 0);
+    application_pool.close().await;
+}
+
+struct RetentionCapsuleFixture {
+    capsule_id: Uuid,
+    observation_id: Uuid,
+}
+
+async fn insert_retention_capsule_fixture(
+    pool: &PgPool,
+    username: &str,
+    profile: EvidenceCapsuleProfile,
+    collected_at_unix_ms: i64,
+    research_excerpt: Option<&str>,
+) -> RetentionCapsuleFixture {
+    let job_id = Uuid::new_v4();
+    let observation_id = Uuid::new_v4();
+    let capsule_id = Uuid::new_v4();
+    let rule_version_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM rule_versions \
+         WHERE site_id = 'managed-test' ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let structured_retained_until_unix_ms = collected_at_unix_ms + 400 * 24 * 60 * 60 * 1_000;
+    let profile_name = match profile {
+        EvidenceCapsuleProfile::PrivateHistory => "private_history",
+        EvidenceCapsuleProfile::SharedObservation => "shared_observation",
+        EvidenceCapsuleProfile::SharedResearch => "shared_research",
+    };
+    let capsule = EvidenceCapsuleResource {
+        schema: ProtocolVersion::ApiV1,
+        capsule_schema: EvidenceCapsuleSchema::V1,
+        evidence_capsule_id: EvidenceCapsuleId::new(capsule_id.to_string()).unwrap(),
+        observation_id: socialname_protocol::ObservationId::new(observation_id.to_string())
+            .unwrap(),
+        profile,
+        target: Target {
+            username: Username::new(username).unwrap(),
+            site_id: SiteId::new("managed-test").unwrap(),
+        },
+        outcome: EvidenceOutcome::Definitive {
+            verdict: DefinitiveVerdict::Found,
+        },
+        provenance: EvidenceProvenance {
+            rule_hash: RuleHash::new("1".repeat(64)).unwrap(),
+            rule_pack_hash: "2".repeat(64),
+            engine_hash: "3".repeat(64),
+            rule_pack_metadata_id: "4".repeat(64),
+            rule_promotion_id: "5".repeat(64),
+        },
+        vantage: EvidenceVantage {
+            region_class: RegionClass::new("jp").unwrap(),
+            network_class: EvidenceNetworkClass::Managed,
+        },
+        evidence_class: EvidenceClass::E4StructuredIdentity,
+        evidence_digest: EvidenceDigest::new("6".repeat(64)).unwrap(),
+        profile_url: None,
+        probes: vec![EvidenceProbe {
+            probe_id: "api".to_owned(),
+            transport: EvidenceTransportOutcome::Completed,
+            status: Some(200),
+            final_url: None,
+            content_type: Some("application/json".to_owned()),
+            body_bytes: 128,
+            body_truncated: false,
+            latency_bucket_ms: 100,
+        }],
+        matcher_trace: vec![EvidenceMatcherTrace {
+            path: "found.all[0]".to_owned(),
+            matched: true,
+            detail: "status Some(200)".to_owned(),
+        }],
+        collected_at_unix_ms,
+        structured_retained_until_unix_ms,
+        research_extension: None,
+        research_retained_until_unix_ms: None,
+    };
+    capsule.validate().unwrap();
+    let payload = serde_json::to_value(&capsule).unwrap();
+    let bytes = serde_json::to_vec(&capsule).unwrap();
+    let payload_digest = Sha256::digest(&bytes);
+    let work_key_hash = Sha256::digest(job_id.as_bytes());
+
+    sqlx::query(
+        "INSERT INTO probe_jobs (\
+            id, tenant_id, normalized_username, site_id, rule_version_id, \
+            region_class, work_key_hash, consent_grant_id, visibility, state, \
+            available_at, created_at, updated_at, completed_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', $2, \
+            'managed-test', $3, 'jp', $4, \
+            '00000000-0000-0000-0000-000000000031', 'private', \
+            'succeeded', clock_timestamp(), clock_timestamp(), \
+            clock_timestamp(), clock_timestamp()\
+         )",
+    )
+    .bind(job_id)
+    .bind(username)
+    .bind(rule_version_id)
+    .bind(&work_key_hash[..])
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO observations (\
+            id, tenant_id, probe_job_id, consent_grant_id, \
+            normalized_username, site_id, rule_version_id, outcome_kind, \
+            verdict, evidence_class, evidence_digest, source, producer_kind, \
+            visibility, region_class, rule_health_green, observed_at, \
+            expires_at, created_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', $2, \
+            '00000000-0000-0000-0000-000000000031', $3, \
+            'managed-test', $4, 'definitive', 'found', \
+            'e4_structured_identity', decode(repeat('66', 32), 'hex'), \
+            'managed_probe', 'managed_worker', 'private', 'jp', true, \
+            to_timestamp($5::double precision / 1000.0), \
+            to_timestamp($6::double precision / 1000.0), clock_timestamp()\
+         )",
+    )
+    .bind(observation_id)
+    .bind(job_id)
+    .bind(username)
+    .bind(rule_version_id)
+    .bind(collected_at_unix_ms)
+    .bind(collected_at_unix_ms + 60 * 60 * 1_000)
+    .execute(pool)
+    .await
+    .unwrap();
+    let research_digest = research_excerpt.map(|excerpt| Sha256::digest(excerpt.as_bytes()));
+    let research_retained_until_unix_ms =
+        research_excerpt.map(|_| collected_at_unix_ms + 30 * 24 * 60 * 60 * 1_000);
+    sqlx::query(
+        "INSERT INTO evidence_capsules (\
+            id, tenant_id, observation_id, collection_profile, \
+            structured_payload, structured_payload_digest, \
+            structured_payload_bytes, collected_at, \
+            structured_retained_until, research_excerpt, \
+            research_excerpt_digest, research_retained_until, created_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', $2, $3, \
+            $4, $5, $6, to_timestamp($7::double precision / 1000.0), \
+            to_timestamp($8::double precision / 1000.0), $9, $10, \
+            CASE WHEN $11::bigint IS NULL THEN NULL \
+                 ELSE to_timestamp($11::double precision / 1000.0) END, \
+            clock_timestamp()\
+         )",
+    )
+    .bind(capsule_id)
+    .bind(observation_id)
+    .bind(profile_name)
+    .bind(payload)
+    .bind(&payload_digest[..])
+    .bind(i32::try_from(bytes.len()).unwrap())
+    .bind(collected_at_unix_ms)
+    .bind(structured_retained_until_unix_ms)
+    .bind(research_excerpt)
+    .bind(research_digest.as_ref().map(|digest| &digest[..]))
+    .bind(research_retained_until_unix_ms)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    RetentionCapsuleFixture {
+        capsule_id,
+        observation_id,
+    }
+}
+
 fn delivery_secrets() -> DeliverySecrets {
     DeliverySecrets::new("endpoint-key-1", [7; 32], "signing-key-1", [9; 32]).unwrap()
 }
@@ -4574,14 +5009,16 @@ async fn install_worker_role(pool: &PgPool) {
             watch_run_targets, observations, assertions, assertion_support,
             regional_assertions, regional_assertion_support, transitions,
             transition_basis, notification_deliveries,
-            notification_delivery_attempts
+            notification_delivery_attempts, evidence_capsules,
+            evidence_retention_receipts
             TO socialname_migration_test_worker;
         GRANT INSERT ON
             search_events, probe_jobs, probe_job_consumers, observations,
             assertions, assertion_support, regional_assertions,
             regional_assertion_support, transitions, transition_basis,
             notification_deliveries, notification_delivery_attempts,
-            audit_events, data_lineage_edges, watch_runs, watch_run_targets
+            audit_events, data_lineage_edges, watch_runs, watch_run_targets,
+            evidence_capsules
             TO socialname_migration_test_worker;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
             TO socialname_migration_test_worker;
@@ -4623,7 +5060,8 @@ async fn install_worker_role(pool: &PgPool) {
             socialname_worker_lock_next_watch_target(uuid, text),
             socialname_worker_claim_job(uuid, text, text, integer),
             socialname_worker_lock_claim_consent(uuid, integer, text),
-            socialname_worker_claim_webhook_delivery(text, integer, integer)
+            socialname_worker_claim_webhook_delivery(text, integer, integer),
+            socialname_worker_enforce_evidence_retention(integer)
             TO socialname_migration_test_worker;
         "#,
     ))
