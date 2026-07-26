@@ -29,13 +29,15 @@ use socialname_domain::{
 };
 use socialname_engine::{Classification, SearchResult};
 use socialname_protocol::{
-    ApiErrorCode, ApiErrorResponse, ConsentGrantId, EventId, NotificationEndpointId,
-    OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass,
-    ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
-    SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId, SyncPolicy, Target,
-    TargetSelection, Username, Validate, WatchCreateRequest, WatchListPage, WatchPatchRequest,
-    WatchResource, WatchSchedule, WatchState, WatchStateUpdate, WatchTransitionPage,
-    WorkspaceResource,
+    ApiErrorCode, ApiErrorResponse, ConsentCollectionProfileVersion, ConsentGrantCreateRequest,
+    ConsentGrantId, ConsentGrantListPage, ConsentGrantResource, ConsentGrantState,
+    ConsentNoticeVersion, ConsentPurpose, ConsentSource, ConsentSubjectKind,
+    ConsentWithdrawalRequest, EventId, InstallationId, NotificationEndpointId, OperationalFailure,
+    OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass, ResultSource,
+    SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode, SearchProgress,
+    SearchResource, SearchState, SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection,
+    Username, Validate, WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource,
+    WatchSchedule, WatchState, WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
@@ -81,6 +83,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_transition_and_delivery_safety(&pool).await;
     assert_deletion_deadlines_and_receipts(&pool).await;
     assert_authenticated_workspace_boundary(&pool).await;
+    assert_consent_grant_lifecycle_boundary(&pool).await;
     assert_private_search_and_event_stream_boundary(&pool).await;
     assert_watch_api_boundary(&pool).await;
     assert_managed_probe_job_boundary(&pool).await;
@@ -459,6 +462,8 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "search:write",
                 "watch:read",
                 "watch:write",
+                "consent:read",
+                "consent:write",
             ],
             state: "active",
             expires_at_unix_ms: None,
@@ -475,6 +480,8 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "search:write",
                 "watch:read",
                 "watch:write",
+                "consent:read",
+                "consent:write",
             ],
             state: "active",
             expires_at_unix_ms: None,
@@ -604,15 +611,21 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT SELECT ON api_keys TO socialname_migration_test_app;
         GRANT UPDATE (last_used_at) ON api_keys TO socialname_migration_test_app;
         GRANT SELECT ON
-            sites, consent_grants, searches, search_targets, search_events,
+            sites, clients, consent_grants, consent_events,
+            searches, search_targets, search_events,
             watches, watch_targets, watch_notification_endpoints,
             notification_endpoints, watch_runs, watch_run_targets,
             transitions, transition_basis, notification_deliveries,
             rule_versions
             TO socialname_migration_test_app;
         GRANT INSERT ON
+            clients, consent_grants, consent_events,
             searches, search_targets, search_events, watches, watch_targets,
             watch_notification_endpoints
+            TO socialname_migration_test_app;
+        GRANT UPDATE (last_seen_at) ON clients
+            TO socialname_migration_test_app;
+        GRANT UPDATE (withdrawn_at) ON consent_grants
             TO socialname_migration_test_app;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
             TO socialname_migration_test_app;
@@ -1020,6 +1033,374 @@ async fn assert_authenticated_workspace_boundary(administrator_pool: &PgPool) {
     let not_ready = server_request(&closed_pool, "/health/ready", None).await;
     assert_eq!(not_ready.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(json_body(not_ready).await["status"], "not_ready");
+}
+
+async fn assert_consent_grant_lifecycle_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let owner_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let wrong_scope_token = api_key_token("cccccccccccccccc", 0x33);
+    let other_member_token = api_key_token("ffffffffffffffff", 0x66);
+    install_other_consent_member(administrator_pool).await;
+
+    let wrong_scope = server_request(
+        &application_pool,
+        "/v1/consent-grants",
+        Some(&wrong_scope_token),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_scope, ApiErrorCode::Forbidden).await;
+
+    let research_request = consent_request(ConsentPurpose::SharedResearch);
+    let created = post_consent_grant(&application_pool, &owner_token, &research_request).await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let location = created.headers()[LOCATION].to_str().unwrap().to_owned();
+    let research: ConsentGrantResource = serde_json::from_value(json_body(created).await).unwrap();
+    assert!(research.validate().is_ok());
+    assert_eq!(research.subject_kind, ConsentSubjectKind::Account);
+    assert_eq!(research.purpose, ConsentPurpose::SharedResearch);
+    assert_eq!(research.source, ConsentSource::Api);
+    assert_eq!(research.state, ConsentGrantState::Active);
+    assert_eq!(
+        location,
+        format!("/v1/consent-grants/{}", research.consent_grant_id.as_str())
+    );
+
+    let replayed = post_consent_grant(&application_pool, &owner_token, &research_request).await;
+    assert_eq!(replayed.status(), StatusCode::OK);
+    let replayed: ConsentGrantResource = serde_json::from_value(json_body(replayed).await).unwrap();
+    assert_eq!(replayed.consent_grant_id, research.consent_grant_id);
+
+    let different_expiry_request = ConsentGrantCreateRequest {
+        expires_at_unix_ms: Some(current_unix_ms() + 60_000),
+        ..research_request.clone()
+    };
+    let different_expiry =
+        post_consent_grant(&application_pool, &owner_token, &different_expiry_request).await;
+    assert_eq!(different_expiry.status(), StatusCode::CONFLICT);
+    assert_api_error(different_expiry, ApiErrorCode::Conflict).await;
+
+    let installation_id = InstallationId::new("11111111-1111-4111-8111-111111111111").unwrap();
+    let invalid_subject = ConsentGrantCreateRequest {
+        installation_id: Some(installation_id.clone()),
+        ..research_request.clone()
+    };
+    let invalid_subject =
+        post_consent_grant(&application_pool, &owner_token, &invalid_subject).await;
+    assert_eq!(invalid_subject.status(), StatusCode::BAD_REQUEST);
+    let invalid_subject_body = json_body(invalid_subject).await;
+    assert_eq!(invalid_subject_body["error"]["code"], "invalid_request");
+    assert!(
+        !invalid_subject_body
+            .to_string()
+            .contains(installation_id.as_str())
+    );
+
+    let expired_request = ConsentGrantCreateRequest {
+        purpose: ConsentPurpose::PrivateHistory,
+        expires_at_unix_ms: Some(1),
+        ..research_request.clone()
+    };
+    let expired = post_consent_grant(&application_pool, &owner_token, &expired_request).await;
+    assert_eq!(expired.status(), StatusCode::BAD_REQUEST);
+    assert_api_error(expired, ApiErrorCode::InvalidRequest).await;
+
+    let installation_request = ConsentGrantCreateRequest {
+        subject_kind: ConsentSubjectKind::Installation,
+        installation_id: Some(installation_id.clone()),
+        purpose: ConsentPurpose::SharedObservation,
+        ..research_request.clone()
+    };
+    let installation_created =
+        post_consent_grant(&application_pool, &owner_token, &installation_request).await;
+    assert_eq!(installation_created.status(), StatusCode::CREATED);
+    let installation: ConsentGrantResource =
+        serde_json::from_value(json_body(installation_created).await).unwrap();
+    assert_eq!(installation.subject_kind, ConsentSubjectKind::Installation);
+    let stored_installation_hash: Vec<u8> = sqlx::query_scalar(
+        "SELECT installation_hash FROM clients \
+         WHERE tenant_id = '00000000-0000-0000-0000-000000000001' AND id = $1",
+    )
+    .bind(Uuid::parse_str(installation.subject_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(stored_installation_hash.len(), 32);
+    assert_ne!(
+        stored_installation_hash,
+        Sha256::digest(installation_id.as_str().as_bytes()).to_vec()
+    );
+
+    let administrator_override = post_consent_grant(
+        &application_pool,
+        &other_member_token,
+        &installation_request,
+    )
+    .await;
+    assert_eq!(administrator_override.status(), StatusCode::CONFLICT);
+    assert_api_error(administrator_override, ApiErrorCode::Conflict).await;
+
+    let shared_request = consent_request(ConsentPurpose::SharedObservation);
+    let shared_created = post_consent_grant(&application_pool, &owner_token, &shared_request).await;
+    assert_eq!(shared_created.status(), StatusCode::CREATED);
+    let shared: ConsentGrantResource =
+        serde_json::from_value(json_body(shared_created).await).unwrap();
+
+    let first_page = server_request(
+        &application_pool,
+        "/v1/consent-grants?limit=1",
+        Some(&owner_token),
+    )
+    .await;
+    assert_eq!(first_page.status(), StatusCode::OK);
+    let first_page: ConsentGrantListPage =
+        serde_json::from_value(json_body(first_page).await).unwrap();
+    assert!(first_page.validate().is_ok());
+    assert_eq!(first_page.consent_grants.len(), 1);
+    let cursor = first_page.next_cursor.as_ref().unwrap();
+    let second_page = server_request(
+        &application_pool,
+        &format!("/v1/consent-grants?limit=1&after={}", cursor.as_str()),
+        Some(&owner_token),
+    )
+    .await;
+    assert_eq!(second_page.status(), StatusCode::OK);
+    let second_page: ConsentGrantListPage =
+        serde_json::from_value(json_body(second_page).await).unwrap();
+    assert!(second_page.validate().is_ok());
+    assert_eq!(second_page.consent_grants.len(), 1);
+    assert_ne!(
+        first_page.consent_grants[0].consent_grant_id,
+        second_page.consent_grants[0].consent_grant_id
+    );
+
+    let foreign_get = server_request(
+        &application_pool,
+        &format!("/v1/consent-grants/{}", research.consent_grant_id.as_str()),
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(foreign_get.status(), StatusCode::NOT_FOUND);
+    assert_api_error(foreign_get, ApiErrorCode::NotFound).await;
+    let foreign_cursor = server_request(
+        &application_pool,
+        &format!(
+            "/v1/consent-grants?after={}",
+            research.consent_grant_id.as_str()
+        ),
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(foreign_cursor.status(), StatusCode::BAD_REQUEST);
+    assert_api_error(foreign_cursor, ApiErrorCode::InvalidRequest).await;
+
+    let managed_search_request = SearchCreateRequest {
+        consent_grant_id: Some(shared.consent_grant_id.clone()),
+        ..private_search_request(SyncPolicy::Shared, "github", 60_000)
+    };
+    let before_withdrawal = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&owner_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "consent-before-withdrawal"),
+        ],
+        serde_json::to_string(&managed_search_request).unwrap(),
+    )
+    .await;
+    assert_eq!(before_withdrawal.status(), StatusCode::CREATED);
+    let before_withdrawal: SearchResource =
+        serde_json::from_value(json_body(before_withdrawal).await).unwrap();
+    let cancellation = server_request_with(
+        &application_pool,
+        Method::DELETE,
+        &format!("/v1/searches/{}", before_withdrawal.search_id.as_str()),
+        Some(&owner_token),
+        &[],
+        String::new(),
+    )
+    .await;
+    assert_eq!(cancellation.status(), StatusCode::OK);
+
+    let withdrawal_body = serde_json::to_string(&ConsentWithdrawalRequest {
+        schema: ProtocolVersion::ApiV1,
+    })
+    .unwrap();
+    for _ in 0..2 {
+        let withdrawn = server_request_with(
+            &application_pool,
+            Method::POST,
+            &format!(
+                "/v1/consent-grants/{}/withdrawals",
+                shared.consent_grant_id.as_str()
+            ),
+            Some(&owner_token),
+            &[("content-type", "application/json")],
+            withdrawal_body.clone(),
+        )
+        .await;
+        assert_eq!(withdrawn.status(), StatusCode::OK);
+        let withdrawn: ConsentGrantResource =
+            serde_json::from_value(json_body(withdrawn).await).unwrap();
+        assert_eq!(withdrawn.state, ConsentGrantState::Withdrawn);
+        assert!(withdrawn.withdrawn_at_unix_ms.is_some());
+    }
+    let withdrawn_event_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM consent_events \
+         WHERE consent_grant_id = $1 AND event_kind = 'withdrawn'",
+    )
+    .bind(Uuid::parse_str(shared.consent_grant_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(withdrawn_event_count, 1);
+
+    let after_withdrawal = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&owner_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "consent-after-withdrawal"),
+        ],
+        serde_json::to_string(&managed_search_request).unwrap(),
+    )
+    .await;
+    assert_eq!(after_withdrawal.status(), StatusCode::FORBIDDEN);
+    assert_api_error(after_withdrawal, ApiErrorCode::Forbidden).await;
+
+    let replacement = post_consent_grant(&application_pool, &owner_token, &shared_request).await;
+    assert_eq!(replacement.status(), StatusCode::CREATED);
+    let replacement: ConsentGrantResource =
+        serde_json::from_value(json_body(replacement).await).unwrap();
+    assert_ne!(replacement.consent_grant_id, shared.consent_grant_id);
+
+    assert_consent_database_guards(
+        administrator_pool,
+        &research.consent_grant_id,
+        &replacement.consent_grant_id,
+    )
+    .await;
+    application_pool.close().await;
+}
+
+fn consent_request(purpose: ConsentPurpose) -> ConsentGrantCreateRequest {
+    ConsentGrantCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        subject_kind: ConsentSubjectKind::Account,
+        installation_id: None,
+        purpose,
+        collection_profile_version: ConsentCollectionProfileVersion::V1,
+        notice_version: ConsentNoticeVersion::V1,
+        expires_at_unix_ms: None,
+    }
+}
+
+async fn post_consent_grant(
+    pool: &PgPool,
+    token: &str,
+    request: &ConsentGrantCreateRequest,
+) -> Response {
+    server_request_with(
+        pool,
+        Method::POST,
+        "/v1/consent-grants",
+        Some(token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(request).unwrap(),
+    )
+    .await
+}
+
+async fn install_other_consent_member(pool: &PgPool) {
+    sqlx::query(
+        "INSERT INTO memberships (\
+            id, tenant_id, subject_id, role, created_at, updated_at\
+         ) VALUES (\
+            '00000000-0000-0000-0000-000000000013', \
+            '00000000-0000-0000-0000-000000000001', \
+            'subject-three', 'administrator', clock_timestamp(), clock_timestamp()\
+         )",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO api_keys (\
+            id, tenant_id, created_by_membership_id, scopes, state, created_at\
+         ) VALUES (\
+            '00000000-0000-0000-0000-0000000000b6', \
+            '00000000-0000-0000-0000-000000000001', \
+            '00000000-0000-0000-0000-000000000013', \
+            ARRAY['consent:read', 'consent:write'], 'active', clock_timestamp()\
+         )",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let secret_hash = Sha256::digest([0x66; 32]);
+    sqlx::query(
+        "INSERT INTO api_key_credentials (\
+            key_prefix, tenant_id, api_key_id, secret_hash, created_at\
+         ) VALUES (\
+            'ffffffffffffffff', \
+            '00000000-0000-0000-0000-000000000001', \
+            '00000000-0000-0000-0000-0000000000b6', $1, clock_timestamp()\
+         )",
+    )
+    .bind(&secret_hash[..])
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn assert_consent_database_guards(
+    pool: &PgPool,
+    granted: &ConsentGrantId,
+    replacement: &ConsentGrantId,
+) {
+    let immutable_contract =
+        sqlx::query("UPDATE consent_grants SET purpose = 'private_history' WHERE id = $1")
+            .bind(Uuid::parse_str(replacement.as_str()).unwrap())
+            .execute(pool)
+            .await
+            .unwrap_err();
+    assert_database_code(immutable_contract, "55000");
+
+    let unsupported_contract = sqlx::query(
+        "INSERT INTO consent_grants (\
+            id, tenant_id, membership_id, subject_kind, purpose, \
+            collection_profile_version, notice_version, source, granted_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', \
+            '00000000-0000-0000-0000-000000000011', 'account', \
+            'shared_research', 'profile-v2', 'notice-v1', 'api', \
+            clock_timestamp()\
+         )",
+    )
+    .bind(Uuid::new_v4())
+    .execute(pool)
+    .await
+    .unwrap_err();
+    assert_database_code(unsupported_contract, "23514");
+
+    let immutable_event =
+        sqlx::query("UPDATE consent_events SET details = details WHERE consent_grant_id = $1")
+            .bind(Uuid::parse_str(granted.as_str()).unwrap())
+            .execute(pool)
+            .await
+            .unwrap_err();
+    assert_database_code(immutable_event, "55000");
 }
 
 async fn assert_private_search_and_event_stream_boundary(administrator_pool: &PgPool) {

@@ -391,6 +391,8 @@ async fn verify_consent(
             WHERE consent.tenant_id = $1 AND consent.id = $2 \
               AND key.id = $3 AND consent.subject_kind = 'account' \
               AND consent.purpose = $4 AND consent.withdrawn_at IS NULL \
+              AND consent.collection_profile_version = 'profile-v1' \
+              AND consent.notice_version = 'notice-v1' \
               AND consent.granted_at <= clock_timestamp() \
               AND (consent.expires_at IS NULL OR consent.expires_at > clock_timestamp())\
          )",

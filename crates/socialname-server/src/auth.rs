@@ -9,6 +9,7 @@ use crate::api_key::ApiKeyToken;
 #[derive(Clone, Debug)]
 pub(crate) struct AuthenticatedPrincipal {
     pub(crate) workspace_id: Uuid,
+    pub(crate) membership_id: Uuid,
     pub(crate) api_key_id: Uuid,
     pub(crate) key_prefix: String,
     pub(crate) scopes: Vec<ApiKeyScope>,
@@ -35,7 +36,7 @@ pub(crate) async fn authenticate(
         return Err(AuthenticationError::InvalidCredential);
     };
 
-    let (mut transaction, scopes, expires_at_unix_ms) =
+    let (mut transaction, membership_id, scopes, expires_at_unix_ms) =
         begin_authorized_transaction_for_ids(pool, workspace_id, api_key_id, required_scope)
             .await?;
 
@@ -58,6 +59,7 @@ pub(crate) async fn authenticate(
 
     Ok(AuthenticatedPrincipal {
         workspace_id,
+        membership_id,
         api_key_id,
         key_prefix: token.key_prefix().to_owned(),
         scopes,
@@ -70,7 +72,7 @@ pub(crate) async fn begin_authorized_transaction<'a>(
     principal: &AuthenticatedPrincipal,
     required_scope: ApiKeyScope,
 ) -> Result<Transaction<'a, Postgres>, AuthenticationError> {
-    let (transaction, _, _) = begin_authorized_transaction_for_ids(
+    let (transaction, _, _, _) = begin_authorized_transaction_for_ids(
         pool,
         principal.workspace_id,
         principal.api_key_id,
@@ -85,7 +87,15 @@ async fn begin_authorized_transaction_for_ids<'a>(
     workspace_id: Uuid,
     api_key_id: Uuid,
     required_scope: ApiKeyScope,
-) -> Result<(Transaction<'a, Postgres>, Vec<ApiKeyScope>, Option<i64>), AuthenticationError> {
+) -> Result<
+    (
+        Transaction<'a, Postgres>,
+        Uuid,
+        Vec<ApiKeyScope>,
+        Option<i64>,
+    ),
+    AuthenticationError,
+> {
     let mut transaction = pool
         .begin()
         .await
@@ -95,13 +105,17 @@ async fn begin_authorized_transaction_for_ids<'a>(
         .execute(&mut *transaction)
         .await
         .map_err(|_| AuthenticationError::Unavailable)?;
-    let key: Option<(Vec<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT key.scopes, \
+    let key: Option<(Uuid, Vec<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT key.created_by_membership_id, key.scopes, \
                 (EXTRACT(EPOCH FROM key.expires_at) * 1000)::bigint \
          FROM api_keys AS key \
          JOIN tenants AS tenant ON tenant.id = key.tenant_id \
+         JOIN memberships AS membership \
+           ON membership.tenant_id = key.tenant_id \
+          AND membership.id = key.created_by_membership_id \
          WHERE key.tenant_id = $1 AND key.id = $2 \
            AND key.state = 'active' AND tenant.state = 'active' \
+           AND membership.state = 'active' \
            AND (key.expires_at IS NULL OR key.expires_at > clock_timestamp())",
     )
     .bind(workspace_id)
@@ -109,7 +123,7 @@ async fn begin_authorized_transaction_for_ids<'a>(
     .fetch_optional(&mut *transaction)
     .await
     .map_err(|_| AuthenticationError::Unavailable)?;
-    let Some((stored_scopes, expires_at_unix_ms)) = key else {
+    let Some((membership_id, stored_scopes, expires_at_unix_ms)) = key else {
         return Err(AuthenticationError::InvalidCredential);
     };
     let scopes = stored_scopes
@@ -120,7 +134,7 @@ async fn begin_authorized_transaction_for_ids<'a>(
     if !scopes.contains(&required_scope) {
         return Err(AuthenticationError::Forbidden);
     }
-    Ok((transaction, scopes, expires_at_unix_ms))
+    Ok((transaction, membership_id, scopes, expires_at_unix_ms))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<ApiKeyToken, AuthenticationError> {

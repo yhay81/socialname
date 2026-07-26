@@ -3,6 +3,7 @@
 mod api_key;
 mod auth;
 mod config;
+mod consent;
 mod database;
 mod monitoring;
 mod rule_registry_operator;
@@ -186,6 +187,35 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let consent_write_routes = Router::new()
+        .route(
+            "/v1/consent-grants",
+            axum::routing::post(consent::create_consent_grant),
+        )
+        .route(
+            "/v1/consent-grants/{consent_grant_id}/withdrawals",
+            axum::routing::post(consent::withdraw_consent_grant),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::ConsentWrite,
+            },
+            authenticate_request,
+        ));
+    let consent_read_routes = Router::new()
+        .route("/v1/consent-grants", get(consent::list_consent_grants))
+        .route(
+            "/v1/consent-grants/{consent_grant_id}",
+            get(consent::get_consent_grant),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::ConsentRead,
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
@@ -195,6 +225,8 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(search_cancel_routes)
         .merge(watch_write_routes)
         .merge(watch_read_routes)
+        .merge(consent_write_routes)
+        .merge(consent_read_routes)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state.clone());
