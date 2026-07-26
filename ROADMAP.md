@@ -858,7 +858,7 @@ Status: **Current; external deployment evidence pending**
       protection, and key rotation.
 - [x] Implement versioned purpose-specific consent grants for private history,
       shared observation, and shared research.
-- [ ] Store bounded Evidence Capsules and enforce the accepted retention
+- [x] Store bounded Evidence Capsules and enforce the accepted retention
       schedule.
 - [ ] Implement lineage-backed contributor deletion and target-person request
       workflows.
@@ -1058,10 +1058,61 @@ passed Rust core with PostgreSQL migrations/tests, Windows/macOS desktop,
 monitoring console, and managed-worker OCI for commit `04f60e4`.
 
 Withdrawal deliberately makes no prior-contribution deletion claim. The
-lineage-backed deletion item remains next in its recorded order after bounded
-Evidence Capsules and retention; it will add the delete option only when the
-system can process and receipt the documented deadlines. The complete boundary
-is in [`docs/consent-api.md`](docs/consent-api.md).
+lineage-backed deletion item remains next in its recorded order; it will add
+the delete option only when the system can process and receipt the documented
+deadlines. The complete boundary is in
+[`docs/consent-api.md`](docs/consent-api.md).
+
+Bounded Evidence Capsule and retention software evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes protocol: 39 unit + 9 wire-contract tests;
+# server: 29 library + 2 binary tests;
+# worker: 18 library + 5 binary + 3 deployment-contract tests
+# with disposable PostgreSQL 18 administrator/application/worker URLs:
+# 1 PostgreSQL 18 integration test passed
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# all passed
+```
+
+Public protocol v1 now includes the exact
+`socialname.dev/evidence-capsule/v1` resource and independent `evidence:read`
+scope. One successful managed observation commits atomically with a closed
+64 KiB Capsule containing only typed outcome, exact signed provenance, coarse
+vantage, sanitized probe summaries, and bounded rule-generated matcher traces.
+There is no field for complete bodies, arbitrary headers, cookies, credentials,
+client IP, or unrelated profile data.
+
+Migration `0011` binds each Capsule one-to-one to its observation under forced
+tenant RLS. Database time determines visibility and the accepted retention
+deadline: private interactive 90 days, private watch 30–730 days, the longest
+live coalesced consumer, or exactly 400 days for shared structure. Research
+excerpt storage is capped at 2 KiB and 30 days but has no current ingestion
+path. The explicit worker command clears due research and structured payloads
+in bounded `SKIP LOCKED` batches, leaves payload-free three-year receipts, and
+reports only counts.
+
+The real PostgreSQL 18 test proves atomicity and lineage, signed engine
+provenance, scoped and cross-tenant reads, expiry hiding before cleanup,
+immutable deadlines, least privilege, one-row batching, research-before-
+structure purge, payload-free receipts, and idempotent replay. Capsule expiry
+does not falsely claim removal of the existing immutable observation summary
+or its derived support. Those production-data guarantees remain the next
+lineage-backed deletion item. Production retention scheduling, alerting, and
+regional evidence remain external. The complete boundary is in
+[`docs/evidence-capsule-v1.md`](docs/evidence-capsule-v1.md).
 
 Acceptance gate:
 
@@ -1245,3 +1296,9 @@ Choose these only when their trigger is measured:
   creation, and immutable immediate withdrawal with PostgreSQL 18 RLS
   evidence. Kept prior-contribution erasure behind the ordered lineage-backed
   deletion workflow and selected bounded Evidence Capsules and retention next.
+- **2026-07-26:** Added closed 64 KiB Evidence Capsules atomically with managed
+  observations, exact signed provenance, sanitized evidence summaries,
+  `evidence:read` inspection with database-time hiding, consumer-specific
+  deadlines, bounded irreversible purge, and payload-free three-year receipts
+  with PostgreSQL 18 RLS evidence. Kept existing observation/support erasure
+  behind the ordered lineage-backed workflow and selected it next.

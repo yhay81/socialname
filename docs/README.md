@@ -163,6 +163,9 @@ access. Live canaries are intentionally a separate acceptance gate.
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
   retention, lineage, and deletion guarantees.
+- [Bounded Evidence Capsule v1](evidence-capsule-v1.md) — closed sanitized
+  evidence, scoped inspection, database-time deadlines, bounded purge, and
+  payload-free receipts.
 - [Assertion trust](assertion-trust.md) — evidence classes, producer reputation,
   quorum, conflict, and notification confirmation.
 - [Signed webhook delivery](webhook-delivery.md) — logical deduplication,
@@ -202,10 +205,10 @@ observation, assertion recomputation, meaningful transitions, signed webhook
 delivery, and the minimal API-backed console form the tested loop. The current
 roadmap milestone is **Trust, governance, and multi-region operation**. Its
 regional deployment/operator boundary, regional assertion behavior, and
-signed rule-pack distribution and purpose-specific consent lifecycle are
-repository-complete while real deployment remains external. The next software
-slice stores bounded Evidence Capsules and enforces the accepted retention
-schedule.
+signed rule-pack distribution, purpose-specific consent lifecycle, and bounded
+Evidence Capsule retention are repository-complete while real deployment
+remains external. The next software slice implements lineage-backed
+contributor deletion and target-person request workflows.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

@@ -297,6 +297,8 @@ Initial PostgreSQL tables:
 | `probe_jobs` | Managed execution queue |
 | `probe_job_consumers` | Search/watch consumers of equivalent work |
 | `observations` | Append-only probe results |
+| `evidence_capsules` | Closed structured evidence with database-time visibility deadlines |
+| `evidence_retention_receipts` | Payload-free irreversible-purge receipts |
 | `assertions` | Materialized current interpretation |
 | `assertion_support` | Observation support and conflict lineage |
 | `regional_assertions` | Immutable per-region projection of one global generation |
@@ -321,12 +323,21 @@ command, and PostgreSQL 18 verification are specified in
 ### Data retention classes
 
 - Local cache: user controlled.
-- Private interactive searches: short configurable default.
-- Paid monitoring observations: plan- and policy-controlled.
+- Private interactive Evidence Capsules: 90 days.
+- Private monitoring Evidence Capsules: accepted 30–730 day watch setting.
+- Shared structured Evidence Capsules: fixed 400 days.
+- Shared-research excerpts: at most 30 days and never beyond structure.
 - Transitions and audit: longer-lived than raw evidence.
 - Shared client observations: minimized and separately consented.
 - Raw response artifacts: off by default, encrypted object storage only when
   explicitly requested for debugging or evidence.
+
+Central Capsule reads compare their deadline with database time before
+returning payload. A bounded worker command irreversibly clears due research
+and structure, writes payload-free three-year receipts, and later removes
+expired receipts. This enforcement does not delete the existing immutable
+observation summary; that remains part of the ordered lineage-backed deletion
+workflow. See [Bounded Evidence Capsule v1](evidence-capsule-v1.md).
 
 Deletion must remove derived assertions when their supporting private
 observations are deleted.
@@ -376,7 +387,8 @@ cross-tenant coordinator function, then performs all tenant data work under
 transaction-local forced RLS. Exact consent, visibility, normalized target,
 site, rule version, and region define one active work scope. Fenced leases make
 expired attempts unable to commit, and one transaction writes the immutable
-observation, all consumer events, terminal search state, and lineage. See
+observation, its closed Evidence Capsule, all consumer events, terminal search
+state, and lineage. See
 [Managed probe jobs and observation ingestion](managed-jobs.md).
 
 ### Consent
@@ -396,6 +408,18 @@ overridden by another workspace membership. Creation is serialized and
 replay-safe; withdrawal is immediate, one-way, evented, and distinct from the
 later lineage-backed deletion workflow. See
 [Purpose-specific consent grant lifecycle](consent-api.md).
+
+### Evidence inspection
+
+```http
+GET /v1/observations/{observation_id}/evidence-capsule
+```
+
+The route requires the independent `evidence:read` scope and returns only a
+validated Capsule whose database-time structured deadline remains in the
+future. Foreign, expired, purged, and unknown resources are uniformly hidden.
+An optional research excerpt has its own shorter projection deadline. See
+[Bounded Evidence Capsule v1](evidence-capsule-v1.md).
 
 ### Observation synchronization
 

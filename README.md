@@ -64,6 +64,9 @@ person.
 - Purpose/profile/notice-versioned account and installation consent resources
   with bounded reads, installation non-override, and immutable immediate
   withdrawal.
+- A closed 64 KiB `evidence-capsule/v1` stored atomically with managed
+  observations, scoped inspection, database-time visibility deadlines,
+  bounded irreversible purge, and payload-free retention receipts.
 - A signed-metadata-only managed worker with per-connection DNS validation,
   DNS-rebinding/SSRF rejection, independent response byte limits,
   cancellation, and a live-acknowledged stdin-only one-shot probe.
@@ -80,9 +83,9 @@ person.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The next repository-completable slice stores bounded Evidence Capsules and
-enforces the accepted retention schedule. Real regional deployment remains an
-external evidence gate.
+The next repository-completable slice implements lineage-backed contributor
+deletion and target-person request workflows. Real regional deployment remains
+an external evidence gate.
 
 ## Build and verify
 

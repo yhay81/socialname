@@ -26,6 +26,11 @@ so status does not diverge across design records.
 - Contributor consent does not substitute for a lawful basis or data-subject
   process for a third-party target username.
 - Shared structured Evidence Capsules have an initial 400-day retention period.
+- Private interactive Evidence Capsules retain for 90 days; private watches
+  use their accepted 30–730 day setting; one coalesced observation uses the
+  longest live consumer period. Shared-research excerpts are independently
+  capped at 2 KiB and 30 days. Product reads enforce database deadlines before
+  bounded physical cleanup.
 - Assertions have no independent retention and must be recomputed when support
   is deleted or expires.
 - Deletion is lineage-backed, removes production data within 24 hours, and ages
@@ -204,12 +209,14 @@ so status does not diverge across design records.
 - [Assertion recomputation and transition persistence](assertion-recomputation.md)
 - [Signed webhook delivery](webhook-delivery.md)
 - [Minimal monitoring console](monitoring-console.md)
+- [Purpose-specific consent grant lifecycle](consent-api.md)
+- [Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md)
 
 ## Implementation baseline
 
 1. **Partial:** Encode observation and assertion types in
-   `socialname-domain`. Consent, deletion, and full Evidence Capsule types move
-   into the server/data slice.
+   `socialname-domain`. Consent and the closed Evidence Capsule contract now
+   have protocol/server boundaries; deletion remains in the server/data slice.
 2. **Done:** Define strict Site Rule v1 source and compiled schemas.
 3. **Done:** Implement deterministic fixtures for the representative ten sites.
 4. **Done:** Implement the local probe engine and matcher trace.
@@ -270,12 +277,16 @@ so status does not diverge across design records.
     and installation subjects, tenant-separated installation digests with
     membership non-override, scoped bounded APIs, serialized replay-safe
     creation, append-only actor history, and immediate one-way withdrawal.
+21. **Done:** Add one closed 64 KiB Evidence Capsule per managed observation,
+    exact signed provenance, sanitized summaries, scoped database-deadline
+    inspection, consumer-specific retention, bounded irreversible purge, and
+    payload-free three-year receipts.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
 deployment evidence remains pending, with affected capabilities disabled.
 Milestone 3's deployment/operator artifact, regional assertion behavior,
-signed rule-pack distribution, and purpose-specific consent lifecycle are
-repository-complete, while actual multi-region deployment remains an external
-gate. The next executable work is bounded Evidence Capsules and enforcement of
-the accepted retention schedule.
+signed rule-pack distribution, purpose-specific consent lifecycle, and bounded
+Evidence Capsule retention are repository-complete, while actual multi-region
+deployment remains an external gate. The next executable work is
+lineage-backed contributor deletion and target-person request workflows.

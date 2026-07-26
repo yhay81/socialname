@@ -148,15 +148,19 @@ watch-local baseline or transition, terminal search/run states, and lineage
 edges commit in one tenant transaction. A repeated completion of the same
 fenced claim returns `already_final`; it cannot duplicate any derived output.
 
-Observation persistence retains only typed outcome, evidence class/digest,
-exact rule/region, consent/visibility, source, and bounded freshness. It does
-not retain complete bodies, cookies, credentials, arbitrary headers, or
-matcher traces. One coalesced observation can support multiple searches and
-watch runs, but each search receives its own event UUID and sequence. Lineage
-records:
+Observation persistence retains typed outcome, evidence class/digest, exact
+rule/region, consent/visibility, source, and bounded freshness. The same
+transaction stores a closed 64 KiB Evidence Capsule containing only sanitized
+probe summaries and bounded rule-generated matcher traces. It does not retain
+complete bodies, cookies, credentials, or arbitrary headers. Consumer-specific
+database deadlines and the bounded purge command are specified in
+[Bounded Evidence Capsule v1](evidence-capsule-v1.md). One coalesced
+observation can support multiple searches and watch runs, but each search
+receives its own event UUID and sequence. Lineage records:
 
 - search target to job;
 - job to observation;
+- observation to Evidence Capsule;
 - observation to definitive/uncertain event;
 - observation to watch-run target;
 - job to terminal operational-failure event.

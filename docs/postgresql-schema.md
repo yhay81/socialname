@@ -21,7 +21,12 @@ support projections plus a generated probe-priority reason for conflict and
 account-confirmation work. Migration `0009_rule_pack_distribution.sql` adds
 durable signed trust roots, staged/active metadata, embedded promotion
 bindings, global and per-site anti-replay state, exact worker metadata
-resolution, and continuous version availability checks.
+resolution, and continuous version availability checks. Migration
+`0010_purpose_specific_consent.sql` closes the accepted consent versions,
+installation ownership, immutable history, and one-way withdrawal boundary.
+Migration `0011_evidence_capsule_retention.sql` adds atomic closed Evidence
+Capsules, independent database-time deadlines, payload-free purge receipts,
+and a bounded retention-enforcement function.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -50,7 +55,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 42 product tables:
+The migrations create 44 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -59,7 +64,7 @@ The migrations create 42 product tables:
 | Consent | `consent_grants`, `consent_events` |
 | Interactive work | `searches`, `search_targets`, `search_events` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
-| Evidence and interpretation | `observations`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
+| Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts` |
 | Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `suppression_tokens` |
 
@@ -69,7 +74,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Thirty-two tenant-owned tables have row-level security both enabled and
+Thirty-four tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -83,8 +88,8 @@ transaction must:
 4. keep all tenant work inside the same transaction and connection.
 
 Connection-level tenant state must never be allowed to leak through a pool.
-The authenticated workspace, consent, search, and watch routes implement this
-contract. Their integration test uses a real
+The authenticated workspace, consent, search, watch, and evidence routes
+implement this contract. Their integration test uses a real
 `LOGIN NOSUPERUSER NOBYPASSRLS` non-owner role and proves that one tenant
 cannot read or insert another tenant row or observe a foreign consent,
 search/event, or monitoring cursor.
@@ -115,14 +120,16 @@ for the complete request and operator contract.
 The worker is also a non-owner `NOSUPERUSER NOBYPASSRLS` role, but it must
 select the next tenant before it can set transaction-local RLS. Migrations
 `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
-`0007_webhook_delivery.sql` and `0009_rule_pack_distribution.sql` therefore
-provide eight fixed-search-path `SECURITY DEFINER` functions. They can resolve
+`0007_webhook_delivery.sql`, `0009_rule_pack_distribution.sql`, and
+`0011_evidence_capsule_retention.sql` therefore provide nine fixed-search-path
+`SECURITY DEFINER` functions. They can resolve
 an exact eligible signed rule including metadata and promotion identity,
 recheck that one rule version is still active, lock one eligible search
 target, lock one due watch, lock one eligible watch-run target, claim one job
 with an incremented attempt fence, lock the consent attached to an exact
-current lease, or claim one due webhook with an incremented attempt fence.
-They return only opaque IDs, an attempt number, or a boolean.
+current lease, claim one due webhook with an incremented attempt fence, or
+enforce a bounded due-evidence batch. They return only opaque IDs, an attempt
+number, a boolean, or payload-free counts.
 
 `PUBLIC` execution is revoked. Deployment grants only these functions plus the
 column-limited ordinary table access exercised by the integration fixture. The
@@ -131,7 +138,14 @@ worker has no access to `api_key_credentials`, no table ownership or
 Target/consumer/observation/event/lineage work occurs only after the selected
 tenant is set locally on the transaction.
 
-Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the eight coordinator
+The retention function is the only worker path allowed to clear due Capsule
+payloads and delete expired retention receipts. It accepts 1–1000 rows per
+class, orders by database deadline and Capsule ID, locks with `SKIP LOCKED`,
+and emits one idempotent payload-free receipt for each research or structured
+purge. Ordinary application and worker table grants cannot update Capsules or
+delete receipts.
+
+Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the nine coordinator
 functions must be owned by a dedicated `NOLOGIN BYPASSRLS` role or an
 equivalently privileged migration owner. The integration test asserts that
 owner capability separately from the worker's NOBYPASSRLS status. The
@@ -186,6 +200,16 @@ withdrawal unambiguously later. See
 - Operational probe failure remains job state. `observations` contain only a
   definitive `found`/`not_found` result or bounded uncertainty, and observation
   rows reject updates.
+- Every newly persisted managed observation atomically receives one
+  at-most-64-KiB closed Evidence Capsule. Database constraints bind its
+  tenant/observation IDs,
+  profile, millisecond timestamps, SHA-256 digests, payload shape, and
+  retention relation. The structure has no body, arbitrary-header, cookie,
+  credential, or client-IP field.
+- Capsule payload reads require `evidence:read` and a future database deadline.
+  A trigger permits only deadline-due non-null-to-null research or structured
+  purge. Receipts keep only identifiers, closed action, deadlines, and times
+  for exactly three years.
 - Assertion and transition support are explicit join records. Generic lineage
   preserves withdrawal and recomputation ancestry across later derived data.
 - Regional assertions are immutable children of one global assertion
@@ -242,7 +266,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 42 tables and 32
+It applies the embedded migrations twice, inventories all 44 tables and 34
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
@@ -253,7 +277,10 @@ role covering job coalescing, watch planning, freshness reuse, byte
 reservation, fencing, retry, atomic observation/assertion/search/watch
 ingestion, account baselines and confirmed transitions, global/regional
 assertion support and lineage, regional disagreement, bounded conflict and
-account-confirmation priority, measurement degradation, invalid targets,
+account-confirmation priority, atomic observation/Capsule storage, closed
+payload shape, scoped and deadline-hidden Capsule reads, one-way purge,
+payload-free receipts, bounded idempotent retention batches, invalid targets,
+measurement degradation,
 revision cancellation, consent
 withdrawal, regional rule degradation, logical webhook enqueue, timeout/retry,
 same-ID success, permanent 4xx, lease reclamation, stale fencing, final
@@ -274,9 +301,9 @@ repeatedly.
 
 The HTTP process uses the separate `SOCIALNAME_SERVER_DATABASE_URL` runtime
 credential. Startup requires a database connection, readiness is
-PostgreSQL-aware, and every private workspace/search/watch operation authenticates
-and sets a transaction-local tenant before product access. The schema-owner
-`SOCIALNAME_DATABASE_URL` remains limited to migration and explicit
+PostgreSQL-aware, and every private workspace/search/watch/evidence operation
+authenticates and sets a transaction-local tenant before product access. The
+schema-owner `SOCIALNAME_DATABASE_URL` remains limited to migration and explicit
 workspace/key/rule-pack operator commands. The rule-pack command and its
 initial out-of-band trust pin are specified in
 [Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).

@@ -30,6 +30,7 @@ API schema version; it is not silently treated as an additive v1 change.
 - notification endpoint creation/resources and delivery state;
 - purpose-specific consent creation, resources, bounded lists, and
   withdrawals;
+- bounded Evidence Capsule resources;
 - authenticated private-workspace resources and API-key scope metadata.
 
 Runtime `Validate` checks supplement JSON Schema where a rule relates multiple
@@ -153,6 +154,22 @@ An invalid target or any other operational failure therefore cannot
 deserialize as `not_found`, and a conflict cannot be collapsed into a
 definitive observation. Cached and shared results retain their actual source
 and freshness rather than appearing live.
+
+## Evidence Capsules
+
+`EvidenceCapsuleResource` is the exact authenticated inspection contract for
+`socialname.dev/evidence-capsule/v1`. It binds one observation and target to a
+typed outcome, exact signed rule/pack/engine provenance, coarse vantage,
+evidence identity, at most 32 sanitized probe summaries, and at most 128
+bounded matcher traces. The serialized resource is limited to 64 KiB.
+
+There is no field for a complete body, arbitrary headers, cookies, credentials,
+client IP, or unrelated profile data. HTTPS evidence URLs reject credentials
+and are capped at 2 KiB. Latency is bucketed. A separately redacted
+shared-research excerpt is capped at 2 KiB and 30 days. Runtime validation binds
+private retention to at most 730 days and shared structure to exactly 400 days.
+The read requires the independent `evidence:read` scope. See
+[Bounded Evidence Capsule v1](evidence-capsule-v1.md).
 
 ## Watches
 

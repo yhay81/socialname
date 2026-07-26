@@ -161,6 +161,14 @@ Complete response artifacts are an exceptional managed-debugging facility.
 They require a ticketed purpose, encryption, access audit, a seven-day default,
 and a hard 30-day maximum. Client uploads never include them.
 
+The current managed path implements the closed 64 KiB
+`socialname.dev/evidence-capsule/v1` resource from sanitized probe summaries
+and rule-generated matcher traces. It commits one Capsule with its observation,
+requires `evidence:read`, and has no typed or stored slot for a body, arbitrary
+headers, cookie, credential, or client IP. Shared-research excerpt storage is
+bounded and retention-ready but has no current ingestion path. See
+[Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md).
+
 ## Initial retention schedule
 
 Retention is measured from collection unless specified otherwise:
@@ -184,6 +192,14 @@ Four hundred days intentionally preserves one annual cycle plus operational
 margin. Twenty-five months permits year-over-year site-health comparison. A
 longer research dataset must be irreversibly aggregated or receive a separately
 reviewed purpose and policy.
+
+Current central Capsule reads use the database deadline directly, so expired
+content is hidden even before maintenance runs. The one-shot worker then clears
+due research content and structured payloads in bounded locked batches, leaves
+payload-free three-year receipts, and deletes those receipts at their own
+deadline. Private interactive Capsules use 90 days; a private watch uses its
+accepted 30–730 day setting; coalesced work keeps the longest live consumer
+period; shared structure is exactly 400 days.
 
 ## Deletion guarantees
 

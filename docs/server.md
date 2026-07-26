@@ -126,6 +126,13 @@ separation, rejects membership override, and commits each grant/withdrawal
 with an immutable event under forced RLS. See
 [Purpose-specific consent grant lifecycle](consent-api.md).
 
+`GET /v1/observations/{observation_id}/evidence-capsule` requires
+`evidence:read`. It returns only an unexpired, unpurged, validated Capsule under
+forced tenant RLS; unknown, foreign, expired, and physically purged resources
+are uniformly `not_found`. A research excerpt is projected only before its
+independent database deadline. See
+[Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md).
+
 Every other path returns a protocol `not_found` response. Unsupported methods
 return a protocol `invalid_request` response. Notification endpoint management,
 worker control, and HTTP key-administration routes do not exist yet, so
