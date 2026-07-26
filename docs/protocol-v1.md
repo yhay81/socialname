@@ -31,6 +31,7 @@ API schema version; it is not silently treated as an additive v1 change.
 - purpose-specific consent creation, resources, bounded lists, and
   withdrawals;
 - bounded Evidence Capsule resources;
+- contributor deletion creation and target-free request resources;
 - authenticated private-workspace resources and API-key scope metadata.
 
 Runtime `Validate` checks supplement JSON Schema where a rule relates multiple
@@ -121,6 +122,21 @@ the final returned ID. `ConsentWithdrawalRequest` is a versioned request, not a
 delete claim. Server ownership, digest persistence, replay, withdrawal
 locking, and error behavior are specified in
 [Purpose-specific consent grant lifecycle](consent-api.md).
+
+## Deletion requests
+
+`ContributorDeletionCreateRequest` contains only the API schema and an owned
+consent-grant ID. It carries no username, installation identifier, or
+free-form selector. `DeletionRequestResource` exposes a closed contributor or
+target scope, monotonic state, the exact hide/support/primary/rebuild/backup
+deadlines, bounded matched/hidden counts, and ordered optional completion
+times.
+
+Validation rejects deadline reversal, impossible state/progress combinations,
+and counts above one million. Unknown fields are rejected so a selector cannot
+accidentally enter a receipt. HTTP ownership, HMAC suppression, verified
+target-person intake, physical deletion, and pending external gates are
+specified in [Lineage-backed deletion workflows](deletion-workflows.md).
 
 ## Ordered search events
 

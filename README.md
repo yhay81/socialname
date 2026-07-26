@@ -67,6 +67,10 @@ person.
 - A closed 64 KiB `evidence-capsule/v1` stored atomically with managed
   observations, scoped inspection, database-time visibility deadlines,
   bounded irreversible purge, and payload-free retention receipts.
+- Owner-authorized contributor deletion and externally verified target-person
+  workflows with immediate lineage-backed hiding, HMAC-only future
+  suppression, remaining-support recomputation, primary purge, and explicit
+  private-target routing.
 - A signed-metadata-only managed worker with per-connection DNS validation,
   DNS-rebinding/SSRF rejection, independent response byte limits,
   cancellation, and a live-acknowledged stdin-only one-shot probe.
@@ -83,9 +87,9 @@ person.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The next repository-completable slice implements lineage-backed contributor
-deletion and target-person request workflows. Real regional deployment remains
-an external evidence gate.
+The next repository-completable slice adds daily delete-through tests,
+completed deletion receipts, restore-ledger replay, and backup-expiry
+verification. Real regional deployment remains an external evidence gate.
 
 ## Build and verify
 
@@ -151,7 +155,7 @@ crates/
   socialname-rule-schema/    strict Site Rule v1 source types
   socialname-rule-compiler/  validation and canonical compilation
   socialname-engine/         HTTP probing and deterministic classification
-  socialname-protocol/       versioned REST, SSE, watch, and delivery DTOs
+  socialname-protocol/       versioned REST, SSE, watch, deletion, delivery DTOs
   socialname-server/         authenticated Axum/PostgreSQL managed boundary
   socialname-worker/         signed-only managed probe boundary
   socialname-cli/            local command-line entry point

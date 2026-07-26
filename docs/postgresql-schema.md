@@ -26,7 +26,10 @@ resolution, and continuous version availability checks. Migration
 installation ownership, immutable history, and one-way withdrawal boundary.
 Migration `0011_evidence_capsule_retention.sql` adds atomic closed Evidence
 Capsules, independent database-time deadlines, payload-free purge receipts,
-and a bounded retention-enforcement function.
+and a bounded retention-enforcement function. Migration
+`0012_lineage_backed_deletion.sql` adds immutable resource-match tombstones,
+exact software deadlines and monotonic progress, target/job redaction,
+suppression-key identity, and a fenced cross-tenant deletion claim.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -55,7 +58,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 44 product tables:
+The migrations create 45 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -66,7 +69,7 @@ The migrations create 44 product tables:
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts` |
-| Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `suppression_tokens` |
+| Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `deletion_resource_matches`, `suppression_tokens` |
 
 Time partitioning is intentionally absent. PostgreSQL remains the source of
 truth, and partitioning is admitted only after observed volume justifies its
@@ -74,7 +77,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Thirty-four tenant-owned tables have row-level security both enabled and
+Thirty-five tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -120,32 +123,39 @@ for the complete request and operator contract.
 The worker is also a non-owner `NOSUPERUSER NOBYPASSRLS` role, but it must
 select the next tenant before it can set transaction-local RLS. Migrations
 `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
-`0007_webhook_delivery.sql`, `0009_rule_pack_distribution.sql`, and
-`0011_evidence_capsule_retention.sql` therefore provide nine fixed-search-path
+`0007_webhook_delivery.sql`, `0009_rule_pack_distribution.sql`,
+`0011_evidence_capsule_retention.sql`, and
+`0012_lineage_backed_deletion.sql` therefore provide eleven fixed-search-path
 `SECURITY DEFINER` functions. They can resolve
 an exact eligible signed rule including metadata and promotion identity,
 recheck that one rule version is still active, lock one eligible search
 target, lock one due watch, lock one eligible watch-run target, claim one job
 with an incremented attempt fence, lock the consent attached to an exact
-current lease, claim one due webhook with an incremented attempt fence, or
-enforce a bounded due-evidence batch. They return only opaque IDs, an attempt
-number, a boolean, or payload-free counts.
+current lease, claim one due webhook with an incremented attempt fence,
+enforce a bounded due-evidence batch, redact exactly one tenant/request's
+matched job targets, or claim one due deletion request with an incremented
+attempt fence. They return only opaque IDs, an attempt number, a boolean,
+payload-free counts, or no value.
 
 `PUBLIC` execution is revoked. Deployment grants only these functions plus the
 column-limited ordinary table access exercised by the integration fixture. The
 worker has no access to `api_key_credentials`, no table ownership or
-`BYPASSRLS`, no observation/event update, and no product-table delete.
+`BYPASSRLS`, and no observation/event update. Its ordinary job/retention paths
+cannot delete product rows; the deletion unit receives only the reviewed
+primary-resource deletes exercised by the integration fixture.
 Target/consumer/observation/event/lineage work occurs only after the selected
 tenant is set locally on the transaction.
 
-The retention function is the only worker path allowed to clear due Capsule
-payloads and delete expired retention receipts. It accepts 1–1000 rows per
-class, orders by database deadline and Capsule ID, locks with `SKIP LOCKED`,
-and emits one idempotent payload-free receipt for each research or structured
-purge. Ordinary application and worker table grants cannot update Capsules or
-delete receipts.
+The retention function is the only ordinary maintenance path allowed to clear
+due Capsule payloads and delete expired retention receipts. It accepts
+1–1000 rows per class, orders by database deadline and Capsule ID, locks with
+`SKIP LOCKED`, and emits one idempotent payload-free receipt for each research
+or structured purge. The separate deletion worker may delete only
+lineage-selected Capsules and their receipts under a fenced request; ordinary
+job execution and application grants cannot update Capsules or delete
+receipts.
 
-Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the nine coordinator
+Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the eleven coordinator
 functions must be owned by a dedicated `NOLOGIN BYPASSRLS` role or an
 equivalently privileged migration owner. The integration test asserts that
 owner capability separately from the worker's NOBYPASSRLS status. The
@@ -245,17 +255,24 @@ states and relationships, not a replacement for typed construction.
 
 ## Deletion and recomputation
 
-Deletion requests carry ordered deadlines for hiding, support withdrawal,
-primary deletion, derived rebuild, and backup expiry. Per-store tasks make
-partial failure and retry explicit. Receipts record completed stores and backup
-expiry, while lineage edges identify downstream material that must be
-withdrawn or recomputed. HMAC suppression tokens prevent deleted target or
-contributor identifiers from being silently reingested without retaining their
-plaintext value.
+Software-created deletion requests carry exact immutable deadlines for hiding,
+support withdrawal, primary deletion, derived rebuild, and backup expiry.
+`deletion_resource_matches` materializes target-free hide tombstones before
+creation returns. Read paths exclude them immediately. A narrow redaction
+function removes target-bearing queued work, and a fenced non-owner worker
+withdraws support, recomputes assertions from remaining observations, and
+deletes current PostgreSQL primary dependencies atomically.
 
-This schema makes the workflow representable; the later deletion-worker slice
-must implement the deadlines, restore-ledger replay, and production evidence.
-No external deletion or backup-expiry evidence is claimed here.
+HMAC-only contributor and target suppression tokens prevent reingestion
+without retaining selectors. A nonsecret fingerprint binds tokens to the
+persistent secret; any active legacy or mismatched key identity fails closed.
+Private target observations remain outside a shared-pool request.
+
+Per-store analytics and backup tasks remain durable and pending after primary
+completion, with the request in `rebuilding`. Completed deletion receipts,
+restore-ledger replay, production scheduling, analytics rebuild, and
+backup-expiry evidence remain the next ordered slice. See
+[Lineage-backed deletion workflows](deletion-workflows.md).
 
 ## Verification
 
@@ -266,7 +283,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 44 tables and 34
+It applies the embedded migrations twice, inventories all 45 tables and 35
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
@@ -279,7 +296,10 @@ ingestion, account baselines and confirmed transitions, global/regional
 assertion support and lineage, regional disagreement, bounded conflict and
 account-confirmation priority, atomic observation/Capsule storage, closed
 payload shape, scoped and deadline-hidden Capsule reads, one-way purge,
-payload-free receipts, bounded idempotent retention batches, invalid targets,
+payload-free receipts, bounded idempotent retention batches, lineage-backed
+contributor/target hiding and primary purge, suppression-key mismatch
+fail-closed behavior, remaining-support recomputation, private target
+preservation, invalid targets,
 measurement degradation,
 revision cancellation, consent
 withdrawal, regional rule degradation, logical webhook enqueue, timeout/retry,
@@ -304,6 +324,6 @@ credential. Startup requires a database connection, readiness is
 PostgreSQL-aware, and every private workspace/search/watch/evidence operation
 authenticates and sets a transaction-local tenant before product access. The
 schema-owner `SOCIALNAME_DATABASE_URL` remains limited to migration and explicit
-workspace/key/rule-pack operator commands. The rule-pack command and its
-initial out-of-band trust pin are specified in
+workspace/key/rule-pack and externally verified target-deletion operator
+commands. The rule-pack command and its initial out-of-band trust pin are specified in
 [Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).

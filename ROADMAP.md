@@ -547,7 +547,7 @@ npm run check
 npm run build
 ```
 
-The nine embedded SQLx migrations create 42 bounded product tables and 32
+The twelve embedded SQLx migrations create 45 bounded product tables and 35
 tenant-isolation policies with forced RLS. Composite tenant foreign keys,
 immutable observation and support history, closed observation outcomes,
 transition-specific confirmation bases, exact confirmed-delivery checks,
@@ -558,7 +558,7 @@ database URL, uses one connection with connection/migration deadlines, and
 returns fixed errors without reflecting credentials.
 
 The CI core job runs both the operator command and an integration test against
-`postgres:18-alpine`. The test reapplies all nine migrations, inventories all
+`postgres:18-alpine`. The test reapplies all twelve migrations, inventories all
 tables and forced-RLS policies, uses a real non-owner `NOBYPASSRLS` role to
 prove tenant isolation, rejects cross-tenant references and observation
 mutation, suppresses shared-only absence delivery, accepts an independently
@@ -860,7 +860,7 @@ Status: **Current; external deployment evidence pending**
       shared observation, and shared research.
 - [x] Store bounded Evidence Capsules and enforce the accepted retention
       schedule.
-- [ ] Implement lineage-backed contributor deletion and target-person request
+- [x] Implement lineage-backed contributor deletion and target-person request
       workflows.
 - [ ] Add daily delete-through tests, deletion receipts, restore-ledger replay,
       and backup-expiry verification.
@@ -1118,6 +1118,61 @@ Quality run
 passed Rust core with PostgreSQL migrations/tests, Windows/macOS desktop,
 monitoring console, and managed-worker OCI for commit `663f04f`.
 
+Lineage-backed deletion software evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes protocol: 41 unit + 10 contract; server: 34 library + 2 binary
+# + 1 real PostgreSQL 18 integration; worker: 20 library + 5 binary
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# all passed
+```
+
+Protocol v1 now exposes a selector-free contributor request and deletion
+resource with exact 5-minute, 1-hour, 24-hour, 7-day, and 35-day deadline
+relations. The `data:delete` API accepts only an owned account or installation
+grant, serializes exact replay, withdraws every active grant for the same
+subject/purpose, materializes lineage tombstones, immediately hides reads, and
+cancels/redacts active jobs and deliveries. Owner-only status reads cannot
+cross a membership or tenant boundary.
+
+Migration `0012` adds `deletion_resource_matches`, monotonic request/match
+progress, target/job redaction, suppression-key fingerprinting, and a fenced
+cross-tenant deletion claim. The non-owner worker removes support, recomputes
+from remaining observations, withdraws sole-support assertions, deletes
+current PostgreSQL primary dependencies atomically, and leaves the request
+`rebuilding`. Replays are idle and target-bearing job/search fields remain
+redacted receipts.
+
+Target-person intake is an externally verified, bounded stdin schema-owner
+command rather than self-asserted HTTP. It stores only a verification-reference
+digest and tenant-separated HMAC identities, groups exact shared matches
+across tenants, retains identical private observations for explicit controller
+routing, and returns the same IDs even after primary purge. Target suppression
+is checked before network, during execution, and before commit; a future shared
+job creates no observation and terminates its search with a redacted `blocked`
+event. Active legacy/different suppression-key fingerprints fail closed rather
+than silently disabling prior erasure.
+
+The real PostgreSQL 18 gate reapplies all 12 migrations and inventories 45
+product tables and 35 forced-RLS policies. It proves immediate physical-row
+hiding, exact deadlines/replay, scope isolation, support-by-support
+recomputation, primary purge, shared/private target separation, future
+reingestion suppression, key-mismatch refusal, least privilege, and
+idempotency. Analytics completion, completed deletion receipts, daily
+delete-through tests, restore-ledger replay, production scheduling, and
+backup-expiry proof remain the next ordered item. The complete boundary is in
+[`docs/deletion-workflows.md`](docs/deletion-workflows.md).
+
 Acceptance gate:
 
 - Multi-region disagreement is represented, not overwritten.
@@ -1306,3 +1361,10 @@ Choose these only when their trigger is measured:
   deadlines, bounded irreversible purge, and payload-free three-year receipts
   with PostgreSQL 18 RLS evidence. Kept existing observation/support erasure
   behind the ordered lineage-backed workflow and selected it next.
+- **2026-07-26:** Added owned contributor deletion and externally verified
+  target-person workflows with exact deadlines, immediate lineage-backed
+  hiding, grant withdrawal, HMAC-only fail-closed suppression, fenced support
+  withdrawal/recomputation, current-primary purge, exact post-purge replay,
+  and explicit private-target routing under PostgreSQL 18 RLS. Kept completed
+  receipts, analytics/restore/backup proof, and daily delete-through drills in
+  the next ordered item.

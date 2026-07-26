@@ -99,10 +99,12 @@ test also proves a managed search is accepted immediately before withdrawal
 and forbidden immediately afterward.
 
 Withdrawal stops new use but does not claim that retained contributions have
-been deleted. A `delete_prior_contributions` option is intentionally not
-published until the ordered lineage-backed deletion workflow can create,
-process, and receipt the request within its documented deadlines. Operators
-can withdraw now without receiving a false deletion guarantee.
+been deleted. Prior-contribution deletion is now a separate `data:delete`
+request keyed by an owned grant. It revokes every active grant for the same
+subject/purpose, hides lineage-selected data immediately, and queues the
+primary/analytics/backup phases. Plain withdrawal remains a narrower action
+and never implies erasure. See
+[Lineage-backed deletion workflows](deletion-workflows.md).
 
 ## Failure boundary
 

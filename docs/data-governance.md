@@ -87,12 +87,12 @@ socialname data delete
 ```
 
 The current central API implements versioned creation, bounded reads, and
-immediate withdrawal for both account and installation subjects. The
-illustrative CLI commands remain future client work. In particular,
-`--delete-contributions` is not exposed until the ordered lineage-backed
-deletion workflow can fulfill and receipt its deadlines; withdrawal never
-pretends that retained contributions were erased. See
-[Purpose-specific consent grant lifecycle](consent-api.md).
+immediate withdrawal for both account and installation subjects. It also
+accepts a separate owner-authorized `data:delete` request for contributions
+selected by an owned grant; the illustrative CLI commands remain future client
+work. Withdrawal alone never pretends that retained contributions were
+erased. See [Purpose-specific consent grant lifecycle](consent-api.md) and
+[Lineage-backed deletion workflows](deletion-workflows.md).
 
 ## Collection profiles
 
@@ -224,6 +224,15 @@ Deleting one contributor removes that contributor's observations. An assertion
 may remain only when other non-deleted observations independently support it.
 If the deleted contribution was the sole support, the assertion is withdrawn.
 
+The current deletion API completes hiding in the creation transaction:
+matching grants are withdrawn, lineage tombstones are materialized, read paths
+exclude matched resources, and active target-bearing work and deliveries are
+cancelled/redacted. A fenced non-owner worker removes support, recomputes from
+remaining eligible observations, purges current PostgreSQL primary
+dependencies, and leaves the request in `rebuilding`. Analytics completion,
+receipts, restore-ledger replay, backup expiry, production scheduling, and
+elapsed SLA evidence remain the next ordered item.
+
 ### Target-person request
 
 A request concerning a public identifier is different from contributor
@@ -245,6 +254,20 @@ used only for suppression.
 Private tenant records may involve a different controller, contract, legal
 basis, or legal hold. The product must route those cases explicitly rather than
 silently claiming that one shared-pool deletion removed every copy everywhere.
+
+The current target-person entry point is an explicit schema-owner command that
+requires an external-verification acknowledgement and bounded stdin selectors.
+It stores only a verification-reference digest, tenant-separated HMAC
+identities, grouped request IDs, counts, and deadlines. It deletes exact
+matching shared observations and deliberately retains an identical private
+observation. Alias/control verification and private-controller routing remain
+outside the command and must be completed by the authorized case process.
+
+Target and contributor suppression tokens carry a nonsecret key fingerprint.
+The same persistent 256-bit HMAC secret is required by server, target operator,
+and managed job worker. If an active token belongs to a different or unknown
+fingerprint, affected ingestion fails closed rather than silently forgetting
+the suppression. Online key rotation is not claimed.
 
 ### Technical lineage
 
@@ -287,3 +310,9 @@ Deletion is tested like availability:
   remaining backup expiry.
 - New stores cannot enter production without export, lineage, retention, and
   deletion adapters.
+
+The current PostgreSQL 18 gate covers immediate hiding, exact replay, scope
+isolation, support-by-support recomputation, sole-support withdrawal, primary
+purge, future reingestion suppression, shared/private target separation,
+fail-closed key mismatch, and idempotent fenced processing. Daily drills,
+completed receipts, restore replay, and backup-expiry proof remain unclaimed.

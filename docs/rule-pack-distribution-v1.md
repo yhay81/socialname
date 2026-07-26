@@ -227,6 +227,7 @@ dual-signed general artifact can also be verified from installed generation
 The managed job command is:
 
 ```console
+$env:SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX = "<persistent 256-bit secret>"
 cargo run --locked -p socialname-worker -- process-one \
   --site <site-id> \
   --region <worker-region> \

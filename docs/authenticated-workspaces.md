@@ -57,11 +57,12 @@ Keys contain a nonempty, duplicate-free subset of at most 16 values from:
 - `data:export`, `data:delete`
 
 Migrations `0002_api_key_authentication.sql` and
-`0010_consent_grant_lifecycle.sql` enforce the same closed set and
-rejects null or duplicate array entries. `workspace:read`, `search:read`, and
+`0010_purpose_specific_consent.sql` enforce the same closed set and
+reject null or duplicate array entries. `workspace:read`, `search:read`, and
 `search:write`, watch read/write, and consent read/write now have exact HTTP
-consumers. Possessing any later scope does not create a route ahead of its
-roadmap item.
+consumers; `data:delete` now protects contributor request creation and
+owner-only status reads. `notification:*` and `data:export` still do not create
+a route ahead of their roadmap items.
 
 ## Operator lifecycle
 
@@ -192,7 +193,7 @@ bounded database probe shorter than the outer request deadline and returns
 
 The PostgreSQL 18 integration gate covers:
 
-- replay-safe migrations, 44 product tables, and 34 forced-RLS policies;
+- replay-safe migrations, 45 product tables, and 35 forced-RLS policies;
 - credential-table and definer-function `PUBLIC` privilege revocation;
 - a real `LOGIN NOSUPERUSER NOBYPASSRLS` runtime role;
 - transaction-local tenant separation for two valid keys;

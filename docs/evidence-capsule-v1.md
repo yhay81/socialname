@@ -94,9 +94,11 @@ output contains counts only.
 
 Capsule expiry clears the rich structured payload. The existing immutable
 observation summary and its assertion/transition support are not falsely
-claimed deleted here. The next ordered roadmap slice uses lineage to hide,
-withdraw, recompute, and physically delete contributor/target material with
-the separate five-minute, one-hour, 24-hour, seven-day, and 35-day guarantees.
+claimed deleted by retention alone. The separate implemented lineage workflow
+hides, withdraws, recomputes, and physically deletes selected
+contributor/target primary material; analytics, restore, receipts, and backup
+proof remain its next gate. See
+[Lineage-backed deletion workflows](deletion-workflows.md).
 
 Production scheduling, alerting on overdue retention work, jurisdictional
 review, and proof from a real managed deployment remain external operational

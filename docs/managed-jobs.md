@@ -5,7 +5,8 @@ to `socialname-worker` without giving the API process network authority or
 giving the worker unrestricted cross-tenant database access. Migrations
 `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`,
 `0006_assertion_recomputation.sql`, and
-`0009_rule_pack_distribution.sql`, plus `JobStore`, implement the complete
+`0009_rule_pack_distribution.sql`, plus
+`0012_lineage_backed_deletion.sql` and `JobStore`, implement the complete
 consumer-to-interpretation path:
 
 1. select eligible accepted work;
@@ -57,10 +58,14 @@ different grants with the same purpose, therefore never share work.
 
 ## Worker database boundary
 
-The worker connects with `SOCIALNAME_WORKER_DATABASE_URL`. Its role must be a
-non-owner `LOGIN NOSUPERUSER NOBYPASSRLS` role. It receives no API credential
-access, table delete privilege, observation update privilege, or unrestricted
-cross-tenant read.
+The worker connects with `SOCIALNAME_WORKER_DATABASE_URL`. Managed job
+execution also requires the same persistent
+`SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX` used by the server and verified-target
+operator. Its role must be a non-owner `LOGIN NOSUPERUSER NOBYPASSRLS` role.
+It receives no API credential access, observation update privilege,
+unrestricted product-table deletion, or unrestricted cross-tenant read. The
+separate deletion unit has only the reviewed primary-resource delete grants
+exercised by the integration fixture.
 
 Forced RLS means the worker cannot discover the tenant before it has selected
 work. Seven fixed-search-path `SECURITY DEFINER` functions provide only the
@@ -125,6 +130,8 @@ the worker rechecks:
 - the exact live lease;
 - active purpose-specific consent;
 - at least one live search or watch-run consumer;
+- active target-person suppression for shared work and suppression-key
+  fingerprint compatibility;
 - the exact active general/rollback rule-pack metadata, rule version, and
   latest fresh healthy regional record.
 
@@ -134,6 +141,15 @@ Immediately before ingestion, the transaction re-resolves the exact signed
 rule and locks the leased job's consent through the narrow coordinator
 function. Cancellation and live consumers are rechecked under row locks. No
 observation can commit after a consent-withdrawal transaction wins that lock.
+No shared observation can commit after target suppression wins either.
+
+Target suppression is distinct from ordinary consumer cancellation. It
+produces no observation, replaces target-bearing search/job fields and the
+work hash with opaque markers, emits a nonretryable redacted `blocked` event,
+and completes the affected search. A mismatched active suppression-key
+fingerprint fails closed before network execution; it cannot silently make an
+old token ineffective. Private managed work is intentionally outside the
+shared-pool target-person suppression path.
 
 The narrow claim coordinator cancels dead watch targets and an active job that
 no live search or watch still needs. A claimed job becomes ineligible before
@@ -190,6 +206,7 @@ seconds, and initial connection establishment at 10 seconds:
 
 ```console
 $env:SOCIALNAME_WORKER_DATABASE_URL = "postgres://WORKER:SECRET@HOST:5432/DB"
+$env:SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX = "<same persistent 256-bit secret>"
 cargo run --locked -p socialname-worker -- process-one \
   --site <site-id> \
   --region <worker-region> \
@@ -216,6 +233,22 @@ watch-run count, expansion count, optional job ID, and optional attempt
 count—never username, result, consent ID, tenant ID, or database URL. Errors
 use fixed classes and likewise do not reflect target or credential material.
 
+`process-deletion` is a separate target-free, one-request operator unit. It
+claims a fenced deletion request, withdraws selected support, recomputes from
+remaining observations, purges current PostgreSQL primary dependencies, and
+leaves analytics and backup tasks pending:
+
+```console
+$env:SOCIALNAME_WORKER_DATABASE_URL = "postgres://WORKER:SECRET@HOST:5432/DB"
+cargo run --locked -p socialname-worker -- process-deletion \
+  --worker-id deletion-worker-1 \
+  --lease-seconds 60 \
+  --allow-live
+```
+
+Its trust, least-privilege, replay, and remaining-gate contract is in
+[Lineage-backed deletion workflows](deletion-workflows.md).
+
 ## Verification
 
 The deterministic worker tests cover scope hashing, consent/visibility
@@ -239,6 +272,10 @@ worker roles and proves:
 - invalid-target separation;
 - search cancellation, watch revision cancellation, consent withdrawal, and
   rule degradation before commit;
+- target suppression before network/commit, redacted terminal failure, and
+  fail-closed suppression-key mismatch;
+- lineage-selected support withdrawal, recomputation, primary deletion,
+  shared/private target separation, and deletion-worker replay;
 - persistent global and per-site replay rejection, staged trust retention,
   general trust activation, old-key removal, and signed rollback to the exact
   retained rule version.

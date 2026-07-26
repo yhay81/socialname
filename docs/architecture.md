@@ -312,7 +312,8 @@ Initial PostgreSQL tables:
 | `audit_events` | Security and administrative audit |
 | `data_lineage_edges` | Withdrawal and recomputation lineage |
 | `deletion_requests`, `deletion_tasks`, `deletion_receipts` | Deadline-bound erasure workflow |
-| `suppression_tokens` | HMAC-only reingestion suppression |
+| `deletion_resource_matches` | Immutable hide/support/purge lineage tombstones |
+| `suppression_tokens` | HMAC-only reingestion suppression with key identity |
 
 The large tables should use time-based partitioning only after observed volume
 justifies it. PostgreSQL remains the source of truth for the first production
@@ -335,9 +336,10 @@ command, and PostgreSQL 18 verification are specified in
 Central Capsule reads compare their deadline with database time before
 returning payload. A bounded worker command irreversibly clears due research
 and structure, writes payload-free three-year receipts, and later removes
-expired receipts. This enforcement does not delete the existing immutable
-observation summary; that remains part of the ordered lineage-backed deletion
-workflow. See [Bounded Evidence Capsule v1](evidence-capsule-v1.md).
+expired receipts. Separate lineage-backed contributor/target workflows now
+remove selected observation summaries and their primary dependencies. See
+[Bounded Evidence Capsule v1](evidence-capsule-v1.md) and
+[Lineage-backed deletion workflows](deletion-workflows.md).
 
 Deletion must remove derived assertions when their supporting private
 observations are deleted.
@@ -406,7 +408,7 @@ versions. Account subjects are derived from the active API-key membership.
 Installation subjects persist only a tenant-separated digest and cannot be
 overridden by another workspace membership. Creation is serialized and
 replay-safe; withdrawal is immediate, one-way, evented, and distinct from the
-later lineage-backed deletion workflow. See
+separate lineage-backed deletion workflow. See
 [Purpose-specific consent grant lifecycle](consent-api.md).
 
 ### Evidence inspection
@@ -420,6 +422,26 @@ validated Capsule whose database-time structured deadline remains in the
 future. Foreign, expired, purged, and unknown resources are uniformly hidden.
 An optional research excerpt has its own shorter projection deadline. See
 [Bounded Evidence Capsule v1](evidence-capsule-v1.md).
+
+### Contributor and target-person deletion
+
+```http
+POST /v1/deletion-requests/contributor
+GET  /v1/deletion-requests/{deletion_request_id}
+```
+
+An owner-authorized `data:delete` request uses an owned consent grant to select
+one contributor subject/purpose, withdraws all matching grants, materializes
+lineage tombstones, and hides/cancels target-bearing product state in the
+creation transaction. A fenced worker withdraws support, recomputes from
+remaining observations, and purges current PostgreSQL primary dependencies.
+
+Externally verified target-person cases use a bounded stdin schema-owner
+command rather than a self-asserted HTTP route. They affect exact matching
+shared observations across tenants, retain private tenant records for explicit
+controller routing, and leave HMAC-only future-reingestion suppression.
+Analytics/backup completion and restore-ledger proof remain separate. See
+[Lineage-backed deletion workflows](deletion-workflows.md).
 
 ### Observation synchronization
 

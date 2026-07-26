@@ -68,7 +68,8 @@ The first vertical slice is implemented in the repository:
   quarantine recovery, and complete local deletion;
 - an independent public API v1 crate with closed search/SSE, error,
   source/freshness, watch, transition-confirmation, notification endpoint, and
-  delivery and authenticated-workspace DTOs plus generated JSON Schema roots;
+  delivery, deletion, and authenticated-workspace DTOs plus generated JSON
+  Schema roots;
 - an operable Axum/Tower modular monolith with loopback-safe defaults, bounded
   requests, database-aware readiness, closed errors, redacted tracing,
   transactional workspace/API-key operator lifecycle, digest-only bearer
@@ -77,6 +78,9 @@ The first vertical slice is implemented in the repository:
 - closed purpose/profile/notice consent resources for account and
   installation subjects, tenant-separated installation digests, membership
   non-override, bounded reads, and immutable one-way withdrawal;
+- owner-authorized contributor deletion and externally verified target-person
+  workflows with immediate lineage tombstones, exact deadlines, HMAC-only
+  fail-closed suppression, current-primary purge, and private-target routing;
 - a signed managed worker with consent/visibility-isolated job expansion,
   fenced claims, bounded retries, continuous authorization cancellation, and
   atomic observation/assertion/transition/event/lineage ingestion under a
@@ -166,6 +170,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Bounded Evidence Capsule v1](evidence-capsule-v1.md) — closed sanitized
   evidence, scoped inspection, database-time deadlines, bounded purge, and
   payload-free receipts.
+- [Lineage-backed deletion workflows](deletion-workflows.md) — contributor and
+  verified-target intake, immediate hiding, suppression, recomputation,
+  current-primary purge, least privilege, and remaining gates.
 - [Assertion trust](assertion-trust.md) — evidence classes, producer reputation,
   quorum, conflict, and notification confirmation.
 - [Signed webhook delivery](webhook-delivery.md) — logical deduplication,
@@ -205,10 +212,11 @@ observation, assertion recomputation, meaningful transitions, signed webhook
 delivery, and the minimal API-backed console form the tested loop. The current
 roadmap milestone is **Trust, governance, and multi-region operation**. Its
 regional deployment/operator boundary, regional assertion behavior, and
-signed rule-pack distribution, purpose-specific consent lifecycle, and bounded
-Evidence Capsule retention are repository-complete while real deployment
-remains external. The next software slice implements lineage-backed
-contributor deletion and target-person request workflows.
+signed rule-pack distribution, purpose-specific consent lifecycle, bounded
+Evidence Capsule retention, and lineage-backed contributor/target deletion are
+repository-complete while real deployment remains external. The next software
+slice adds daily delete-through tests, completed receipts, restore-ledger
+replay, and backup-expiry verification.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

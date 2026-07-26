@@ -147,8 +147,10 @@ The `process-one` command adds the database connection without adding a
 raw-rule path. It accepts only `general` or `rollback`, binds the same
 `ManagedRule` to the exact metadata ID/sequence and promotion ID/sequence in
 the active registry row, expands a bounded batch, claims at most one fenced
-lease, monitors authorization during the request, and records a target-free
-operator status.
+lease, monitors consent, live consumers, exact rule availability, and shared
+target suppression during the request, and records a target-free operator
+status. It requires the persistent suppression HMAC secret; a mismatched
+active token fingerprint fails closed before network execution.
 The job identity, forced-RLS role, coalescing, retries, consent lock, atomic
 ingestion, and remaining rule-acceptance gate are specified in
 [Managed probe jobs and observation ingestion](managed-jobs.md).

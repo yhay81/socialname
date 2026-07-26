@@ -2,9 +2,11 @@
 
 `socialname-server` is the operable Axum/Tower process boundary for the managed
 SocialName product. It embeds forward-only PostgreSQL migrations, provides
-explicit workspace/API-key and signed rule-pack operator commands, exposes authenticated private
-workspace/search/watch resources, bounded monitoring pages, and ordered SSE
-replay. Notification endpoint administration and other product routes remain
+explicit workspace/API-key, signed rule-pack, and verified target-deletion
+operator commands, exposes authenticated private workspace/search/watch,
+consent, evidence, and contributor-deletion resources, bounded monitoring
+pages, and ordered SSE replay. Notification endpoint administration and other
+product routes remain
 closed until their ordered roadmap slices add authorization, storage use,
 lineage, and failure behavior end to end. Managed network execution remains in
 the separate signed worker.
@@ -14,7 +16,7 @@ domain, or engine depend on HTTP or persistence.
 
 ## Runtime configuration
 
-The serving binary reads five environment variables:
+The serving binary reads six environment variables:
 
 | Variable | Default | Accepted range |
 | --- | --- | --- |
@@ -23,6 +25,7 @@ The serving binary reads five environment variables:
 | `SOCIALNAME_SERVER_MAXIMUM_BODY_BYTES` | `262144` | 1024 to 1048576 bytes |
 | `SOCIALNAME_SERVER_MAXIMUM_IN_FLIGHT` | `128` | 1 to 1024 requests |
 | `SOCIALNAME_SERVER_DATABASE_URL` | none | A PostgreSQL URL for a non-owner runtime role |
+| `SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX` | none | Exactly 64 lowercase hexadecimal characters |
 
 The default is loopback-only. Binding a non-loopback address requires an
 explicit value; it does not imply that TLS, authentication, abuse controls, or
@@ -35,6 +38,7 @@ PowerShell development start:
 ```powershell
 $env:SOCIALNAME_SERVER_BIND = "127.0.0.1:8080"
 $env:SOCIALNAME_SERVER_DATABASE_URL = "postgres://SOCIALNAME_APP:...@HOST/DATABASE"
+$env:SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX = "<persistent 256-bit secret>"
 cargo run --locked -p socialname-server
 ```
 
@@ -62,6 +66,11 @@ grants, token handling, and the protected route are documented in
 Initial trust pinning and transactional `apply-rule-pack` operation are
 documented in
 [Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).
+The suppression key is mandatory because consent creation and managed
+ingestion must honor prior deletion suppression. It must remain stable for
+every unexpired token; fingerprint mismatch fails closed. Contributor and
+verified target workflows are documented in
+[Lineage-backed deletion workflows](deletion-workflows.md).
 
 ## Current HTTP surface
 
@@ -81,6 +90,13 @@ GET /v1/watches/{watch_id}
 PATCH /v1/watches/{watch_id}
 DELETE /v1/watches/{watch_id}
 GET /v1/watches/{watch_id}/transitions
+POST /v1/consent-grants
+GET /v1/consent-grants
+GET /v1/consent-grants/{consent_grant_id}
+POST /v1/consent-grants/{consent_grant_id}/withdrawals
+GET /v1/observations/{observation_id}/evidence-capsule
+POST /v1/deletion-requests/contributor
+GET /v1/deletion-requests/{deletion_request_id}
 ```
 
 The two health endpoints return a small `socialname.dev/api/v1` JSON document
@@ -133,6 +149,14 @@ are uniformly `not_found`. A research excerpt is projected only before its
 independent database deadline. See
 [Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md).
 
+Contributor deletion creation and owner-only status reads require
+`data:delete`. Creation is replay-safe, immediately withdraws all matching
+subject/purpose grants, materializes lineage-backed hide tombstones, cancels
+and redacts active work, and leaves primary/analytics/backup tasks with exact
+deadlines. The cross-tenant target-person path is deliberately an
+externally-verified stdin operator command, not a public HTTP route. See
+[Lineage-backed deletion workflows](deletion-workflows.md).
+
 Every other path returns a protocol `not_found` response. Unsupported methods
 return a protocol `invalid_request` response. Notification endpoint management,
 worker control, and HTTP key-administration routes do not exist yet, so
@@ -152,7 +176,7 @@ The Tower stack is ordered so one outer request guard:
 
 A Tower concurrency layer bounds in-flight handler work. Axum's default body
 limit is set to the same configured maximum for body-consuming extractors.
-Search, watch, and consent JSON routes map extractor rejections into the closed
+Search, watch, consent, and deletion JSON routes map extractor rejections into the closed
 protocol envelope; each future JSON route must do the same and must not bypass
 the body limit by polling raw frames.
 
@@ -204,7 +228,10 @@ forced RLS, non-owner authentication, workspace/search/watch isolation, key
 expiry/revocation/scope, consent, exact/conflicting idempotency, ordered SSE
 replay, watch revision/cancellation, bounded stream capacity, readiness,
 operator lifecycle, evidence/event immutability, notification safety, and
-deletion lineage. It also proves persisted rule-pack replay protection,
+lineage-backed contributor and verified-target deletion. It also proves
+immediate hiding, future reingestion suppression, remaining-support
+recomputation, primary purge, private-target preservation, and persisted
+rule-pack replay protection,
 staged/general trust rotation, exact worker binding, signed rollback,
 monitoring read scope, tenant/cursor
 isolation, account-versus-measurement timelines, delivery retry/dead-letter

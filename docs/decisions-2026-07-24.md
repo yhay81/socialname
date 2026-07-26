@@ -35,6 +35,20 @@ so status does not diverge across design records.
   is deleted or expires.
 - Deletion is lineage-backed, removes production data within 24 hours, and ages
   data out of encrypted backups within 35 days.
+- Contributor deletion is selected by an owned consent subject and purpose,
+  revokes every matching active grant, and materializes immutable hide
+  tombstones before returning. Target-person deletion requires an externally
+  verified stdin operator case, affects only exact matching shared
+  observations, and routes private tenant records separately.
+- Contributor/target selectors are retained only as tenant-separated,
+  length-framed HMACs. The 256-bit suppression key is stable for every
+  unexpired token; a legacy or different active key fingerprint fails closed
+  for consent, target operation, and shared managed execution. This boundary
+  does not claim online suppression-key rotation.
+- Primary deletion atomically withdraws support, recomputes from remaining
+  observations, purges current PostgreSQL dependencies, and leaves the request
+  `rebuilding`. Analytics completion, receipts, restore replay, production
+  scheduling, and backup-expiry proof remain a distinct next gate.
 - Strict independent shared-client quorum may establish a `corroborated`
   assertion. Only eligible managed evidence can establish `verified`.
 - Shared-only absence cannot trigger a disappearance notification.
@@ -211,12 +225,13 @@ so status does not diverge across design records.
 - [Minimal monitoring console](monitoring-console.md)
 - [Purpose-specific consent grant lifecycle](consent-api.md)
 - [Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md)
+- [Lineage-backed deletion workflows](deletion-workflows.md)
 
 ## Implementation baseline
 
-1. **Partial:** Encode observation and assertion types in
-   `socialname-domain`. Consent and the closed Evidence Capsule contract now
-   have protocol/server boundaries; deletion remains in the server/data slice.
+1. **Done:** Encode observation and assertion types in
+   `socialname-domain`, with consent, closed Evidence Capsule, and
+   lineage-backed deletion contracts at the protocol/server/worker boundaries.
 2. **Done:** Define strict Site Rule v1 source and compiled schemas.
 3. **Done:** Implement deterministic fixtures for the representative ten sites.
 4. **Done:** Implement the local probe engine and matcher trace.
@@ -281,12 +296,18 @@ so status does not diverge across design records.
     exact signed provenance, sanitized summaries, scoped database-deadline
     inspection, consumer-specific retention, bounded irreversible purge, and
     payload-free three-year receipts.
+22. **Done:** Add owned contributor deletion and externally verified
+    target-person workflows with immediate lineage-backed hiding, exact
+    deadlines, HMAC-only fail-closed suppression, remaining-support
+    recomputation, fenced current-primary deletion, private-target routing,
+    and exact replay before and after physical purge.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
 deployment evidence remains pending, with affected capabilities disabled.
 Milestone 3's deployment/operator artifact, regional assertion behavior,
 signed rule-pack distribution, purpose-specific consent lifecycle, and bounded
-Evidence Capsule retention are repository-complete, while actual multi-region
-deployment remains an external gate. The next executable work is
-lineage-backed contributor deletion and target-person request workflows.
+Evidence Capsule retention, and lineage-backed contributor/target deletion are
+repository-complete, while actual multi-region deployment remains an external
+gate. The next executable work is daily delete-through testing, completed
+deletion receipts, restore-ledger replay, and backup-expiry verification.

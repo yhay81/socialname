@@ -92,8 +92,8 @@ account verdict.
 an `accepted` or `running` search to `cancelled`, cancels incomplete targets,
 and appends one `finished/cancelled` event in the same transaction. Repeating
 the operation returns the same terminal resource without another terminal
-event. Product-data erasure remains the separate lineage-aware deletion
-workflow.
+event. Product-data erasure uses the separate implemented lineage-aware
+workflow in [Lineage-backed deletion workflows](deletion-workflows.md).
 
 ## Append-only event storage
 
@@ -176,7 +176,7 @@ identity, and no delete privilege on these tables.
 ## Verification and remaining gate
 
 The PostgreSQL 18 integration test resets its disposable fixture database so
-back-to-back runs cover replay-safe migrations, 44 product tables, 34
+back-to-back runs cover replay-safe migrations, 45 product tables, 35
 forced-RLS policies, exact and conflicting idempotency replay,
 read-only/write scope separation, required consent purpose, unknown sites,
 target-free errors, two-tenant isolation, digest-only idempotency storage,

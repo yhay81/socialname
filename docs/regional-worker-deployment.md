@@ -56,6 +56,9 @@ The probe workload receives only:
 
 - `SOCIALNAME_WORKER_DATABASE_URL`, injected at runtime for the documented
   non-owner, `NOBYPASSRLS` worker role;
+- `SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX`, injected from the deletion-control
+  secret store and shared with the server/verified-target operator for the
+  full lifetime of active suppression tokens;
 - one read-only rule-pack metadata JSON artifact;
 - one read-only current public `rule-pack-trust/v1` file;
 - the durable worker metadata sequence floor, site, and region as explicit
@@ -74,6 +77,7 @@ docker run --rm --read-only `
   --security-opt no-new-privileges=true `
   --mount type=bind,source=<approved-artifact-dir>,target=/run/socialname,readonly `
   --env SOCIALNAME_WORKER_DATABASE_URL `
+  --env SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX `
   <registry>/socialname-worker@sha256:<manifest-digest> process-one `
   --site <site-id> `
   --region <worker-region> `
@@ -88,9 +92,11 @@ docker run --rm --read-only `
   --allow-live
 ```
 
-The example deliberately passes only the environment-variable name; the value
-must come from the platform secret store, never the image, manifest, command
-line, or repository. `process-one` accepts only an unexpired `general` or
+The example deliberately passes only environment-variable names; values must
+come from the platform secret store, never the image, manifest, command line,
+or repository. Suppression-key fingerprint mismatch fails closed before
+shared network execution; key rotation requires a reviewed migration.
+`process-one` accepts only an unexpired `general` or
 `rollback` artifact; selected `canary` and `regional` artifacts are limited to
 the separate diagnostic `probe` path.
 The production egress policy must allow only the managed PostgreSQL endpoint
