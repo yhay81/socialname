@@ -15,14 +15,16 @@ hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 socialname-canary = { path = "../socialname-canary" }
+socialname-domain = { path = "../socialname-domain" }
 socialname-engine = { path = "../socialname-engine" }
+socialname-protocol = { path = "../socialname-protocol" }
 socialname-rule-compiler = { path = "../socialname-rule-compiler" }
+sha2.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-
-[dev-dependencies]
-socialname-domain = { path = "../socialname-domain" }
+uuid.workspace = true
 
 [lints]
 workspace = true

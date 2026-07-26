@@ -1,13 +1,21 @@
 #![forbid(unsafe_code)]
 
+mod job;
+
 use socialname_canary::ValidatedPromotion;
 use socialname_engine::{SearchEngine, SearchResult};
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use tokio_util::sync::CancellationToken;
 
+pub use job::{
+    ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError, JobStore, RuleBinding,
+    WORKER_DATABASE_URL_ENV,
+};
+
 #[derive(Clone, Debug)]
 pub struct ManagedRule {
     promotion_id: String,
+    rule_pack_hash: String,
     region_class: String,
     promotion_expires_at_unix_ms: i64,
     evidence_expires_at_unix_ms: i64,
@@ -69,6 +77,7 @@ impl ManagedRule {
 
         Ok(Self {
             promotion_id: validated.envelope().promotion_id.clone(),
+            rule_pack_hash: promotion.rule_pack_hash.clone(),
             region_class,
             promotion_expires_at_unix_ms: promotion.expires_at_unix_ms,
             evidence_expires_at_unix_ms: evidence.evidence_expires_at_unix_ms,
@@ -88,8 +97,27 @@ impl ManagedRule {
     }
 
     #[must_use]
+    pub fn rule_hash(&self) -> &str {
+        &self.candidate.rule_hash
+    }
+
+    #[must_use]
+    pub fn rule_pack_hash(&self) -> &str {
+        &self.rule_pack_hash
+    }
+
+    #[must_use]
     pub fn region_class(&self) -> &str {
         &self.region_class
+    }
+
+    #[must_use]
+    pub fn normalize_username(&self, username: &str) -> Option<String> {
+        self.candidate
+            .normalize_username(username)
+            .filter(|normalized| {
+                (1..=256).contains(&normalized.len()) && !normalized.chars().any(char::is_control)
+            })
     }
 
     pub async fn execute(

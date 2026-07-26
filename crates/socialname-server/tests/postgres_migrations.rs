@@ -1,4 +1,9 @@
-use std::{env, net::SocketAddr, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+    net::SocketAddr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     body::{Body, to_bytes},
@@ -9,6 +14,15 @@ use axum::{
     response::Response,
 };
 use sha2::{Digest, Sha256};
+use socialname_canary::{
+    PromotionBuildRequest, PromotionBuilder, PromotionSigningKey, PromotionTrustPolicy,
+    PromotionVerifier,
+};
+use socialname_domain::{
+    EvidenceClass as DomainEvidenceClass, InconclusiveReason, RuleHealth, RuleHealthKey,
+    RuleHealthRecord, SiteId as DomainSiteId, Verdict,
+};
+use socialname_engine::{Classification, SearchResult};
 use socialname_protocol::{
     ApiErrorCode, ApiErrorResponse, ConsentGrantId, EventId, OperationalFailure,
     OperationalFailureKind, ProtocolVersion, RegionClass, ResultSource, SearchCreateRequest,
@@ -16,13 +30,18 @@ use socialname_protocol::{
     SearchState, SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection, Username,
     Validate, WorkspaceResource,
 };
+use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{ServerConfig, build_router, migrate_database};
+use socialname_worker::{
+    ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule,
+};
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
 use uuid::Uuid;
 
 const TEST_DATABASE_URL_ENV: &str = "SOCIALNAME_TEST_DATABASE_URL";
 const TEST_APPLICATION_DATABASE_URL_ENV: &str = "SOCIALNAME_TEST_APPLICATION_DATABASE_URL";
+const TEST_WORKER_DATABASE_URL_ENV: &str = "SOCIALNAME_TEST_WORKER_DATABASE_URL";
 
 #[tokio::test]
 async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
@@ -51,6 +70,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_deletion_deadlines_and_receipts(&pool).await;
     assert_authenticated_workspace_boundary(&pool).await;
     assert_private_search_and_event_stream_boundary(&pool).await;
+    assert_managed_probe_job_boundary(&pool).await;
 
     pool.close().await;
 }
@@ -81,6 +101,17 @@ async fn reset_test_state(pool: &PgPool) {
                     FROM socialname_migration_test_app;
                 REVOKE ALL PRIVILEGES ON SCHEMA public
                     FROM socialname_migration_test_app;
+            END IF;
+            IF EXISTS (
+                SELECT FROM pg_roles
+                WHERE rolname = 'socialname_migration_test_worker'
+            ) THEN
+                REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public
+                    FROM socialname_migration_test_worker;
+                REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public
+                    FROM socialname_migration_test_worker;
+                REVOKE ALL PRIVILEGES ON SCHEMA public
+                    FROM socialname_migration_test_worker;
             END IF;
         END
         $$;
@@ -1280,6 +1311,783 @@ async fn assert_private_search_and_event_stream_boundary(administrator_pool: &Pg
     drop(capacity_released);
 
     application_pool.close().await;
+}
+
+const MANAGED_JOB_RULE: &str = r#"
+schema: socialname.dev/site/v1
+id: managed-test
+name: Managed Test
+homepage: https://example.com/
+profile_url: https://example.com/u/{username:path}
+namespace: person
+username:
+  pattern: '^[a-z][a-z0-9-]{2,31}$'
+  normalization: lowercase
+probes:
+  - id: profile
+    http:
+      method: GET
+      url: https://example.com/u/{username:path}
+      allowed_hosts: [example.com]
+      expected_body: bounded_text
+      transport_profile: minimal
+plan:
+  type: single
+  probe: profile
+classification:
+  found:
+    status:
+      probe: profile
+      in: [200]
+  not_found:
+    status:
+      probe: profile
+      in: [404]
+metadata:
+  enabled: true
+"#;
+
+const MANAGED_MANIFEST_HASH: &str =
+    "1111111111111111111111111111111111111111111111111111111111111111";
+const MANAGED_ENGINE_HASH: &str =
+    "2222222222222222222222222222222222222222222222222222222222222222";
+const MANAGED_RULE_VERSION_ID: &str = "00000000-0000-0000-0000-0000000000d1";
+const MANAGED_RULE_PACK_ID: &str = "00000000-0000-0000-0000-0000000000d2";
+const SECOND_CONSENT_GRANT_ID: &str = "00000000-0000-0000-0000-0000000000d3";
+
+async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
+    let (managed_rule, candidate, pack) = managed_rule_fixture();
+    install_managed_rule_fixtures(administrator_pool, &candidate, &pack).await;
+    install_worker_role(administrator_pool).await;
+
+    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
+        .expect("worker database URL must accompany the PostgreSQL integration test");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&worker_database_url)
+        .await
+        .unwrap();
+    let store = JobStore::new(worker_pool.clone());
+    let binding = store.bind_rule(&managed_rule).await.unwrap();
+    assert_eq!(
+        binding.rule_version_id(),
+        Uuid::parse_str(MANAGED_RULE_VERSION_ID).unwrap()
+    );
+    let coordinator_owner_can_cross_forced_rls: bool = sqlx::query_scalar(
+        "SELECT bool_and(owner.rolsuper OR owner.rolbypassrls) \
+         FROM pg_proc AS proc \
+         JOIN pg_roles AS owner ON owner.oid = proc.proowner \
+         WHERE proc.proname IN (\
+             'socialname_worker_resolve_rule', \
+             'socialname_worker_lock_next_target', \
+             'socialname_worker_claim_job', \
+             'socialname_worker_lock_claim_consent'\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(coordinator_owner_can_cross_forced_rls);
+
+    let worker_security: (bool, bool, bool, i64) = sqlx::query_as(
+        "SELECT current_user = 'socialname_migration_test_worker', \
+                rolsuper, rolbypassrls, \
+                (SELECT count(*) FROM searches) \
+         FROM pg_roles WHERE rolname = current_user",
+    )
+    .fetch_one(&worker_pool)
+    .await
+    .unwrap();
+    assert!(worker_security.0);
+    assert!(!worker_security.1);
+    assert!(!worker_security.2);
+    assert_eq!(worker_security.3, 0);
+    let can_read_credentials: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            current_user, 'api_key_credentials', 'SELECT'\
+         )",
+    )
+    .fetch_one(&worker_pool)
+    .await
+    .unwrap();
+    assert!(!can_read_credentials);
+
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let first = create_managed_search(
+        &application_pool,
+        "managed-job-first",
+        "private-search-target",
+        "00000000-0000-0000-0000-000000000031",
+    )
+    .await;
+    let second = create_managed_search(
+        &application_pool,
+        "managed-job-second",
+        "private-search-target",
+        "00000000-0000-0000-0000-000000000031",
+    )
+    .await;
+    let third = create_managed_search(
+        &application_pool,
+        "managed-job-third",
+        "private-search-target",
+        SECOND_CONSENT_GRANT_ID,
+    )
+    .await;
+
+    let first_expansion = store.expand_one(&binding, &managed_rule).await.unwrap();
+    let first_job_id = match first_expansion {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected a new managed job, got {other:?}"),
+    };
+    assert_eq!(
+        store.expand_one(&binding, &managed_rule).await.unwrap(),
+        ExpandOutcome::Coalesced {
+            job_id: first_job_id
+        }
+    );
+    let second_job_id = match store.expand_one(&binding, &managed_rule).await.unwrap() {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected a purpose-isolated job, got {other:?}"),
+    };
+    assert_ne!(first_job_id, second_job_id);
+    assert_eq!(
+        store.expand_one(&binding, &managed_rule).await.unwrap(),
+        ExpandOutcome::Idle
+    );
+
+    let active_jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM probe_jobs \
+         WHERE rule_version_id = $1 AND state = 'queued'",
+    )
+    .bind(binding.rule_version_id())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let consumers: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM probe_job_consumers \
+         WHERE probe_job_id IN ($1, $2)",
+    )
+    .bind(first_job_id)
+    .bind(second_job_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(active_jobs, 2);
+    assert_eq!(consumers, 3);
+
+    let first_claim = store
+        .claim(&binding, "worker-a", Duration::from_secs(5))
+        .await
+        .unwrap()
+        .unwrap();
+    let second_claim = store
+        .claim(&binding, "worker-b", Duration::from_secs(5))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first_claim.job_id(), first_job_id);
+    assert_eq!(second_claim.job_id(), second_job_id);
+    assert!(
+        store
+            .claim(&binding, "worker-extra", Duration::from_secs(5))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let definitive = managed_result(
+        Verdict::Found,
+        None,
+        DomainEvidenceClass::E4StructuredIdentity,
+        &candidate.rule_hash,
+        "b",
+    );
+    assert_eq!(
+        store
+            .record_result(&second_claim, &definitive, 3)
+            .await
+            .unwrap(),
+        JobDisposition::Succeeded
+    );
+    assert_eq!(
+        store
+            .record_result(&second_claim, &definitive, 3)
+            .await
+            .unwrap(),
+        JobDisposition::AlreadyFinal
+    );
+
+    sqlx::query(
+        "UPDATE probe_jobs \
+         SET updated_at = created_at, \
+             lease_expires_at = created_at + interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(first_job_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let reclaimed = store
+        .claim(&binding, "worker-c", Duration::from_secs(5))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reclaimed.job_id(), first_job_id);
+    assert_eq!(reclaimed.attempt_count(), 2);
+    let timeout_result = managed_result(
+        Verdict::Inconclusive,
+        Some(InconclusiveReason::Timeout),
+        DomainEvidenceClass::E0NoAccountEvidence,
+        &candidate.rule_hash,
+        "c",
+    );
+    assert_eq!(
+        store
+            .record_result(&first_claim, &timeout_result, 3)
+            .await
+            .unwrap_err(),
+        JobError::StaleLease
+    );
+    assert_eq!(
+        store
+            .record_result(&reclaimed, &timeout_result, 3)
+            .await
+            .unwrap(),
+        JobDisposition::RetryScheduled
+    );
+    sqlx::query(
+        "UPDATE probe_jobs SET available_at = clock_timestamp() - interval '1 second' \
+         WHERE id = $1",
+    )
+    .bind(first_job_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let final_claim = store
+        .claim(&binding, "worker-d", Duration::from_secs(5))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(final_claim.attempt_count(), 3);
+    assert_eq!(
+        store
+            .record_result(&final_claim, &timeout_result, 3)
+            .await
+            .unwrap(),
+        JobDisposition::Failed
+    );
+
+    let observation_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM observations WHERE probe_job_id = $1")
+            .bind(second_job_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    let result_event_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM search_events \
+         WHERE search_id = $1 AND event_type = 'definitive_result'",
+    )
+    .bind(Uuid::parse_str(third.search_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let first_failures: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM search_events \
+         WHERE search_id IN ($1, $2) AND event_type = 'operational_failure'",
+    )
+    .bind(Uuid::parse_str(first.search_id.as_str()).unwrap())
+    .bind(Uuid::parse_str(second.search_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let lineage_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM data_lineage_edges \
+         WHERE child_kind IN ('probe_job', 'observation', 'search_event') \
+           AND purpose IN (\
+               'managed_probe_request', 'managed_measurement', \
+               'search_result', 'operational_failure'\
+           )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(observation_count, 1);
+    assert_eq!(result_event_count, 1);
+    assert_eq!(first_failures, 2);
+    assert!(lineage_count >= 7);
+
+    for search in [&first, &second, &third] {
+        let polled = server_request(
+            &application_pool,
+            &format!("/v1/searches/{}", search.search_id.as_str()),
+            Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        )
+        .await;
+        let resource: SearchResource = serde_json::from_value(json_body(polled).await).unwrap();
+        assert_eq!(resource.state, SearchState::Completed);
+        assert_eq!(resource.progress.completed_targets, 1);
+        assert!(resource.validate().is_ok());
+    }
+
+    let invalid = create_managed_search(
+        &application_pool,
+        "managed-job-invalid",
+        "INVALID TARGET",
+        "00000000-0000-0000-0000-000000000031",
+    )
+    .await;
+    assert_eq!(
+        store.expand_one(&binding, &managed_rule).await.unwrap(),
+        ExpandOutcome::InvalidTargetCompleted
+    );
+    let invalid_payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM search_events \
+         WHERE search_id = $1 AND event_type = 'operational_failure'",
+    )
+    .bind(Uuid::parse_str(invalid.search_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(invalid_payload["data"]["failure"]["kind"], "invalid_target");
+    assert!(invalid_payload.to_string().find("not_found").is_none());
+
+    let cancelled = create_managed_search(
+        &application_pool,
+        "managed-job-cancelled",
+        "cancel-target",
+        "00000000-0000-0000-0000-000000000031",
+    )
+    .await;
+    let cancelled_job_id = match store.expand_one(&binding, &managed_rule).await.unwrap() {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected cancellation job, got {other:?}"),
+    };
+    let cancellation_claim = store
+        .claim(&binding, "worker-e", Duration::from_secs(5))
+        .await
+        .unwrap()
+        .unwrap();
+    let cancelled_response = server_request_with(
+        &application_pool,
+        Method::DELETE,
+        &format!("/v1/searches/{}", cancelled.search_id.as_str()),
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[],
+        String::new(),
+    )
+    .await;
+    assert_eq!(cancelled_response.status(), StatusCode::OK);
+    assert_eq!(
+        store
+            .execute_claim(
+                &cancellation_claim,
+                &managed_rule,
+                current_unix_ms(),
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap_err(),
+        JobExecutionError::Cancelled
+    );
+    assert_eq!(
+        store
+            .record_rule_unavailable(&cancellation_claim, 3)
+            .await
+            .unwrap(),
+        JobDisposition::Cancelled
+    );
+    assert!(
+        store
+            .claim(&binding, "worker-f", Duration::from_secs(5))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let cancelled_job_state: String =
+        sqlx::query_scalar("SELECT state FROM probe_jobs WHERE id = $1")
+            .bind(cancelled_job_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(cancelled_job_state, "cancelled");
+
+    let _withdrawn = create_managed_search(
+        &application_pool,
+        "managed-job-withdrawn",
+        "private-search-target",
+        SECOND_CONSENT_GRANT_ID,
+    )
+    .await;
+    let withdrawn_job_id = match store.expand_one(&binding, &managed_rule).await.unwrap() {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected consent withdrawal job, got {other:?}"),
+    };
+    let withdrawn_claim = store
+        .claim(&binding, "worker-g", Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "UPDATE consent_grants SET withdrawn_at = clock_timestamp() \
+         WHERE id = $1",
+    )
+    .bind(Uuid::parse_str(SECOND_CONSENT_GRANT_ID).unwrap())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        store
+            .execute_claim(
+                &withdrawn_claim,
+                &managed_rule,
+                current_unix_ms(),
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap_err(),
+        JobExecutionError::Cancelled
+    );
+    assert_eq!(
+        store
+            .record_rule_unavailable(&withdrawn_claim, 3)
+            .await
+            .unwrap(),
+        JobDisposition::Cancelled
+    );
+    let withdrawn_observations: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM observations WHERE probe_job_id = $1")
+            .bind(withdrawn_job_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(withdrawn_observations, 0);
+
+    let _degraded = create_managed_search(
+        &application_pool,
+        "managed-job-degraded",
+        "private-search-target",
+        "00000000-0000-0000-0000-000000000031",
+    )
+    .await;
+    let degraded_job_id = match store.expand_one(&binding, &managed_rule).await.unwrap() {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected degraded-rule job, got {other:?}"),
+    };
+    let degraded_claim = store
+        .claim(&binding, "worker-h", Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO rule_health_records (\
+            id, rule_version_id, region_class, state, evidence_id, \
+            evidence_expires_at, summary, recorded_at\
+         ) VALUES (\
+            $1, $2, 'jp', 'degraded', $3, \
+            clock_timestamp() + interval '10 minutes', '{}', clock_timestamp()\
+         )",
+    )
+    .bind(Uuid::new_v4())
+    .bind(binding.rule_version_id())
+    .bind(Uuid::new_v4())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        store
+            .execute_claim(
+                &degraded_claim,
+                &managed_rule,
+                current_unix_ms(),
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap_err(),
+        JobExecutionError::Cancelled
+    );
+    assert_eq!(
+        store
+            .record_result(&degraded_claim, &definitive, 3)
+            .await
+            .unwrap_err(),
+        JobError::RuleUnavailable
+    );
+    let degraded_observations: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM observations WHERE probe_job_id = $1")
+            .bind(degraded_job_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(degraded_observations, 0);
+
+    application_pool.close().await;
+    store.close().await;
+}
+
+fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {
+    let compiler = RuleCompiler::new();
+    let candidate = compiler
+        .compile_yaml(MANAGED_JOB_RULE, Some("managed-test"))
+        .unwrap();
+    let pack = compiler
+        .compile_pack(std::slice::from_ref(&candidate))
+        .unwrap();
+    let now = current_unix_ms();
+    let evidence_expires_at = now + 10 * 60 * 1_000;
+    let health = RuleHealthRecord {
+        key: RuleHealthKey {
+            site_id: DomainSiteId::new("managed-test"),
+            rule_hash: candidate.rule_hash.clone(),
+            region: "jp".to_owned(),
+        },
+        state: RuleHealth::Healthy,
+        sequence: 2,
+        entered_at_unix_ms: now - 2_000,
+        updated_at_unix_ms: now - 1_000,
+        consecutive_recovery_passes: 0,
+        consecutive_operational_failures: 0,
+        last_manifest_hash: Some(MANAGED_MANIFEST_HASH.to_owned()),
+        last_engine_hash: Some(MANAGED_ENGINE_HASH.to_owned()),
+        last_evidence_expires_at_unix_ms: Some(evidence_expires_at),
+        last_evidence_ids: vec!["3".repeat(64), "4".repeat(64)],
+    };
+    let required_regions = BTreeSet::from(["jp".to_owned()]);
+    let key = PromotionSigningKey::from_seed("managed-job-test", [9; 32]).unwrap();
+    let envelope = PromotionBuilder::new()
+        .build(
+            &key,
+            PromotionBuildRequest {
+                sequence: 1,
+                candidate: &candidate,
+                rule_pack: &pack,
+                previous_rule_pack_hash: None,
+                health_records: &[health],
+                required_regions: &required_regions,
+                issued_at_unix_ms: now - 500,
+                expires_at_unix_ms: evidence_expires_at,
+            },
+        )
+        .unwrap();
+    let validated = PromotionVerifier::new()
+        .validate_at(
+            &envelope,
+            &PromotionTrustPolicy {
+                trusted_keys: BTreeMap::from([(
+                    key.key_id().to_owned(),
+                    key.verifying_key_bytes(),
+                )]),
+                expected_site_id: candidate.source.id.clone(),
+                expected_rule_hash: candidate.rule_hash.clone(),
+                expected_rule_pack_hash: pack.content_hash.clone(),
+                expected_previous_rule_pack_hash: None,
+                expected_manifest_hash: MANAGED_MANIFEST_HASH.to_owned(),
+                expected_engine_hash: MANAGED_ENGINE_HASH.to_owned(),
+                required_regions,
+                minimum_sequence_exclusive: 0,
+            },
+            now,
+        )
+        .unwrap();
+    let managed = ManagedRule::activate(&validated, &pack, "jp", now).unwrap();
+    (managed, candidate, pack)
+}
+
+async fn install_managed_rule_fixtures(
+    pool: &PgPool,
+    candidate: &CompiledSiteRule,
+    pack: &CompiledRulePack,
+) {
+    let now = current_unix_ms();
+    sqlx::query(
+        "INSERT INTO sites (id, display_name, state, created_at, updated_at) \
+         VALUES ('managed-test', 'Managed Test', 'promoted', \
+                 clock_timestamp(), clock_timestamp())",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rule_packs (\
+            id, version, pack_hash, state, created_at, published_at, expires_at\
+         ) VALUES (\
+            $1, 'managed-job-test-v1', $2, 'active', clock_timestamp(), \
+            clock_timestamp(), to_timestamp($3::double precision / 1000.0)\
+         )",
+    )
+    .bind(Uuid::parse_str(MANAGED_RULE_PACK_ID).unwrap())
+    .bind(hex::decode(&pack.content_hash).unwrap())
+    .bind(now + 10 * 60 * 1_000)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rule_versions (\
+            id, rule_pack_id, site_id, rule_hash, compiled_rule, enabled, created_at\
+         ) VALUES ($1, $2, 'managed-test', $3, $4::jsonb, true, clock_timestamp())",
+    )
+    .bind(Uuid::parse_str(MANAGED_RULE_VERSION_ID).unwrap())
+    .bind(Uuid::parse_str(MANAGED_RULE_PACK_ID).unwrap())
+    .bind(hex::decode(&candidate.rule_hash).unwrap())
+    .bind(serde_json::to_string(&candidate.source).unwrap())
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rule_health_records (\
+            id, rule_version_id, region_class, state, evidence_id, \
+            evidence_expires_at, summary, recorded_at\
+         ) VALUES (\
+            $1, $2, 'jp', 'healthy', $3, \
+            to_timestamp($4::double precision / 1000.0), '{}', \
+            to_timestamp($5::double precision / 1000.0)\
+         )",
+    )
+    .bind(Uuid::new_v4())
+    .bind(Uuid::parse_str(MANAGED_RULE_VERSION_ID).unwrap())
+    .bind(Uuid::new_v4())
+    .bind(now + 10 * 60 * 1_000)
+    .bind(now - 1_000)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO consent_grants (\
+            id, tenant_id, membership_id, subject_kind, purpose, \
+            collection_profile_version, notice_version, source, granted_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', \
+            '00000000-0000-0000-0000-000000000011', 'account', \
+            'private_history', 'profile-v1', 'notice-v1', 'web', \
+            '2026-01-01T00:00:00Z'\
+         )",
+    )
+    .bind(Uuid::parse_str(SECOND_CONSENT_GRANT_ID).unwrap())
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn install_worker_role(pool: &PgPool) {
+    pool.execute(sqlx::raw_sql(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT FROM pg_roles
+                WHERE rolname = 'socialname_migration_test_worker'
+            ) THEN
+                CREATE ROLE socialname_migration_test_worker
+                    LOGIN PASSWORD 'socialname-worker-test-password'
+                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+            END IF;
+        END
+        $$;
+        ALTER ROLE socialname_migration_test_worker
+            LOGIN PASSWORD 'socialname-worker-test-password'
+            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        GRANT USAGE ON SCHEMA public TO socialname_migration_test_worker;
+        GRANT SELECT ON
+            consent_grants, searches, search_targets, search_events, probe_jobs,
+            probe_job_consumers, data_lineage_edges
+            TO socialname_migration_test_worker;
+        GRANT INSERT ON
+            search_events, probe_jobs, probe_job_consumers, observations,
+            data_lineage_edges
+            TO socialname_migration_test_worker;
+        GRANT UPDATE (state, updated_at, completed_at) ON searches
+            TO socialname_migration_test_worker;
+        GRANT UPDATE (normalized_username, state, completed_at) ON search_targets
+            TO socialname_migration_test_worker;
+        GRANT UPDATE (
+            state, attempt_count, available_at, lease_owner, lease_expires_at,
+            last_error_code, updated_at, completed_at
+        ) ON probe_jobs TO socialname_migration_test_worker;
+        GRANT EXECUTE ON FUNCTION
+            socialname_worker_resolve_rule(text, bytea, bytea, text),
+            socialname_worker_lock_next_target(uuid, text),
+            socialname_worker_claim_job(uuid, text, text, integer),
+            socialname_worker_lock_claim_consent(uuid, integer, text)
+            TO socialname_migration_test_worker;
+        "#,
+    ))
+    .await
+    .unwrap();
+}
+
+async fn create_managed_search(
+    application_pool: &PgPool,
+    idempotency_key: &str,
+    username: &str,
+    consent_grant_id: &str,
+) -> SearchResource {
+    let request = SearchCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        targets: TargetSelection {
+            usernames: vec![Username::new(username).unwrap()],
+            site_ids: vec![SiteId::new("managed-test").unwrap()],
+        },
+        mode: SearchMode::Remote,
+        sync: SyncPolicy::Private,
+        consent_grant_id: Some(ConsentGrantId::new(consent_grant_id).unwrap()),
+        maximum_age_ms: 60_000,
+        region_classes: vec![RegionClass::new("jp").unwrap()],
+    };
+    let response = server_request_with(
+        application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", idempotency_key),
+        ],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let resource: SearchResource = serde_json::from_value(json_body(response).await).unwrap();
+    assert_eq!(resource.state, SearchState::Accepted);
+    resource
+}
+
+fn managed_result(
+    verdict: Verdict,
+    inconclusive_reason: Option<InconclusiveReason>,
+    evidence_class: DomainEvidenceClass,
+    rule_hash: &str,
+    digest_character: &str,
+) -> SearchResult {
+    SearchResult {
+        site_id: "managed-test".to_owned(),
+        username: "private-search-target".to_owned(),
+        profile_url: Some("https://example.com/u/private-search-target".to_owned()),
+        rule_hash: rule_hash.to_owned(),
+        classification: Classification {
+            verdict,
+            inconclusive_reason,
+            evidence_class,
+            matcher_trace: Vec::new(),
+            evidence_digest: digest_character.repeat(64),
+        },
+        probes: Vec::new(),
+    }
+}
+
+fn current_unix_ms() -> i64 {
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
 }
 
 fn private_search_request(

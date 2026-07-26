@@ -27,5 +27,13 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 
+[dev-dependencies]
+socialname-canary = { path = "../socialname-canary" }
+socialname-domain = { path = "../socialname-domain" }
+socialname-engine = { path = "../socialname-engine" }
+socialname-rule-compiler = { path = "../socialname-rule-compiler" }
+socialname-worker = { path = "../socialname-worker" }
+tokio-util.workspace = true
+
 [lints]
 workspace = true
