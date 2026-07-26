@@ -1223,6 +1223,15 @@ history, production backup-provider inventory completeness, and elapsed
 5-minute/1-hour/24-hour/7-day/35-day production SLA evidence remain external
 gates and are not claimed by the repository.
 
+Quality run
+[`30211551484`](https://github.com/yhay81/socialname/actions/runs/30211551484)
+passed Rust core with PostgreSQL 18 migrations/tests, Windows/macOS desktop,
+monitoring console, and managed-worker OCI for commit `696a248`. Manual
+workflow-dispatch run
+[`30211564752`](https://github.com/yhay81/socialname/actions/runs/30211564752)
+passed the standalone PostgreSQL 18 delete-through and restore drill for the
+same commit. Scheduled daily history and production evidence remain external.
+
 Acceptance gate:
 
 - Multi-region disagreement is represented, not overwritten.
