@@ -895,6 +895,10 @@ readable as that UID and that `process-one` without `--allow-live` exits before
 promotion, key, or database access. Linux `SIGTERM` now cancels the same token
 as Ctrl-C during managed execution, leaving a fenced lease to expire safely.
 CI builds and smoke-tests the image but has no registry login or push path.
+Quality run
+[`30193340211`](https://github.com/yhay81/socialname/actions/runs/30193340211)
+passed Rust core, Windows/macOS desktop, monitoring console, and the new
+managed-worker OCI job for commit `e2bc7fd`.
 
 The deployment item remains unchecked: no registry artifact, approved regional
 vantage, managed database credential, production-trusted promotion, egress
