@@ -258,6 +258,36 @@ pub enum AssertionQuality {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct RegionalAssertion {
+    pub region_class: RegionClass,
+    pub outcome: AssertionOutcome,
+    pub quality: AssertionQuality,
+    pub evidence_class: EvidenceClass,
+    pub freshness: Freshness,
+    pub sources: Vec<ResultSource>,
+    pub support_group_count: u32,
+    pub managed_support: bool,
+    pub supporting_observation_ids: Vec<ObservationId>,
+    pub conflicting_observation_ids: Vec<ObservationId>,
+}
+
+impl Validate for RegionalAssertion {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        validate_assertion_projection(
+            &self.outcome,
+            self.quality,
+            &self.freshness,
+            &self.sources,
+            self.support_group_count,
+            self.managed_support,
+            &self.supporting_observation_ids,
+            &self.conflicting_observation_ids,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Assertion {
     pub target: Target,
     pub outcome: AssertionOutcome,
@@ -270,15 +300,25 @@ pub struct Assertion {
     pub managed_support: bool,
     pub supporting_observation_ids: Vec<ObservationId>,
     pub conflicting_observation_ids: Vec<ObservationId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regional_assertions: Option<Vec<RegionalAssertion>>,
     pub derivation_version: String,
 }
 
 impl Validate for Assertion {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut validations = vec![
-            self.freshness.validate(),
-            validate_nonempty_ids("sources", &self.sources, 8),
             validate_nonempty_ids("regions", &self.regions, 16),
+            validate_assertion_projection(
+                &self.outcome,
+                self.quality,
+                &self.freshness,
+                &self.sources,
+                self.support_group_count,
+                self.managed_support,
+                &self.supporting_observation_ids,
+                &self.conflicting_observation_ids,
+            ),
         ];
 
         if self.derivation_version.is_empty()
@@ -291,74 +331,133 @@ impl Validate for Assertion {
             )));
         }
 
-        let freshness_quality_valid = match self.freshness.state {
-            crate::FreshnessState::Current => self.quality != AssertionQuality::Stale,
-            crate::FreshnessState::Stale | crate::FreshnessState::Expired => {
-                self.quality == AssertionQuality::Stale
+        if let Some(regional_assertions) = &self.regional_assertions {
+            if regional_assertions.is_empty() || regional_assertions.len() > 16 {
+                validations.push(Err(ValidationErrors::new(
+                    "regional_assertions",
+                    ValidationCode::OutOfRange,
+                )));
             }
-        };
-        if !freshness_quality_valid {
-            validations.push(Err(ValidationErrors::new(
-                "assertion.freshness",
-                ValidationCode::InvalidRelation,
-            )));
-        }
+            let global_regions = self.regions.iter().collect::<BTreeSet<_>>();
+            let regional_regions = regional_assertions
+                .iter()
+                .map(|regional| &regional.region_class)
+                .collect::<BTreeSet<_>>();
+            if regional_regions.len() != regional_assertions.len()
+                || regional_regions != global_regions
+            {
+                validations.push(Err(ValidationErrors::new(
+                    "regional_assertions.region_class",
+                    ValidationCode::InvalidRelation,
+                )));
+            }
 
-        let support_ids = self
-            .supporting_observation_ids
-            .iter()
-            .collect::<BTreeSet<_>>();
-        let conflicting_ids = self
-            .conflicting_observation_ids
-            .iter()
-            .collect::<BTreeSet<_>>();
-        if support_ids.len() != self.supporting_observation_ids.len()
-            || conflicting_ids.len() != self.conflicting_observation_ids.len()
-            || !support_ids.is_disjoint(&conflicting_ids)
-            || support_ids.len().saturating_add(conflicting_ids.len()) > 256
-        {
-            validations.push(Err(ValidationErrors::new(
-                "observation_ids",
-                ValidationCode::Duplicate,
-            )));
-        }
-
-        match (&self.outcome, self.quality) {
-            (
-                AssertionOutcome::Inconclusive {
-                    reason: UncertaintyReason::ConflictingEvidence,
-                },
-                AssertionQuality::Conflicted,
-            ) if self.supporting_observation_ids.is_empty()
-                && !self.conflicting_observation_ids.is_empty()
-                && self.support_group_count == 0 => {}
-            (AssertionOutcome::Found | AssertionOutcome::NotFound, quality)
-                if quality != AssertionQuality::Conflicted
-                    && !self.supporting_observation_ids.is_empty()
-                    && self.conflicting_observation_ids.is_empty()
-                    && self.support_group_count > 0 => {}
-            _ => validations.push(Err(ValidationErrors::new(
-                "assertion",
-                ValidationCode::InvalidRelation,
-            ))),
-        }
-
-        let managed_quality_valid = match self.quality {
-            AssertionQuality::Verified => self.managed_support,
-            AssertionQuality::Corroborated
-            | AssertionQuality::SingleVantage
-            | AssertionQuality::Untrusted => !self.managed_support,
-            AssertionQuality::Stale | AssertionQuality::Conflicted => true,
-        };
-        if !managed_quality_valid {
-            validations.push(Err(ValidationErrors::new(
-                "assertion.managed_support",
-                ValidationCode::InvalidRelation,
-            )));
+            let global_sources = self.sources.iter().copied().collect::<BTreeSet<_>>();
+            let global_observation_ids = self
+                .supporting_observation_ids
+                .iter()
+                .chain(&self.conflicting_observation_ids)
+                .collect::<BTreeSet<_>>();
+            for regional in regional_assertions {
+                validations.push(regional.validate());
+                if !regional
+                    .sources
+                    .iter()
+                    .all(|source| global_sources.contains(source))
+                    || !regional
+                        .supporting_observation_ids
+                        .iter()
+                        .chain(&regional.conflicting_observation_ids)
+                        .all(|id| global_observation_ids.contains(id))
+                {
+                    validations.push(Err(ValidationErrors::new(
+                        "regional_assertions",
+                        ValidationCode::InvalidRelation,
+                    )));
+                }
+            }
         }
 
         collect_validations(validations)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_assertion_projection(
+    outcome: &AssertionOutcome,
+    quality: AssertionQuality,
+    freshness: &Freshness,
+    sources: &[ResultSource],
+    support_group_count: u32,
+    managed_support: bool,
+    supporting_observation_ids: &[ObservationId],
+    conflicting_observation_ids: &[ObservationId],
+) -> Result<(), ValidationErrors> {
+    let mut validations = vec![
+        freshness.validate(),
+        validate_nonempty_ids("sources", sources, 8),
+    ];
+    let freshness_quality_valid = match freshness.state {
+        crate::FreshnessState::Current => quality != AssertionQuality::Stale,
+        crate::FreshnessState::Stale | crate::FreshnessState::Expired => {
+            quality == AssertionQuality::Stale
+        }
+    };
+    if !freshness_quality_valid {
+        validations.push(Err(ValidationErrors::new(
+            "assertion.freshness",
+            ValidationCode::InvalidRelation,
+        )));
+    }
+
+    let support_ids = supporting_observation_ids.iter().collect::<BTreeSet<_>>();
+    let conflicting_ids = conflicting_observation_ids.iter().collect::<BTreeSet<_>>();
+    if support_ids.len() != supporting_observation_ids.len()
+        || conflicting_ids.len() != conflicting_observation_ids.len()
+        || !support_ids.is_disjoint(&conflicting_ids)
+        || support_ids.len().saturating_add(conflicting_ids.len()) > 256
+    {
+        validations.push(Err(ValidationErrors::new(
+            "observation_ids",
+            ValidationCode::Duplicate,
+        )));
+    }
+
+    match (outcome, quality) {
+        (
+            AssertionOutcome::Inconclusive {
+                reason: UncertaintyReason::ConflictingEvidence,
+            },
+            AssertionQuality::Conflicted,
+        ) if supporting_observation_ids.is_empty()
+            && !conflicting_observation_ids.is_empty()
+            && support_group_count == 0 => {}
+        (AssertionOutcome::Found | AssertionOutcome::NotFound, quality)
+            if quality != AssertionQuality::Conflicted
+                && !supporting_observation_ids.is_empty()
+                && conflicting_observation_ids.is_empty()
+                && support_group_count > 0 => {}
+        _ => validations.push(Err(ValidationErrors::new(
+            "assertion",
+            ValidationCode::InvalidRelation,
+        ))),
+    }
+
+    let managed_quality_valid = match quality {
+        AssertionQuality::Verified => managed_support,
+        AssertionQuality::Corroborated
+        | AssertionQuality::SingleVantage
+        | AssertionQuality::Untrusted => !managed_support,
+        AssertionQuality::Stale | AssertionQuality::Conflicted => true,
+    };
+    if !managed_quality_valid {
+        validations.push(Err(ValidationErrors::new(
+            "assertion.managed_support",
+            ValidationCode::InvalidRelation,
+        )));
+    }
+
+    collect_validations(validations)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -472,6 +571,41 @@ mod tests {
         }
     }
 
+    fn regional_assertion_fixture() -> Assertion {
+        let freshness = Freshness::new(1_000, 10_000, 2_000, 5_000).unwrap();
+        let observation_id = ObservationId::new("observation_01").unwrap();
+        let region_class = RegionClass::new("jp").unwrap();
+        Assertion {
+            target: Target {
+                username: crate::Username::new("alice").unwrap(),
+                site_id: SiteId::new("github").unwrap(),
+            },
+            outcome: AssertionOutcome::Found,
+            quality: AssertionQuality::Verified,
+            evidence_class: EvidenceClass::E4StructuredIdentity,
+            freshness: freshness.clone(),
+            sources: vec![ResultSource::ManagedProbe],
+            regions: vec![region_class.clone()],
+            support_group_count: 1,
+            managed_support: true,
+            supporting_observation_ids: vec![observation_id.clone()],
+            conflicting_observation_ids: Vec::new(),
+            regional_assertions: Some(vec![RegionalAssertion {
+                region_class,
+                outcome: AssertionOutcome::Found,
+                quality: AssertionQuality::Verified,
+                evidence_class: EvidenceClass::E4StructuredIdentity,
+                freshness,
+                sources: vec![ResultSource::ManagedProbe],
+                support_group_count: 1,
+                managed_support: true,
+                supporting_observation_ids: vec![observation_id],
+                conflicting_observation_ids: Vec::new(),
+            }]),
+            derivation_version: "assertion/v1".to_owned(),
+        }
+    }
+
     #[test]
     fn synchronization_requires_a_purpose_specific_grant() {
         let mut request = request();
@@ -573,5 +707,50 @@ mod tests {
             profile_url: None,
         };
         assert!(result.validate().is_err());
+    }
+
+    #[test]
+    fn regional_assertion_projection_is_validated_against_the_global_assertion() {
+        let mut assertion = regional_assertion_fixture();
+        assert!(assertion.validate().is_ok());
+
+        assertion.regional_assertions.as_mut().unwrap()[0].region_class =
+            RegionClass::new("us").unwrap();
+        assert!(assertion.validate().is_err());
+
+        let mut assertion = regional_assertion_fixture();
+        assertion.regional_assertions.as_mut().unwrap()[0].supporting_observation_ids =
+            vec![ObservationId::new("observation_02").unwrap()];
+        assert!(assertion.validate().is_err());
+    }
+
+    #[test]
+    fn regional_assertions_have_an_explicit_wire_shape() {
+        let json = serde_json::to_value(regional_assertion_fixture()).unwrap();
+
+        assert_eq!(json["regional_assertions"][0]["region_class"], "jp");
+        assert_eq!(json["regional_assertions"][0]["outcome"]["kind"], "found");
+        assert_eq!(json["regional_assertions"][0]["quality"], "verified");
+        assert_eq!(
+            json["regional_assertions"][0]["sources"][0],
+            "managed_probe"
+        );
+    }
+
+    #[test]
+    fn historical_assertions_without_regional_projection_remain_compatible() {
+        let mut json = serde_json::to_value(regional_assertion_fixture()).unwrap();
+        json.as_object_mut().unwrap().remove("regional_assertions");
+
+        let decoded: Assertion = serde_json::from_value(json).unwrap();
+
+        assert!(decoded.regional_assertions.is_none());
+        assert!(decoded.validate().is_ok());
+        assert!(
+            serde_json::to_value(decoded)
+                .unwrap()
+                .get("regional_assertions")
+                .is_none()
+        );
     }
 }

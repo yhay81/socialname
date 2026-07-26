@@ -1,14 +1,15 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use socialname_domain::{
     Assertion as DomainAssertion, AssertionQuality as DomainAssertionQuality, CollectionProfile,
     DerivationPolicy, EvidenceClass as DomainEvidenceClass, Observation as DomainObservation,
     ObservationId as DomainObservationId, ProducerKind, ProducerReputation, SiteId as DomainSiteId,
-    TargetKey, Verdict, derive_assertion,
+    TargetKey, Verdict, derive_assertion, derive_regional_assertions,
 };
 use socialname_protocol::{
     Assertion as ProtocolAssertion, AssertionOutcome, AssertionQuality, EvidenceClass, Freshness,
-    FreshnessState, ObservationId, RegionClass, ResultSource, SiteId, Target, Username,
+    FreshnessState, ObservationId, RegionClass, RegionalAssertion, ResultSource, SiteId, Target,
+    Username,
 };
 use sqlx::{FromRow, Postgres, Transaction};
 use uuid::Uuid;
@@ -71,7 +72,13 @@ impl MeasurementOutcome {
 pub(crate) struct DerivedAssertion {
     id: Uuid,
     assertion: DomainAssertion,
+    regional_assertions: BTreeMap<String, DerivedRegionalAssertion>,
     evidence: Vec<AssertionEvidence>,
+    sources: Vec<ResultSource>,
+}
+
+struct DerivedRegionalAssertion {
+    assertion: DomainAssertion,
     sources: Vec<ResultSource>,
 }
 
@@ -131,6 +138,13 @@ impl DerivedAssertion {
             .iter()
             .map(|region| RegionClass::new(region.clone()).map_err(|_| JobError::InvalidProtocol))
             .collect::<Result<Vec<_>, _>>()?;
+        let regional_assertions = self
+            .regional_assertions
+            .iter()
+            .map(|(region, derived)| {
+                protocol_regional_assertion(region, derived, evaluated_at_unix_ms, maximum_age_ms)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(ProtocolAssertion {
             target: Target {
                 username: Username::new(self.assertion.target.normalized_username.clone())
@@ -149,6 +163,7 @@ impl DerivedAssertion {
             managed_support: self.assertion.managed_support,
             supporting_observation_ids,
             conflicting_observation_ids,
+            regional_assertions: Some(regional_assertions),
             derivation_version: self.assertion.derivation_version.to_owned(),
         })
     }
@@ -305,6 +320,24 @@ pub(crate) async fn recompute_assertion(
     if assertion.derivation_version != ASSERTION_DERIVATION_VERSION {
         return Err(JobError::StorageInvariant);
     }
+    let regional_assertions = derive_regional_assertions(
+        &domain_observations,
+        now_unix_ms,
+        DerivationPolicy::default(),
+    )
+    .map_err(|_| JobError::StorageInvariant)?
+    .into_iter()
+    .map(|(region, assertion)| {
+        if assertion.derivation_version != ASSERTION_DERIVATION_VERSION
+            || assertion.regions.len() != 1
+            || !assertion.regions.contains(&region)
+        {
+            return Err(JobError::StorageInvariant);
+        }
+        let sources = assertion_sources(rows.iter().filter(|row| row.region_class == region))?;
+        Ok((region, DerivedRegionalAssertion { assertion, sources }))
+    })
+    .collect::<Result<BTreeMap<_, _>, JobError>>()?;
     let evidence = rows
         .iter()
         .map(assertion_evidence)
@@ -352,6 +385,7 @@ pub(crate) async fn recompute_assertion(
             return Ok(Some(DerivedAssertion {
                 id: current.id,
                 assertion,
+                regional_assertions,
                 evidence,
                 sources,
             }));
@@ -434,6 +468,7 @@ pub(crate) async fn recompute_assertion(
     Ok(Some(DerivedAssertion {
         id: assertion_id,
         assertion,
+        regional_assertions,
         evidence,
         sources,
     }))
@@ -1072,7 +1107,9 @@ fn assertion_evidence(row: &EligibleObservationRow) -> Result<AssertionEvidence,
     })
 }
 
-fn assertion_sources(rows: &[EligibleObservationRow]) -> Result<Vec<ResultSource>, JobError> {
+fn assertion_sources<'a>(
+    rows: impl IntoIterator<Item = &'a EligibleObservationRow>,
+) -> Result<Vec<ResultSource>, JobError> {
     let mut has_private = false;
     let mut has_shared = false;
     let mut has_managed = false;
@@ -1099,6 +1136,62 @@ fn assertion_sources(rows: &[EligibleObservationRow]) -> Result<Vec<ResultSource
     } else {
         Ok(sources)
     }
+}
+
+fn protocol_regional_assertion(
+    region: &str,
+    derived: &DerivedRegionalAssertion,
+    evaluated_at_unix_ms: i64,
+    maximum_age_ms: i64,
+) -> Result<RegionalAssertion, JobError> {
+    let assertion = &derived.assertion;
+    if assertion.regions.len() != 1 || !assertion.regions.contains(region) {
+        return Err(JobError::StorageInvariant);
+    }
+    let freshness = Freshness::new(
+        assertion.observed_at_unix_ms,
+        assertion.expires_at_unix_ms,
+        evaluated_at_unix_ms,
+        maximum_age_ms,
+    )
+    .map_err(|_| JobError::InvalidProtocol)?;
+    let quality = if freshness.state == FreshnessState::Current {
+        protocol_assertion_quality(assertion.quality)
+    } else {
+        AssertionQuality::Stale
+    };
+    let outcome = match assertion.verdict {
+        Verdict::Found => AssertionOutcome::Found,
+        Verdict::NotFound => AssertionOutcome::NotFound,
+        Verdict::Inconclusive => AssertionOutcome::Inconclusive {
+            reason: socialname_protocol::UncertaintyReason::ConflictingEvidence,
+        },
+        Verdict::InvalidUsername => return Err(JobError::StorageInvariant),
+    };
+    let supporting_observation_ids = assertion
+        .supporting_observation_ids
+        .iter()
+        .map(|id| ObservationId::new(id.as_str().to_owned()).map_err(|_| JobError::InvalidProtocol))
+        .collect::<Result<Vec<_>, _>>()?;
+    let conflicting_observation_ids = assertion
+        .conflicting_observation_ids
+        .iter()
+        .map(|id| ObservationId::new(id.as_str().to_owned()).map_err(|_| JobError::InvalidProtocol))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(RegionalAssertion {
+        region_class: RegionClass::new(region.to_owned()).map_err(|_| JobError::InvalidProtocol)?,
+        outcome,
+        quality,
+        evidence_class: protocol_evidence_class(assertion.evidence_class),
+        freshness,
+        sources: derived.sources.clone(),
+        support_group_count: u32::try_from(assertion.support_group_count)
+            .map_err(|_| JobError::StorageInvariant)?,
+        managed_support: assertion.managed_support,
+        supporting_observation_ids,
+        conflicting_observation_ids,
+    })
 }
 
 fn expected_support(assertion: &DomainAssertion) -> Result<Vec<(Uuid, String)>, JobError> {
@@ -1257,6 +1350,7 @@ async fn insert_lineage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use socialname_protocol::Validate;
 
     fn evidence(
         value: u128,
@@ -1279,31 +1373,95 @@ mod tests {
             .iter()
             .map(|item| DomainObservationId::new(item.observation_id.to_string()))
             .collect();
+        let assertion = DomainAssertion {
+            target: TargetKey {
+                site_id: DomainSiteId::new("example"),
+                normalized_username: "fixture".to_owned(),
+            },
+            verdict,
+            quality: DomainAssertionQuality::Verified,
+            evidence_class: DomainEvidenceClass::E4StructuredIdentity,
+            observed_at_unix_ms: 10_000,
+            expires_at_unix_ms: 20_000,
+            regions: evidence
+                .iter()
+                .map(|item| item.region_class.clone())
+                .collect(),
+            support_group_count: evidence.len(),
+            managed_support: evidence.iter().any(|item| item.managed),
+            supporting_observation_ids,
+            conflicting_observation_ids: Vec::new(),
+            derivation_version: ASSERTION_DERIVATION_VERSION,
+        };
+        let regional_assertions = assertion
+            .regions
+            .iter()
+            .map(|region| {
+                let supporting_observation_ids = evidence
+                    .iter()
+                    .filter(|item| &item.region_class == region)
+                    .map(|item| DomainObservationId::new(item.observation_id.to_string()))
+                    .collect::<Vec<_>>();
+                (
+                    region.clone(),
+                    DerivedRegionalAssertion {
+                        assertion: DomainAssertion {
+                            target: assertion.target.clone(),
+                            verdict,
+                            quality: DomainAssertionQuality::Verified,
+                            evidence_class: DomainEvidenceClass::E4StructuredIdentity,
+                            observed_at_unix_ms: 10_000,
+                            expires_at_unix_ms: 20_000,
+                            regions: [region.clone()].into_iter().collect(),
+                            support_group_count: supporting_observation_ids.len(),
+                            managed_support: true,
+                            supporting_observation_ids,
+                            conflicting_observation_ids: Vec::new(),
+                            derivation_version: ASSERTION_DERIVATION_VERSION,
+                        },
+                        sources: vec![ResultSource::ManagedProbe],
+                    },
+                )
+            })
+            .collect();
         DerivedAssertion {
             id: Uuid::from_u128(100),
-            assertion: DomainAssertion {
-                target: TargetKey {
-                    site_id: DomainSiteId::new("example"),
-                    normalized_username: "fixture".to_owned(),
-                },
-                verdict,
-                quality: DomainAssertionQuality::Verified,
-                evidence_class: DomainEvidenceClass::E4StructuredIdentity,
-                observed_at_unix_ms: 10_000,
-                expires_at_unix_ms: 20_000,
-                regions: evidence
-                    .iter()
-                    .map(|item| item.region_class.clone())
-                    .collect(),
-                support_group_count: evidence.len(),
-                managed_support: evidence.iter().any(|item| item.managed),
-                supporting_observation_ids,
-                conflicting_observation_ids: Vec::new(),
-                derivation_version: ASSERTION_DERIVATION_VERSION,
-            },
+            assertion,
+            regional_assertions,
             evidence,
             sources: vec![ResultSource::ManagedProbe],
         }
+    }
+
+    #[test]
+    fn protocol_assertion_exposes_each_regional_projection() {
+        let derived = derived(
+            Verdict::Found,
+            vec![
+                evidence(
+                    1,
+                    DomainEvidenceClass::E4StructuredIdentity,
+                    10_000,
+                    "jp",
+                    true,
+                ),
+                evidence(
+                    2,
+                    DomainEvidenceClass::E4StructuredIdentity,
+                    10_000,
+                    "us",
+                    true,
+                ),
+            ],
+        );
+
+        let protocol = derived.protocol_assertion(11_000, 5_000).unwrap();
+
+        assert!(protocol.validate().is_ok());
+        let regional = protocol.regional_assertions.unwrap();
+        assert_eq!(regional.len(), 2);
+        assert_eq!(regional[0].region_class.as_str(), "jp");
+        assert_eq!(regional[1].region_class.as_str(), "us");
     }
 
     #[test]

@@ -31,8 +31,9 @@ pub use notification::{
 pub use schema::api_v1_schemas;
 pub use search::{
     Assertion, AssertionOutcome, AssertionQuality, DefinitiveResult, OperationalFailure,
-    OperationalFailureKind, SearchCreateRequest, SearchEvent, SearchEventData, SearchProgress,
-    SearchResource, SearchState, SearchTerminalState, UncertainResult, UncertaintyReason,
+    OperationalFailureKind, RegionalAssertion, SearchCreateRequest, SearchEvent, SearchEventData,
+    SearchProgress, SearchResource, SearchState, SearchTerminalState, UncertainResult,
+    UncertaintyReason,
 };
 pub use transition::{
     AccountState, ConfirmationBasis, MeasurementState, PendingConfirmationReason,

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -242,6 +242,42 @@ pub fn derive_assertion(
     })
 }
 
+pub fn derive_regional_assertions(
+    observations: &[Observation],
+    now_unix_ms: i64,
+    policy: DerivationPolicy,
+) -> Result<BTreeMap<String, Assertion>, DerivationError> {
+    let eligible: Vec<&Observation> = observations
+        .iter()
+        .filter(|observation| observation.is_assertion_eligible(now_unix_ms))
+        .collect();
+    let first = eligible
+        .first()
+        .copied()
+        .ok_or(DerivationError::NoEligibleObservations)?;
+    if eligible
+        .iter()
+        .any(|observation| observation.target != first.target)
+    {
+        return Err(DerivationError::MixedTargets);
+    }
+
+    let mut grouped = BTreeMap::<String, Vec<Observation>>::new();
+    for observation in eligible {
+        grouped
+            .entry(observation.region.clone())
+            .or_default()
+            .push(observation.clone());
+    }
+    grouped
+        .into_iter()
+        .map(|(region, observations)| {
+            derive_assertion(&observations, now_unix_ms, policy)
+                .map(|assertion| (region, assertion))
+        })
+        .collect()
+}
+
 fn distinct<'a>(values: impl IntoIterator<Item = &'a str>) -> usize {
     values.into_iter().collect::<BTreeSet<_>>().len()
 }
@@ -394,5 +430,72 @@ mod tests {
         assert_eq!(assertion.quality, AssertionQuality::Conflicted);
         assert_eq!(assertion.verdict, Verdict::Inconclusive);
         assert_eq!(assertion.conflicting_observation_ids.len(), 2);
+    }
+
+    #[test]
+    fn regional_assertions_preserve_cross_region_truths_behind_a_global_conflict() {
+        let observations = [
+            observation(
+                1,
+                Verdict::Found,
+                ProducerKind::ManagedWorker,
+                ProducerReputation::Trusted,
+                "jp",
+                "managed-jp",
+                NOW - 2_000,
+            ),
+            observation(
+                2,
+                Verdict::NotFound,
+                ProducerKind::ManagedWorker,
+                ProducerReputation::Trusted,
+                "us",
+                "managed-us",
+                NOW - 1_000,
+            ),
+        ];
+
+        let global = derive_assertion(&observations, NOW, DerivationPolicy::default()).unwrap();
+        let regional =
+            derive_regional_assertions(&observations, NOW, DerivationPolicy::default()).unwrap();
+
+        assert_eq!(global.quality, AssertionQuality::Conflicted);
+        assert_eq!(regional.len(), 2);
+        assert_eq!(regional["jp"].verdict, Verdict::Found);
+        assert_eq!(regional["jp"].quality, AssertionQuality::Verified);
+        assert_eq!(regional["us"].verdict, Verdict::NotFound);
+        assert_eq!(regional["us"].quality, AssertionQuality::Verified);
+    }
+
+    #[test]
+    fn same_region_conflict_remains_conflicted_in_its_regional_assertion() {
+        let observations = [
+            observation(
+                1,
+                Verdict::Found,
+                ProducerKind::ManagedWorker,
+                ProducerReputation::Trusted,
+                "jp",
+                "managed-jp",
+                NOW - 2_000,
+            ),
+            observation(
+                2,
+                Verdict::NotFound,
+                ProducerKind::ManagedWorker,
+                ProducerReputation::Trusted,
+                "jp",
+                "managed-jp",
+                NOW - 1_000,
+            ),
+        ];
+
+        let regional =
+            derive_regional_assertions(&observations, NOW, DerivationPolicy::default()).unwrap();
+
+        assert_eq!(regional.len(), 1);
+        assert_eq!(regional["jp"].verdict, Verdict::Inconclusive);
+        assert_eq!(regional["jp"].quality, AssertionQuality::Conflicted);
+        assert_eq!(regional["jp"].conflicting_observation_ids.len(), 2);
     }
 }

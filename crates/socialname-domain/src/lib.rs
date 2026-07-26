@@ -4,7 +4,9 @@ mod assertion;
 mod observation;
 mod rule_health;
 
-pub use assertion::{Assertion, AssertionQuality, DerivationPolicy, derive_assertion};
+pub use assertion::{
+    Assertion, AssertionQuality, DerivationPolicy, derive_assertion, derive_regional_assertions,
+};
 pub use observation::{
     CollectionProfile, EvidenceClass, InconclusiveReason, Observation, ObservationId, ProducerKind,
     ProducerReputation, SiteId, TargetKey, Verdict,
