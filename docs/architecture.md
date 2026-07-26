@@ -488,7 +488,9 @@ domain and engine; the engine does not depend on those applications.
 - TypeScript and React with a small Vite monitoring application consuming the
   versioned same-origin API.
 - OpenAPI generated from or checked against protocol types.
-- OCI images for server and worker deployment.
+- OCI images for server and worker deployment. The first provider-neutral,
+  one-shot worker artifact and its external regional evidence gate are defined
+  in [Regional managed-worker deployment boundary](regional-worker-deployment.md).
 - Managed PostgreSQL and S3-compatible encrypted object storage.
 - OpenTelemetry-compatible tracing and metrics, with careful username
   redaction.

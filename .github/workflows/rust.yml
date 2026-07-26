@@ -63,6 +63,60 @@ jobs:
       - name: Verify deterministic site fixtures
         run: cargo run --locked -p socialname-cli -- fixtures
 
+  worker-image:
+    name: Managed worker OCI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build managed worker image
+        run: >-
+          docker build
+          --file deploy/worker/Dockerfile
+          --tag socialname-worker
+          --build-arg VCS_REF=${{ github.sha }}
+          .
+
+      - name: Verify managed worker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_flags=(
+            --rm
+            --network none
+            --read-only
+            --cap-drop ALL
+            --security-opt no-new-privileges=true
+          )
+          docker run "${runtime_flags[@]}" socialname-worker --help
+          test "$(docker image inspect socialname-worker --format '{{.Config.User}}')" = "10001:10001"
+          test "$(docker image inspect socialname-worker --format '{{json .Config.Entrypoint}}')" = '["/usr/local/bin/socialname-worker"]'
+          test "$(docker image inspect socialname-worker --format '{{.Config.StopSignal}}')" = "SIGTERM"
+          test "$(docker run "${runtime_flags[@]}" --entrypoint /usr/bin/id socialname-worker -u)" = "10001"
+          docker run "${runtime_flags[@]}" --entrypoint /bin/sh socialname-worker \
+            -c 'test -r /opt/socialname/rules/sites/github.yaml'
+
+          set +e
+          output="$(
+            docker run "${runtime_flags[@]}" socialname-worker process-one \
+              --site github \
+              --region test-region \
+              --rules-dir /opt/socialname/rules/sites \
+              --promotion /missing/promotion.json \
+              --manifest-hash 0000000000000000000000000000000000000000000000000000000000000000 \
+              --engine-hash 0000000000000000000000000000000000000000000000000000000000000000 \
+              --required-region test-region \
+              --key-id test-key \
+              --verifying-key-file /missing/key.hex \
+              --worker-id test-region-worker 2>&1
+          )"
+          status="$?"
+          set -e
+          test "$status" -ne 0
+          test "$output" = "managed_worker_error=managed job processing requires --allow-live"
+
   desktop:
     name: Desktop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

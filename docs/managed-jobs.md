@@ -218,3 +218,7 @@ worker roles and proves:
 
 No test claims external deployment, production signing, live-site correctness,
 or multi-region evidence.
+
+The buildable one-shot OCI unit, secret separation, shutdown behavior, and the
+evidence still required for a real regional deployment are documented in
+[Regional managed-worker deployment boundary](regional-worker-deployment.md).

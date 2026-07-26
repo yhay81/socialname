@@ -64,8 +64,9 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: define the repository-completable regional deployment
-and operator boundary for Milestone 3 managed canaries and workers. Real
+Next executable item: add region-aware assertions, conflict escalation, and
+managed confirmation of high-value transitions. The repository-completable
+regional worker deployment boundary is implemented; real canary/worker
 deployment remains an external evidence gate.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
@@ -863,6 +864,45 @@ Status: **Current; external deployment evidence pending**
       and backup-expiry verification.
 - [ ] Add notification acknowledgement, email delivery, operational dashboards,
       and SLO reporting.
+
+Regional deployment software evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes worker: 14 library + 5 binary + 3 deployment-contract tests
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+docker build --file deploy/worker/Dockerfile \
+  --tag socialname-worker --build-arg VCS_REF=<source-revision> .
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges=true socialname-worker --help
+docker image inspect socialname-worker
+```
+
+The provider-neutral image build uses digest-pinned Dockerfile, Rust, and
+Debian inputs; compiles the locked release worker; carries the exact site-rule
+pack; runs as `10001:10001`; declares `SIGTERM`; and defaults to `--help`.
+Hardened `--network none` smoke tests proved the binary and embedded rules are
+readable as that UID and that `process-one` without `--allow-live` exits before
+promotion, key, or database access. Linux `SIGTERM` now cancels the same token
+as Ctrl-C during managed execution, leaving a fenced lease to expire safely.
+CI builds and smoke-tests the image but has no registry login or push path.
+
+The deployment item remains unchecked: no registry artifact, approved regional
+vantage, managed database credential, production-trusted promotion, egress
+policy, or live cancellation observation exists. The exact evidence needed to
+close it is recorded in
+[`docs/regional-worker-deployment.md`](docs/regional-worker-deployment.md).
+Repository work can therefore continue independently with region-aware
+assertion behavior without claiming a regional service.
 
 Acceptance gate:
 

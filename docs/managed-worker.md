@@ -147,3 +147,9 @@ authorization during the request, and records a target-free operator status.
 The job identity, forced-RLS role, coalescing, retries, consent lock, atomic
 ingestion, and remaining rule-acceptance gate are specified in
 [Managed probe jobs and observation ingestion](managed-jobs.md).
+
+The provider-neutral container and regional operator contract is specified in
+[Regional managed-worker deployment boundary](regional-worker-deployment.md).
+The image is non-root and inert by default. Once a request is in flight, both
+Ctrl-C and `SIGTERM` cancel it; a forced stop leaves the fenced lease to expire
+without committing a target result.

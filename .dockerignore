@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+**/*.key
+**/*.p12
+**/*.pem
+**/*.pfx
+**/node_modules
+**/target
+.canary-output
+apps/console
+docs
+rules/canaries
+tests

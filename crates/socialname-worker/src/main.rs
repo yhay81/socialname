@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
+    future::Future,
     io::{self, Read},
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -374,12 +375,38 @@ fn activate(args: ActivationArgs) -> Result<ManagedRule> {
 fn shutdown_token() -> CancellationToken {
     let cancellation = CancellationToken::new();
     let cancellation_signal = cancellation.clone();
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            cancellation_signal.cancel();
-        }
-    });
+    tokio::spawn(cancel_when_signalled(
+        cancellation_signal,
+        shutdown_signal(),
+    ));
     cancellation
+}
+
+async fn cancel_when_signalled(cancellation: CancellationToken, signal: impl Future<Output = ()>) {
+    signal.await;
+    cancellation.cancel();
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    match signal(SignalKind::terminate()) {
+        Ok(mut terminate) => {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+        }
+        Err(_) => {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 fn validate_process_limits(
@@ -633,5 +660,12 @@ mod tests {
             "{\"schema\":\"socialname.dev/webhook-delivery-process/v1\",\"status\":\"retry_scheduled\",\"delivery_id\":\"00000000-0000-0000-0000-000000000000\",\"attempt_count\":1}"
         );
         assert!(!delivery.contains("destination"));
+    }
+
+    #[tokio::test]
+    async fn shutdown_signal_cancels_the_shared_token() {
+        let cancellation = CancellationToken::new();
+        cancel_when_signalled(cancellation.clone(), std::future::ready(())).await;
+        assert!(cancellation.is_cancelled());
     }
 }

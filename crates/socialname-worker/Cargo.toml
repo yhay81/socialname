@@ -29,5 +29,8 @@ tokio-util.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 
+[dev-dependencies]
+serde_yaml_ng.workspace = true
+
 [lints]
 workspace = true

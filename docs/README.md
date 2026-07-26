@@ -141,6 +141,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Managed probe jobs and observation ingestion](managed-jobs.md) — exact work
   identity, narrow forced-RLS coordination, fencing, retries, consent locks,
   atomic fan-out, and the bounded one-job operator.
+- [Regional managed-worker deployment boundary](regional-worker-deployment.md)
+  — digest-pinned non-root OCI artifact, one-shot workload isolation,
+  termination behavior, and the exact external evidence gate.
 - [Freshness-aware watch scheduling](watch-scheduling.md) — authenticated
   lifecycle, atomic due runs, exact-rule freshness reuse, byte reservation,
   search/watch coalescing, and revision cancellation.
