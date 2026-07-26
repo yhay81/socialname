@@ -52,13 +52,16 @@ Keys contain a nonempty, duplicate-free subset of at most 16 values from:
 - `workspace:read`
 - `search:read`, `search:write`
 - `watch:read`, `watch:write`
+- `consent:read`, `consent:write`
 - `notification:read`, `notification:write`
 - `data:export`, `data:delete`
 
-Migration `0002_api_key_authentication.sql` enforces the same closed set and
+Migrations `0002_api_key_authentication.sql` and
+`0010_consent_grant_lifecycle.sql` enforce the same closed set and
 rejects null or duplicate array entries. `workspace:read`, `search:read`, and
-`search:write` now have exact HTTP consumers. Possessing any later scope does
-not create a route ahead of its roadmap item.
+`search:write`, watch read/write, and consent read/write now have exact HTTP
+consumers. Possessing any later scope does not create a route ahead of its
+roadmap item.
 
 ## Operator lifecycle
 
@@ -144,8 +147,8 @@ Each protected request:
    prefix/digest table and returns only tenant/key IDs;
 4. starts a runtime-role transaction and sets `socialname.tenant_id` with
    `set_config(..., true)`;
-5. under forced RLS, rechecks active tenant, active/nonexpired key, and the
-   required scope, then records `last_used_at`;
+5. under forced RLS, rechecks active tenant, active key-creating membership,
+   active/nonexpired key, and the required scope, then records `last_used_at`;
 6. starts the route data transaction with the same transaction-local tenant and
    reads only that workspace.
 

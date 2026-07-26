@@ -28,6 +28,8 @@ API schema version; it is not silently treated as an additive v1 change.
   monitoring pages;
 - transitions;
 - notification endpoint creation/resources and delivery state;
+- purpose-specific consent creation, resources, bounded lists, and
+  withdrawals;
 - authenticated private-workspace resources and API-key scope metadata.
 
 Runtime `Validate` checks supplement JSON Schema where a rule relates multiple
@@ -43,10 +45,11 @@ validate during deserialization. `IdempotencyKey` is the strict redacted value
 accepted by the implemented `POST /v1/searches` header boundary; it is not a
 body or resource field.
 
-Usernames, profile/webhook URLs, and email addresses serialize for their named
-API purpose but use redacted `Debug` implementations. Idempotency keys are also
-redacted. Validation and API errors report a field plus a closed code without
-echoing the rejected value. The protocol contains no complete HTTP body, cookie,
+Usernames, profile/webhook URLs, email addresses, and installation IDs serialize
+for their named API purpose but use redacted `Debug` implementations.
+Idempotency keys are also redacted. Validation and API errors report a field
+plus a closed code without echoing the rejected value. The protocol contains no
+complete HTTP body, cookie,
 credential, response excerpt, network-group identifier, or unrelated profile
 data.
 
@@ -93,15 +96,30 @@ validation rejects relabelling.
 `WorkspaceResource` is the response contract for `GET /v1/workspace`. It
 contains the workspace's opaque ID, bounded slug/display name, state, and one
 `AuthenticatedApiKeyResource`. API-key scopes are a closed enum covering
-workspace read, implemented search read/write, and the planned watch,
-notification, export, and deletion capabilities. The resource rejects empty or
-duplicate scope sets and invalid public prefixes.
+workspace, search, watch, and consent read/write plus the planned notification,
+export, and deletion capabilities. The resource rejects empty or duplicate
+scope sets and invalid public prefixes.
 
 This DTO represents an already authenticated principal; it does not parse a
 bearer token or grant access. The server separately verifies the token digest,
-active/nonexpired key state, exact route scope, active tenant, and
-transaction-local tenant RLS. A scope whose route has not been implemented
-does not create that capability.
+active/nonexpired key state, active key-creating membership, exact route
+scope, active tenant, and transaction-local tenant RLS. A scope whose route has
+not been implemented does not create that capability.
+
+## Consent grants
+
+`ConsentGrantCreateRequest` binds one account or installation subject to one of
+`private_history`, `shared_observation`, or `shared_research`, plus the closed
+`profile-v1` and `notice-v1` contract. An installation ID is present only for
+an installation subject and is redacted from `Debug`. Resources expose the
+server-derived source and active, expired, or withdrawn state with explicit
+timestamps.
+
+`ConsentGrantListPage` contains at most 50 grants and binds a next cursor to
+the final returned ID. `ConsentWithdrawalRequest` is a versioned request, not a
+delete claim. Server ownership, digest persistence, replay, withdrawal
+locking, and error behavior are specified in
+[Purpose-specific consent grant lifecycle](consent-api.md).
 
 ## Ordered search events
 
@@ -244,6 +262,7 @@ freshness relabelling, result/failure separation, progress consistency, watch
 revision and schedule rules, transition confirmation, shared-only absence,
 write-only notification destinations, delivery state consistency, bounded
 webhook construction, workspace metadata, closed unique API-key scopes,
-absence of key secret/digest fields, exact accepted private-search resources,
-Cartesian target/progress consistency, monitoring page bounds, cursor
+absence of key secret/digest fields, exact account/installation consent wire
+shapes and redaction, exact accepted private-search resources, Cartesian
+target/progress consistency, consent and monitoring page bounds, cursor
 relations, and transition/delivery ownership.

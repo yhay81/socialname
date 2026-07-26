@@ -74,6 +74,9 @@ The first vertical slice is implemented in the repository:
   transactional workspace/API-key operator lifecycle, digest-only bearer
   authentication, forced tenant RLS, consented idempotent private searches,
   polling/cancellation, and bounded resumable PostgreSQL-backed SSE;
+- closed purpose/profile/notice consent resources for account and
+  installation subjects, tenant-separated installation digests, membership
+  non-override, bounded reads, and immutable one-way withdrawal;
 - a signed managed worker with consent/visibility-isolated job expansion,
   fenced claims, bounded retries, continuous authorization cancellation, and
   atomic observation/assertion/transition/event/lineage ingestion under a
@@ -138,6 +141,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Authenticated private workspaces and API keys](authenticated-workspaces.md)
   — one-time key lifecycle, digest-only authentication, non-owner RLS,
   database-aware readiness, and the first protected route.
+- [Purpose-specific consent grant lifecycle](consent-api.md) — exact
+  purpose/profile/notice contracts, account and installation subjects,
+  bounded reads, idempotent creation, and immediate immutable withdrawal.
 - [Private search API and ordered event stream](search-api.md) — consented
   idempotent creation, polling/cancellation, append-only events, and bounded
   resumable SSE with worker-created result and terminal events.
@@ -196,9 +202,10 @@ observation, assertion recomputation, meaningful transitions, signed webhook
 delivery, and the minimal API-backed console form the tested loop. The current
 roadmap milestone is **Trust, governance, and multi-region operation**. Its
 regional deployment/operator boundary, regional assertion behavior, and
-signed rule-pack distribution are repository-complete while real deployment
-remains external. The next software slice is versioned purpose-specific
-consent grants for private history, shared observation, and shared research.
+signed rule-pack distribution and purpose-specific consent lifecycle are
+repository-complete while real deployment remains external. The next software
+slice stores bounded Evidence Capsules and enforces the accepted retention
+schedule.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

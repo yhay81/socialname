@@ -856,7 +856,7 @@ Status: **Current; external deployment evidence pending**
       confirmation of high-value transitions.
 - [x] Implement signed rule-pack metadata, expiry, staged rollout, rollback
       protection, and key rotation.
-- [ ] Implement versioned purpose-specific consent grants for private history,
+- [x] Implement versioned purpose-specific consent grants for private history,
       shared observation, and shared research.
 - [ ] Store bounded Evidence Capsules and enforce the accepted retention
       schedule.
@@ -1012,6 +1012,52 @@ Quality run
 [`30198577351`](https://github.com/yhay81/socialname/actions/runs/30198577351)
 passed Rust core, Windows/macOS desktop, monitoring console, and the corrected
 managed-worker OCI metadata/trust smoke for commit `6efb5ef`.
+
+Purpose-specific consent software evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes protocol: 36 unit + 8 wire-contract tests;
+# server: 28 library + 2 binary tests;
+# with disposable PostgreSQL 18 administrator/application/worker URLs:
+# 1 PostgreSQL 18 integration test passed
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# all passed
+```
+
+Public API v1 now has closed `consent:read` and `consent:write` scopes and
+versioned create, bounded keyset-list, read, and withdrawal resources. Each
+grant binds account or installation subject, one of the three independent
+purposes, `profile-v1`, and `notice-v1`. Account identity comes only from the
+active API-key membership. Installation input is redacted, persisted only as
+a tenant-separated SHA-256 digest, and locked to its first consent-owning
+membership; even another workspace administrator cannot override it.
+
+Migration `0010` closes the accepted contract, adds the installation owner
+relation, protects every grant field except the one-way null-to-timestamp
+withdrawal, and retains append-only actor events. Concurrent exact creation is
+serialized and returns the same active grant; an expired or withdrawn grant is
+never revived. The real PostgreSQL 18 test proves all purposes and both
+subjects, tenant/owner isolation, bounded foreign-cursor rejection, exact
+replay, immutable history, replacement grants, and that a managed search is
+accepted immediately before withdrawal and forbidden immediately afterward.
+
+Withdrawal deliberately makes no prior-contribution deletion claim. The
+lineage-backed deletion item remains next in its recorded order after bounded
+Evidence Capsules and retention; it will add the delete option only when the
+system can process and receipt the documented deadlines. The complete boundary
+is in [`docs/consent-api.md`](docs/consent-api.md).
 
 Acceptance gate:
 
@@ -1189,3 +1235,9 @@ Choose these only when their trigger is measured:
   binding, dual-threshold trust rotation, and signed retained-pack rollback.
   Kept production keys, artifacts, deployment, and rollback observation
   external, and selected versioned purpose-specific consent grants next.
+- **2026-07-26:** Added exact purpose/profile/notice consent resources for
+  account and installation subjects, tenant-separated installation digests
+  with membership non-override, scoped bounded APIs, serialized replay-safe
+  creation, and immutable immediate withdrawal with PostgreSQL 18 RLS
+  evidence. Kept prior-contribution erasure behind the ordered lineage-backed
+  deletion workflow and selected bounded Evidence Capsules and retention next.

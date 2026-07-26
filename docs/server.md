@@ -91,8 +91,9 @@ unavailable.
 
 `GET /v1/workspace` requires one valid bearer API key with
 `workspace:read`. It authenticates through the restricted credential lookup,
-rechecks key/workspace state under forced transaction-local tenant RLS, and
-returns only that private workspace plus nonsecret key metadata. Missing,
+rechecks key, key-creating membership, and workspace state under forced
+transaction-local tenant RLS, and returns only that private workspace plus
+nonsecret key metadata. Missing,
 unknown, malformed, revoked, and expired credentials are uniformly
 `unauthenticated`; insufficient scope is `forbidden`; database failure is
 `unavailable`.
@@ -118,6 +119,13 @@ The API process stores policy but performs no probe. See
 [Freshness-aware watch scheduling](watch-scheduling.md) and
 [Minimal monitoring console](monitoring-console.md).
 
+Consent creation and withdrawal require `consent:write`; bounded list and
+single-resource reads require `consent:read`. The API derives account identity
+from the active key membership, hashes installation identifiers with tenant
+separation, rejects membership override, and commits each grant/withdrawal
+with an immutable event under forced RLS. See
+[Purpose-specific consent grant lifecycle](consent-api.md).
+
 Every other path returns a protocol `not_found` response. Unsupported methods
 return a protocol `invalid_request` response. Notification endpoint management,
 worker control, and HTTP key-administration routes do not exist yet, so
@@ -137,9 +145,9 @@ The Tower stack is ordered so one outer request guard:
 
 A Tower concurrency layer bounds in-flight handler work. Axum's default body
 limit is set to the same configured maximum for body-consuming extractors.
-Search and watch JSON routes map extractor rejections into the closed protocol
-envelope; each future JSON route must do the same and must not bypass the body
-limit by polling raw frames.
+Search, watch, and consent JSON routes map extractor rejections into the closed
+protocol envelope; each future JSON route must do the same and must not bypass
+the body limit by polling raw frames.
 
 Missing routes, method errors, declared-body overflow, invalid content length,
 and deadline failure remain JSON protocol errors. They do not return framework

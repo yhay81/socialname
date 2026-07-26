@@ -379,6 +379,24 @@ expired attempts unable to commit, and one transaction writes the immutable
 observation, all consumer events, terminal search state, and lineage. See
 [Managed probe jobs and observation ingestion](managed-jobs.md).
 
+### Consent
+
+```http
+POST /v1/consent-grants
+GET  /v1/consent-grants
+GET  /v1/consent-grants/{consent_grant_id}
+POST /v1/consent-grants/{consent_grant_id}/withdrawals
+```
+
+The authenticated lifecycle keeps private history, shared observation, and
+shared research independent and binds each grant to exact profile and notice
+versions. Account subjects are derived from the active API-key membership.
+Installation subjects persist only a tenant-separated digest and cannot be
+overridden by another workspace membership. Creation is serialized and
+replay-safe; withdrawal is immediate, one-way, evented, and distinct from the
+later lineage-backed deletion workflow. See
+[Purpose-specific consent grant lifecycle](consent-api.md).
+
 ### Observation synchronization
 
 ```http

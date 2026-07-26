@@ -16,6 +16,13 @@ so status does not diverge across design records.
 - SocialName collects rich Evidence Capsules when a versioned, purpose-specific
   consent grant permits it.
 - Private history, shared observation, and shared research are separate grants.
+- Consent contract identity is `(purpose, profile version, notice version)`.
+  Account grants derive their subject from the active API-key membership;
+  installation grants store only a tenant-separated digest and are owned by
+  the first registering membership, so another workspace administrator cannot
+  override refusal. Withdrawal is immediate and immutable. Prior-contribution
+  deletion is not claimed until the lineage-backed workflow can meet its
+  deadlines.
 - Contributor consent does not substitute for a lawful basis or data-subject
   process for a third-party target username.
 - Shared structured Evidence Capsules have an initial 400-day retention period.
@@ -259,12 +266,16 @@ so status does not diverge across design records.
     persist trust, active/staged/LKG state, and replay floors in PostgreSQL;
     bind managed jobs to exact metadata and promotion identities; and prove
     overlap rotation, old-key removal, and signed rollback.
+20. **Done:** Add exact purpose/profile/notice consent resources for account
+    and installation subjects, tenant-separated installation digests with
+    membership non-override, scoped bounded APIs, serialized replay-safe
+    creation, append-only actor history, and immediate one-way withdrawal.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
-deployment evidence remains pending, with affected capabilities disabled. The
-Milestone 3's deployment/operator artifact, regional assertion behavior, and
-signed rule-pack distribution are repository-complete, while actual
-multi-region deployment remains an external gate. The next executable work is
-versioned purpose-specific consent grants for private history, shared
-observation, and shared research.
+deployment evidence remains pending, with affected capabilities disabled.
+Milestone 3's deployment/operator artifact, regional assertion behavior,
+signed rule-pack distribution, and purpose-specific consent lifecycle are
+repository-complete, while actual multi-region deployment remains an external
+gate. The next executable work is bounded Evidence Capsules and enforcement of
+the accepted retention schedule.

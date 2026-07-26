@@ -61,6 +61,9 @@ person.
 - An Axum/PostgreSQL server with private workspaces, hashed scoped API keys,
   consent-bound idempotent searches, polling/cancellation, and ordered
   resumable SSE under forced tenant RLS.
+- Purpose/profile/notice-versioned account and installation consent resources
+  with bounded reads, installation non-override, and immutable immediate
+  withdrawal.
 - A signed-metadata-only managed worker with per-connection DNS validation,
   DNS-rebinding/SSRF rejection, independent response byte limits,
   cancellation, and a live-acknowledged stdin-only one-shot probe.
@@ -77,9 +80,9 @@ person.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The next repository-completable slice adds versioned purpose-specific consent
-grants for private history, shared observation, and shared research. Real
-regional deployment remains an external evidence gate.
+The next repository-completable slice stores bounded Evidence Capsules and
+enforces the accepted retention schedule. Real regional deployment remains an
+external evidence gate.
 
 ## Build and verify
 

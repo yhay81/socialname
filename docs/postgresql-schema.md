@@ -83,10 +83,11 @@ transaction must:
 4. keep all tenant work inside the same transaction and connection.
 
 Connection-level tenant state must never be allowed to leak through a pool.
-The authenticated workspace, search, and watch routes implement this contract. Their
-integration test uses a real `LOGIN NOSUPERUSER NOBYPASSRLS` non-owner role and
-proves that one tenant cannot read or insert another tenant row or observe a
-foreign search/event cursor.
+The authenticated workspace, consent, search, and watch routes implement this
+contract. Their integration test uses a real
+`LOGIN NOSUPERUSER NOBYPASSRLS` non-owner role and proves that one tenant
+cannot read or insert another tenant row or observe a foreign consent,
+search/event, or monitoring cursor.
 
 Tenant-owned relationships use composite `(tenant_id, id)` foreign keys where
 the referenced resource is tenant-scoped. This prevents a globally unique UUID
@@ -165,7 +166,10 @@ withdrawal unambiguously later. See
 - Notification destinations store ciphertext, a destination hash, and an
   encryption-key identifier. No plaintext destination column exists.
 - Search sync outside `never` requires an explicit consent grant. Consent
-  events are immutable history.
+  events are immutable history. Migration `0010` closes new grants to the
+  accepted `profile-v1`/`notice-v1` contract, permits only a one-way
+  `withdrawn_at` transition, and binds installation consent ownership to one
+  active membership without storing the installation ID.
 - Search events are append-only, have a positive per-search sequence, one
   possible started/finished boundary, at most one result per target, a
   relational/JSON identity check, and a 128 KiB payload ceiling. The API

@@ -86,6 +86,14 @@ socialname data export
 socialname data delete
 ```
 
+The current central API implements versioned creation, bounded reads, and
+immediate withdrawal for both account and installation subjects. The
+illustrative CLI commands remain future client work. In particular,
+`--delete-contributions` is not exposed until the ordered lineage-backed
+deletion workflow can fulfill and receipt its deadlines; withdrawal never
+pretends that retained contributions were erased. See
+[Purpose-specific consent grant lifecycle](consent-api.md).
+
 ## Collection profiles
 
 ### Private history
