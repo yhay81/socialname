@@ -9,14 +9,17 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::de::DeserializeOwned;
 use socialname_canary::{
     CanaryAggregationPolicy, CanaryHealthAssessor, CanaryManifestCompiler, CanaryReportAggregator,
     CanaryReportBuilder, CanaryReportPolicy, CanaryReportValidator, CanaryRunBudget,
     CanaryRunCompletion, CanaryRunner, CanaryShadowBuilder, CanaryShadowDisposition,
     CanaryShadowPair, CanaryShadowPolicy, CanaryShadowValidator, DeclaredVantage,
-    PromotionBuildRequest, PromotionBuilder, PromotionSigningKey, PromotionTrustPolicy,
-    PromotionVerifier, ValidatedCanaryReport,
+    PromotionBuildRequest, PromotionBuilder, PromotionEnvelope, PromotionSigningKey,
+    PromotionTrustPolicy, PromotionVerifier, RulePackMetadataBuildRequest, RulePackMetadataBuilder,
+    RulePackMetadataEnvelope, RulePackMetadataSigningKey, RulePackMetadataVerifier,
+    RulePackRolloutStage, RulePackTrustV1, ValidatedCanaryReport,
 };
 use socialname_domain::{RuleHealthPolicy, RuleHealthRecord};
 use socialname_rule_compiler::RuleCompiler;
@@ -27,6 +30,10 @@ use tracing_subscriber::EnvFilter;
 mod search_command;
 
 use search_command::{SearchPolicy, SearchRuleHealth, SearchSource, SyncPolicy};
+
+const MAX_RULE_PACK_TRUST_BYTES: usize = 64 * 1_024;
+const MAX_RULE_PACK_METADATA_BYTES: usize = 2 * 1_024 * 1_024;
+const MAX_SIGNING_KEY_SPECIFICATIONS: usize = 32;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -71,8 +78,77 @@ enum RulesCommand {
         #[arg(long)]
         all: bool,
     },
+    /// Print the domain-separated identity of a strict public trust-root file.
+    TrustId {
+        #[arg(long)]
+        trust_file: PathBuf,
+    },
+    /// Sign one exact pack, embedded site promotions, rollout stage, and trust generation.
+    SignMetadata {
+        #[arg(long, default_value = "rules/sites")]
+        rules_dir: PathBuf,
+        #[arg(long = "promotion", required = true)]
+        promotions: Vec<PathBuf>,
+        #[arg(long)]
+        sequence: u64,
+        #[arg(long)]
+        previous_rule_pack_hash: Option<String>,
+        #[arg(long = "required-region", required = true)]
+        required_regions: Vec<String>,
+        #[arg(long, value_enum)]
+        rollout_stage: CliRolloutStage,
+        #[arg(long = "eligible-region")]
+        eligible_regions: Vec<String>,
+        #[arg(long = "eligible-worker")]
+        eligible_workers: Vec<String>,
+        #[arg(long)]
+        expires_at: DateTime<Utc>,
+        /// Candidate trust generation embedded in the signed metadata.
+        #[arg(long)]
+        trust_file: PathBuf,
+        /// Currently trusted generation; use the same file when no rotation occurs.
+        #[arg(long)]
+        current_trust_file: PathBuf,
+        /// Repeated `key-id=private-seed-file` signer specification.
+        #[arg(long = "signing-key", required = true)]
+        signing_keys: Vec<String>,
+    },
+    /// Verify signed pack metadata, its promotions, exact pack, trust update, and worker stage.
+    VerifyMetadata {
+        #[arg(long)]
+        artifact: PathBuf,
+        #[arg(long, default_value = "rules/sites")]
+        rules_dir: PathBuf,
+        #[arg(long)]
+        current_trust_file: PathBuf,
+        #[arg(long, default_value_t = 0)]
+        minimum_sequence_exclusive: u64,
+        #[arg(long)]
+        region: Option<String>,
+        #[arg(long)]
+        worker_id: Option<String>,
+    },
     /// Print the generated JSON Schema.
     Schema,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliRolloutStage {
+    Canary,
+    Regional,
+    General,
+    Rollback,
+}
+
+impl From<CliRolloutStage> for RulePackRolloutStage {
+    fn from(value: CliRolloutStage) -> Self {
+        match value {
+            CliRolloutStage::Canary => Self::Canary,
+            CliRolloutStage::Regional => Self::Regional,
+            CliRolloutStage::General => Self::General,
+            CliRolloutStage::Rollback => Self::Rollback,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -923,6 +999,59 @@ fn load_hex_key<const N: usize>(path: &Path, description: &str) -> Result<[u8; N
     })
 }
 
+fn load_bounded_json<T: DeserializeOwned>(
+    path: &Path,
+    maximum_bytes: usize,
+    description: &str,
+) -> Result<T> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {description} {path:?}"))?;
+    if bytes.len() > maximum_bytes {
+        bail!("{description} exceeds its configured byte limit");
+    }
+    serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to decode {description} {path:?}"))
+}
+
+fn load_metadata_signing_keys(
+    specifications: &[String],
+) -> Result<Vec<RulePackMetadataSigningKey>> {
+    if specifications.is_empty() || specifications.len() > MAX_SIGNING_KEY_SPECIFICATIONS {
+        bail!("rule-pack metadata requires a bounded nonempty signer set");
+    }
+    let mut seen = BTreeSet::new();
+    specifications
+        .iter()
+        .map(|specification| {
+            let (key_id, path) = specification
+                .split_once('=')
+                .context("each --signing-key must use key-id=private-seed-file")?;
+            if key_id.is_empty() || path.is_empty() || !seen.insert(key_id.to_owned()) {
+                bail!("rule-pack metadata signer specifications are invalid or duplicated");
+            }
+            let seed = load_hex_key::<32>(Path::new(path), "Ed25519 signing seed")?;
+            RulePackMetadataSigningKey::from_seed(key_id, seed).map_err(Into::into)
+        })
+        .collect()
+}
+
+fn unique_labels(values: Vec<String>, description: &str) -> Result<BTreeSet<String>> {
+    let count = values.len();
+    let values = values.into_iter().collect::<BTreeSet<_>>();
+    if values.len() != count {
+        bail!("{description} values must not be duplicated");
+    }
+    Ok(values)
+}
+
+const fn rollout_stage_name(stage: RulePackRolloutStage) -> &'static str {
+    match stage {
+        RulePackRolloutStage::Canary => "canary",
+        RulePackRolloutStage::Regional => "regional",
+        RulePackRolloutStage::General => "general",
+        RulePackRolloutStage::Rollback => "rollback",
+    }
+}
+
 fn load_validated_canary_reports(
     reports_dir: &Path,
     policy: &CanaryReportPolicy,
@@ -991,6 +1120,134 @@ fn run_rules(arguments: RulesArgs) -> Result<()> {
                     };
                     println!("{}\t{}\t{state}", rule.source.id, rule.source.name);
                 }
+            }
+        }
+        RulesCommand::TrustId { trust_file } => {
+            let trust: RulePackTrustV1 =
+                load_bounded_json(&trust_file, MAX_RULE_PACK_TRUST_BYTES, "rule-pack trust")?;
+            trust.validate_at(Utc::now().timestamp_millis())?;
+            println!("{}", trust.content_id()?);
+        }
+        RulesCommand::SignMetadata {
+            rules_dir,
+            promotions,
+            sequence,
+            previous_rule_pack_hash,
+            required_regions,
+            rollout_stage,
+            eligible_regions,
+            eligible_workers,
+            expires_at,
+            trust_file,
+            current_trust_file,
+            signing_keys,
+        } => {
+            let rules = compiler
+                .load_directory(&rules_dir)
+                .map_err(format_compile_errors)?;
+            let pack = compiler
+                .compile_pack(&rules)
+                .map_err(format_compile_errors)?;
+            let promotions = promotions
+                .iter()
+                .map(|path| {
+                    load_bounded_json::<PromotionEnvelope>(
+                        path,
+                        MAX_RULE_PACK_METADATA_BYTES,
+                        "rule promotion",
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let trust: RulePackTrustV1 = load_bounded_json(
+                &trust_file,
+                MAX_RULE_PACK_TRUST_BYTES,
+                "candidate rule-pack trust",
+            )?;
+            let current_trust: RulePackTrustV1 = load_bounded_json(
+                &current_trust_file,
+                MAX_RULE_PACK_TRUST_BYTES,
+                "current rule-pack trust",
+            )?;
+            let signing_keys = load_metadata_signing_keys(&signing_keys)?;
+            let required_regions = unique_labels(required_regions, "required region")?;
+            let eligible_regions = unique_labels(eligible_regions, "eligible region")?;
+            let eligible_workers = unique_labels(eligible_workers, "eligible worker")?;
+            let issued_at_unix_ms = Utc::now().timestamp_millis();
+            let envelope = RulePackMetadataBuilder::new().build(
+                &signing_keys,
+                RulePackMetadataBuildRequest {
+                    sequence,
+                    rule_pack: &pack,
+                    previous_rule_pack_hash: previous_rule_pack_hash.as_deref(),
+                    required_regions: &required_regions,
+                    rollout_stage: rollout_stage.into(),
+                    eligible_regions: &eligible_regions,
+                    eligible_workers: &eligible_workers,
+                    issued_at_unix_ms,
+                    expires_at_unix_ms: expires_at.timestamp_millis(),
+                    trust,
+                    promotions: &promotions,
+                },
+            )?;
+            let validated = RulePackMetadataVerifier::new().validate_at(
+                &envelope,
+                &current_trust,
+                issued_at_unix_ms,
+            )?;
+            validated.validate_pack(&pack)?;
+            println!("{}", serde_json::to_string_pretty(&envelope)?);
+        }
+        RulesCommand::VerifyMetadata {
+            artifact,
+            rules_dir,
+            current_trust_file,
+            minimum_sequence_exclusive,
+            region,
+            worker_id,
+        } => {
+            let rules = compiler
+                .load_directory(&rules_dir)
+                .map_err(format_compile_errors)?;
+            let pack = compiler
+                .compile_pack(&rules)
+                .map_err(format_compile_errors)?;
+            let envelope: RulePackMetadataEnvelope = load_bounded_json(
+                &artifact,
+                MAX_RULE_PACK_METADATA_BYTES,
+                "rule-pack metadata",
+            )?;
+            let current_trust: RulePackTrustV1 = load_bounded_json(
+                &current_trust_file,
+                MAX_RULE_PACK_TRUST_BYTES,
+                "current rule-pack trust",
+            )?;
+            let validated = RulePackMetadataVerifier::new().validate_at(
+                &envelope,
+                &current_trust,
+                Utc::now().timestamp_millis(),
+            )?;
+            validated.validate_pack(&pack)?;
+            if validated.metadata().sequence <= minimum_sequence_exclusive {
+                bail!("rule-pack metadata sequence is not above the configured high-water mark");
+            }
+            let worker_eligible = match (region.as_deref(), worker_id.as_deref()) {
+                (Some(region), Some(worker_id)) => {
+                    Some(validated.permits_worker(region, worker_id))
+                }
+                (None, None) => None,
+                _ => bail!("--region and --worker-id must be supplied together"),
+            };
+            println!(
+                "metadata_id={}\tsequence={}\tpack_sha256={}\tstage={}\ttrust_generation={}\tcustomer_work={}",
+                validated.envelope().metadata_id,
+                validated.metadata().sequence,
+                validated.metadata().rule_pack_hash,
+                rollout_stage_name(validated.metadata().rollout_stage),
+                validated.metadata().trust.generation,
+                validated.permits_customer_work(),
+            );
+            if let Some(worker_eligible) = worker_eligible {
+                println!("worker_eligible={worker_eligible}");
             }
         }
         RulesCommand::Schema => {
