@@ -3,16 +3,17 @@
 This boundary connects accepted managed searches and scheduled private watches
 to `socialname-worker` without giving the API process network authority or
 giving the worker unrestricted cross-tenant database access. Migrations
-`0004_managed_probe_jobs.sql` and `0005_watch_scheduling.sql`, plus `JobStore`,
-implement the complete consumer-to-observation path:
+`0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
+`0006_assertion_recomputation.sql`, plus `JobStore`, implement the complete
+consumer-to-interpretation path:
 
 1. select eligible accepted work;
 2. normalize through the exact signed site rule;
 3. expand or coalesce a job;
 4. claim it with a fenced lease;
 5. execute through `ManagedRule`;
-6. retry operational failure or atomically persist one observation and all
-   consumer events.
+6. retry operational failure or atomically persist one observation, its
+   current assertion, and all consumer events and transitions.
 
 Current repository rules remain `discovery` and have no accepted promotion
 artifact. The path is operable for a promoted, active, region-healthy signed
@@ -130,13 +131,14 @@ The narrow claim coordinator cancels dead watch targets and an active job that
 no live search or watch still needs. A claimed job becomes ineligible before
 observation, event, or watch-target creation.
 
-## Atomic observation and event ingestion
+## Atomic observation, assertion, and event ingestion
 
 A successful job creates at most one immutable observation. The observation,
-job terminal state, per-search result events, watch-run target completions,
-terminal search/run states, and lineage edges commit in one tenant transaction.
-A repeated completion of the same fenced claim returns `already_final`; it
-cannot duplicate the observation, event, or watch result.
+job terminal state, current `assertion/v1` generation and support, per-search
+result and assertion events, watch-run target completions, watch-local baseline
+or transition, terminal search/run states, and lineage edges commit in one
+tenant transaction. A repeated completion of the same fenced claim returns
+`already_final`; it cannot duplicate any derived output.
 
 Observation persistence retains only typed outcome, evidence class/digest,
 exact rule/region, consent/visibility, source, and bounded freshness. It does
@@ -151,9 +153,8 @@ records:
 - observation to watch-run target;
 - job to terminal operational-failure event.
 
-Current assertion derivation is deliberately not part of this transaction.
-The next ordered assertion slice can replace current interpretations from
-eligible immutable observations while preserving this lineage.
+Assertion and transition rules are specified in
+[Assertion recomputation and transition persistence](assertion-recomputation.md).
 
 ## One-job operator entry point
 

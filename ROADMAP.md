@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: recompute `assertion/v1`, persist meaningful
-transitions, and keep account change distinct from measurement degradation.
+Next executable item: deliver a deduplicated signed webhook with bounded retry,
+dead-letter state, and audit history.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -468,7 +468,7 @@ derives a trustworthy transition, and delivers one auditable notification.
       idempotent observation ingestion.
 - [x] Implement freshness-aware watch scheduling and equivalent-work
       coalescing.
-- [ ] Recompute `assertion/v1`, persist meaningful transitions, and distinguish
+- [x] Recompute `assertion/v1`, persist meaningful transitions, and distinguish
       account change from measurement degradation.
 - [ ] Deliver a deduplicated signed webhook with retry, dead-letter state, and
       audit history.
@@ -544,7 +544,7 @@ npm run check
 npm run build
 ```
 
-The five embedded SQLx migrations create 34 bounded product tables and 29
+The six embedded SQLx migrations create 34 bounded product tables and 29
 tenant-isolation policies with forced RLS. Composite tenant foreign keys,
 immutable observation and support history, closed observation outcomes,
 transition-specific confirmation bases, exact confirmed-delivery checks,
@@ -555,7 +555,7 @@ database URL, uses one connection with connection/migration deadlines, and
 returns fixed errors without reflecting credentials.
 
 The CI core job runs both the operator command and an integration test against
-`postgres:18-alpine`. The test reapplies all five migrations, inventories all
+`postgres:18-alpine`. The test reapplies all six migrations, inventories all
 tables and forced-RLS policies, uses a real non-owner `NOBYPASSRLS` role to
 prove tenant isolation, rejects cross-tenant references and observation
 mutation, suppresses shared-only absence delivery, accepts an independently
@@ -663,7 +663,7 @@ Managed-job evidence:
 cargo fmt --all -- --check
 cargo test --locked --workspace --all-targets
 # includes 25 server library, 2 server binary,
-# 7 worker library, and 4 worker binary tests
+# 10 worker library, and 4 worker binary tests
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 # With the three documented disposable PostgreSQL test URLs:
 cargo test --locked -p socialname-server --test postgres_migrations -- --nocapture
@@ -678,24 +678,25 @@ npm run check
 npm run build
 ```
 
-Migrations `0004_managed_probe_jobs.sql` and `0005_watch_scheduling.sql`, plus
-`JobStore`, bind the exact signed site/rule/pack/region to promoted, active,
-fresh-healthy registry state. A non-owner NOBYPASSRLS worker uses six narrow
-coordinator functions, then returns to transaction-local tenant RLS. Expansion
-normalizes through that rule, keeps invalid targets outside absence, and
-coalesces only equal tenant, target, rule, region, consent grant, and visibility
-scopes.
+Migrations `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
+`0006_assertion_recomputation.sql`, plus `JobStore`, bind the exact signed
+site/rule/pack/region to promoted, active, fresh-healthy registry state. A
+non-owner NOBYPASSRLS worker uses six narrow coordinator functions, then
+returns to transaction-local tenant RLS. Expansion normalizes through that
+rule, keeps invalid targets outside absence, and coalesces only equal tenant,
+target, rule, region, consent grant, and visibility scopes.
 
 Claims increment an attempt fence; expired leases can be reclaimed while stale
 attempts cannot commit. Operational failures use bounded exponential retry.
 Execution continuously rechecks live search/watch consumers,
 purpose-specific consent, watch revision/endpoints, and rule health, and final
 ingestion locks consent. One transaction writes at most one immutable
-observation, per-search result events, search/watch target and terminal state,
-and lineage; replay is `already_final`. The PostgreSQL 18 test proves
-search/watch coalescing and purpose isolation, claim/reclaim, stale fencing,
-retry exhaustion, multi-consumer fan-out, cancellation, consent withdrawal,
-rule degradation, invalid targets, and least-privilege RLS.
+observation, current assertion generation and support, per-search result and
+assertion events, watch-local baseline or transition, search/watch target and
+terminal state, and lineage; replay is `already_final`. The PostgreSQL 18 test
+proves search/watch coalescing and purpose isolation, claim/reclaim, stale
+fencing, retry exhaustion, multi-consumer fan-out, cancellation, consent
+withdrawal, rule degradation, invalid targets, and least-privilege RLS.
 
 `socialname-worker process-one` is the bounded operable entry point: it plans
 at most one due watch, alternates search/watch expansion for at most 128
@@ -707,8 +708,46 @@ evidence; otherwise it reserves the compiled rule's worst-case inspected bytes
 before coalescing into an equivalent active job. Pause, delete, revision
 change, consent withdrawal, endpoint deactivation, and rule quarantine prevent
 stale fan-out. Representative rules still cannot execute because their
-external promotion evidence is absent. The next item is current assertion and
-transition recomputation.
+external promotion evidence is absent.
+
+Assertion/transition evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes domain assertion replay, protocol transition validation,
+# 10 worker derivation/job tests, and the PostgreSQL integration test
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# With disposable PostgreSQL 18 administrator/application/worker URLs:
+cargo test --locked -p socialname-server --test postgres_migrations -- --nocapture
+# 1 PostgreSQL 18 integration test passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+```
+
+The worker serializes each tenant target with a length-framed advisory key and
+derives `assertion/v1` only from current strong exact-rule observations backed
+by active consent. Changed evidence creates a new current generation with
+append-only support and lineage; managed searches receive the same
+`assertion_updated` interpretation. A watch target's first eligible assertion
+establishes its own baseline without a transition. Later account candidates
+use the closed E4/E3-follow-up appearance and independent-region/time-separated
+disappearance bases; shared-only absence remains suppressed.
+
+Opposing fresh strong observations produce `conflicted` and cannot move the
+account baseline. Typed uncertainty creates a distinct regional
+`measurement_health` degradation, while terminal operational failure creates
+`unavailable` from probe-job lineage without fabricating an observation. The
+PostgreSQL 18 test proves all of these paths under the real non-owner
+NOBYPASSRLS worker, including exact fresh-evidence replay and unchanged account
+state through degradation. The next executable item is deduplicated signed
+webhook delivery from confirmed transitions.
 
 Software acceptance gate:
 
@@ -892,3 +931,8 @@ Choose these only when their trigger is measured:
   inspected-byte reservation, search/watch job coalescing, and
   revision/consent-aware cancellation with PostgreSQL 18 RLS evidence; kept
   discovery-only rules quarantined and selected assertion recomputation next.
+- **2026-07-26:** Added transactional exact-rule `assertion/v1`
+  recomputation, explicit support and search events, per-watch account
+  baselines, confirmation-aware account candidates, conflict suppression, and
+  separate degraded/unavailable measurement transitions with PostgreSQL 18
+  RLS evidence; selected deduplicated signed webhook delivery next.

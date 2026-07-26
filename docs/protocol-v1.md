@@ -172,6 +172,11 @@ degradation remain measurement facts rather than account removal. Both a
 previous and next account state are required, so an initial watch baseline
 cannot be serialized as a transition or notification.
 
+Account transitions require one or more supporting observation IDs.
+Measurement-health transitions may omit them when the evidence is an
+operational probe failure rather than an observation; generic lineage then
+binds the probe job to the transition without fabricating an account verdict.
+
 `TransitionConfirmation` records one of:
 
 - pending managed verification;

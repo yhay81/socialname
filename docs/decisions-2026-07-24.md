@@ -132,6 +132,15 @@ so status does not diverge across design records.
   RLS. Final ingestion rechecks rule health and locks purpose-specific consent
   before atomically writing one immutable observation, per-search events,
   watch-run target state, terminal state, and lineage.
+- Central `assertion/v1` recomputation serializes by tenant target, admits only
+  current strong exact-rule observations with active consent, versions the
+  current interpretation and explicit support, and emits the same assertion
+  to managed-search consumers. Each watch target owns its initial account
+  baseline; only E4/E3-follow-up appearance or independently confirmed
+  disappearance advances it. Conflicts suppress candidates. Typed uncertainty
+  and terminal operational failure create regional measurement transitions
+  and never account disappearance; an operational measurement transition uses
+  probe-job lineage instead of a fabricated observation.
 
 ## Detailed records
 
@@ -152,6 +161,7 @@ so status does not diverge across design records.
 - [Authenticated private workspaces and API keys](authenticated-workspaces.md)
 - [Private search API and ordered event stream](search-api.md)
 - [Managed probe jobs and observation ingestion](managed-jobs.md)
+- [Assertion recomputation and transition persistence](assertion-recomputation.md)
 
 ## Implementation baseline
 
@@ -192,8 +202,12 @@ so status does not diverge across design records.
     pre-network byte reservation, search/watch work coalescing, and
     revision/consent-aware cancellation under the same forced-RLS worker
     boundary.
+15. **Done:** Recompute exact-rule `assertion/v1` generations transactionally,
+    stream assertion updates, establish per-watch account baselines, confirm or
+    suppress meaningful account candidates, and persist measurement
+    degradation separately with complete support and generic lineage.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
-work is the first paid monitoring loop in Milestone 2, continuing with current
-assertion derivation from immutable eligible observations.
+work in Milestone 2 is deduplicated signed webhook delivery from already
+confirmed transitions.

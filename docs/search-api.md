@@ -191,8 +191,8 @@ rule-health races.
 The API process still initiates no network request and cannot normalize a
 target. A separate signed worker performs those operations only for an exact
 promoted, active, fresh healthy rule/pack/region binding. Search and watch
-consumers now coalesce only across the same consent/visibility work scope; the
-next ordered gate is current assertion recomputation. External live acceptance
-remains required before representative discovery rules can execute. See
-[Managed probe jobs and observation ingestion](managed-jobs.md) and
-[Freshness-aware watch scheduling](watch-scheduling.md).
+consumers now coalesce only across the same consent/visibility work scope and
+receive the transactionally recomputed current assertion. External live
+acceptance remains required before representative discovery rules can execute.
+See [Managed probe jobs and observation ingestion](managed-jobs.md) and
+[Assertion recomputation and transition persistence](assertion-recomputation.md).

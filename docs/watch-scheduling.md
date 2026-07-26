@@ -176,5 +176,7 @@ The PostgreSQL 18 test proves:
 - ordinary NOBYPASSRLS worker operation through the narrow coordinator.
 
 The test does not claim production scheduling uptime, live-site promotion,
-multi-region deployment, notification delivery, assertion recomputation, or
-external retention evidence.
+multi-region deployment, notification delivery, shared-client reputation
+admission, or external retention evidence. Assertion recomputation and
+transition persistence are covered by the next vertical slice in
+[Assertion recomputation and transition persistence](assertion-recomputation.md).

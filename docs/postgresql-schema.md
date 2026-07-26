@@ -11,8 +11,10 @@ work, fenced claims, narrow worker coordinator functions, and the final
 consent-lock boundary used by atomic observation/event ingestion. Migration
 `0005_watch_scheduling.sql` adds revisioned watch endpoint links, immutable
 runs and run targets, freshness reuse, bounded scheduling coordination, and
-search/watch consumers. Assertion recomputation and delivery workers remain
-closed for their own vertical slices.
+search/watch consumers. Migration `0006_assertion_recomputation.sql` adds the
+per-watch account baseline and indexes for durable account candidates and
+regional measurement state. Notification delivery remains closed for its own
+vertical slice.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -159,6 +161,9 @@ withdrawal unambiguously later. See
   rows reject updates.
 - Assertion and transition support are explicit join records. Generic lineage
   preserves withdrawal and recomputation ancestry across later derived data.
+- A watch target's account baseline is an all-null or fully populated
+  state/assertion/time triple. The initial assertion establishes the baseline
+  without fabricating a transition.
 - Account-appearance, account-disappearance, and measurement-health
   confirmation bases are constrained separately. Shared-only absence can only
   be a suppressed disappearance.
@@ -204,9 +209,11 @@ foreign keys, immutable observations, transition confirmation bases,
 shared-only notification suppression, valid confirmed delivery, ordered
 deletion deadlines, receipts, lineage, and a second real NOBYPASSRLS worker
 role covering job coalescing, watch planning, freshness reuse, byte
-reservation, fencing, retry, atomic observation/search/watch ingestion,
-invalid targets, revision cancellation, consent withdrawal, and regional rule
-degradation. Tests skip only when `SOCIALNAME_TEST_DATABASE_URL` is
+reservation, fencing, retry, atomic observation/assertion/search/watch
+ingestion, account baselines and confirmed transitions, conflicting evidence,
+measurement degradation, invalid targets, revision cancellation, consent
+withdrawal, and regional rule degradation. Tests skip only when
+`SOCIALNAME_TEST_DATABASE_URL` is
 absent; the CI job always supplies it. The administrator, application, and
 worker test URLs must identify the same disposable test database with their
 intended roles: the integration test truncates product tables and resets
