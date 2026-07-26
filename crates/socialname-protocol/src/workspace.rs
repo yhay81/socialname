@@ -31,6 +31,8 @@ pub enum ApiKeyScope {
     ConsentRead,
     #[serde(rename = "consent:write")]
     ConsentWrite,
+    #[serde(rename = "evidence:read")]
+    EvidenceRead,
 }
 
 impl ApiKeyScope {
@@ -48,6 +50,7 @@ impl ApiKeyScope {
             Self::DataDelete => "data:delete",
             Self::ConsentRead => "consent:read",
             Self::ConsentWrite => "consent:write",
+            Self::EvidenceRead => "evidence:read",
         }
     }
 
@@ -64,6 +67,7 @@ impl ApiKeyScope {
             "data:delete" => Ok(Self::DataDelete),
             "consent:read" => Ok(Self::ConsentRead),
             "consent:write" => Ok(Self::ConsentWrite),
+            "evidence:read" => Ok(Self::EvidenceRead),
             _ => Err(ValidationErrors::new(
                 "scopes",
                 ValidationCode::InvalidFormat,
@@ -217,6 +221,10 @@ mod tests {
 
     #[test]
     fn api_key_scope_parser_is_closed_and_omits_rejected_values() {
+        assert_eq!(
+            ApiKeyScope::parse("evidence:read").unwrap(),
+            ApiKeyScope::EvidenceRead
+        );
         let error = ApiKeyScope::parse("secret-scope").unwrap_err();
         assert!(!error.to_string().contains("secret-scope"));
     }

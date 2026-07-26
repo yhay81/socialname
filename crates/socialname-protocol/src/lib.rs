@@ -3,6 +3,7 @@
 mod common;
 mod consent;
 mod error;
+mod evidence;
 mod monitoring;
 mod notification;
 mod schema;
@@ -13,8 +14,8 @@ mod workspace;
 
 pub use common::{
     API_V1_SCHEMA, ApiKeyId, ConsentGrantId, ConsentSubjectId, DefinitiveVerdict,
-    DeliveryErrorCode, EmailAddress, EventId, EvidenceClass, EvidenceDigest, Freshness,
-    FreshnessState, HttpsUrl, IdempotencyKey, IdentifierError, InstallationId,
+    DeliveryErrorCode, EmailAddress, EventId, EvidenceCapsuleId, EvidenceClass, EvidenceDigest,
+    Freshness, FreshnessState, HttpsUrl, IdempotencyKey, IdentifierError, InstallationId,
     NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey, ObservationId,
     ProtocolVersion, RegionClass, RequestId, ResultSource, RuleHash, RuleHealthStatus, SearchId,
     SearchMode, SiteId, SyncPolicy, Target, TargetSelection, TransitionId, Username, Validate,
@@ -26,6 +27,12 @@ pub use consent::{
     ConsentSubjectKind, ConsentWithdrawalRequest, MAX_CONSENT_PAGE_ITEMS,
 };
 pub use error::{ApiError, ApiErrorCode, ApiErrorResponse, FieldViolation};
+pub use evidence::{
+    EVIDENCE_CAPSULE_V1, EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema,
+    EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
+    EvidenceResearchExtension, EvidenceTransportOutcome, EvidenceVantage,
+    MAX_EVIDENCE_CAPSULE_BYTES, MAX_EVIDENCE_MATCHER_TRACES, MAX_EVIDENCE_PROBES,
+};
 pub use monitoring::{
     MAX_MONITORING_PAGE_ITEMS, WatchListPage, WatchTransitionEntry, WatchTransitionPage,
 };

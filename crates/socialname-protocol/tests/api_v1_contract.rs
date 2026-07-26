@@ -1,14 +1,17 @@
 use socialname_protocol::{
     API_V1_SCHEMA, AccountState, ConfirmationBasis, ConsentCollectionProfileVersion,
     ConsentGrantCreateRequest, ConsentGrantId, ConsentNoticeVersion, ConsentPurpose,
-    ConsentSubjectKind, EventId, InstallationId, NotificationChannel, NotificationDelivery,
-    NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey, ObservationId,
-    OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass,
-    ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
-    SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy, Target,
-    TargetSelection, Transition, TransitionChange, TransitionConfirmation, TransitionId, Username,
-    Validate, WatchCreateRequest, WatchId, WatchListPage, WatchResource, WatchSchedule, WatchState,
-    WatchTransitionEntry, WatchTransitionPage, WebhookNotification,
+    ConsentSubjectKind, DefinitiveVerdict, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
+    EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
+    EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
+    EvidenceTransportOutcome, EvidenceVantage, InstallationId, NotificationChannel,
+    NotificationDelivery, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
+    ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion,
+    RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent, SearchEventData,
+    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason,
+    SyncPolicy, Target, TargetSelection, Transition, TransitionChange, TransitionConfirmation,
+    TransitionId, Username, Validate, WatchCreateRequest, WatchId, WatchListPage, WatchResource,
+    WatchSchedule, WatchState, WatchTransitionEntry, WatchTransitionPage, WebhookNotification,
 };
 
 fn target() -> Target {
@@ -43,6 +46,106 @@ fn installation_consent_has_one_exact_redacted_v1_wire_shape() {
         })
     );
     assert!(!format!("{request:?}").contains("11111111-1111-4111-8111-111111111111"));
+}
+
+#[test]
+fn evidence_capsule_has_one_bounded_body_free_v1_wire_shape() {
+    let capsule = EvidenceCapsuleResource {
+        schema: ProtocolVersion::ApiV1,
+        capsule_schema: EvidenceCapsuleSchema::V1,
+        evidence_capsule_id: EvidenceCapsuleId::new("capsule_01").unwrap(),
+        observation_id: ObservationId::new("observation_01").unwrap(),
+        profile: EvidenceCapsuleProfile::PrivateHistory,
+        target: target(),
+        outcome: EvidenceOutcome::Definitive {
+            verdict: DefinitiveVerdict::Found,
+        },
+        provenance: EvidenceProvenance {
+            rule_hash: RuleHash::new("1".repeat(64)).unwrap(),
+            rule_pack_hash: "2".repeat(64),
+            engine_hash: "3".repeat(64),
+            rule_pack_metadata_id: "4".repeat(64),
+            rule_promotion_id: "5".repeat(64),
+        },
+        vantage: EvidenceVantage {
+            region_class: RegionClass::new("jp").unwrap(),
+            network_class: EvidenceNetworkClass::Managed,
+        },
+        evidence_class: EvidenceClass::E4StructuredIdentity,
+        evidence_digest: EvidenceDigest::new("6".repeat(64)).unwrap(),
+        profile_url: None,
+        probes: vec![EvidenceProbe {
+            probe_id: "api".to_owned(),
+            transport: EvidenceTransportOutcome::Completed,
+            status: Some(200),
+            final_url: None,
+            content_type: Some("application/json".to_owned()),
+            body_bytes: 128,
+            body_truncated: false,
+            latency_bucket_ms: 100,
+        }],
+        matcher_trace: vec![EvidenceMatcherTrace {
+            path: "found.all[0]".to_owned(),
+            matched: true,
+            detail: "status Some(200)".to_owned(),
+        }],
+        collected_at_unix_ms: 1_000,
+        structured_retained_until_unix_ms: 1_000 + 90 * 24 * 60 * 60 * 1_000,
+        research_extension: None,
+        research_retained_until_unix_ms: None,
+    };
+    assert!(capsule.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(capsule).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "capsule_schema": "socialname.dev/evidence-capsule/v1",
+            "evidence_capsule_id": "capsule_01",
+            "observation_id": "observation_01",
+            "profile": "private_history",
+            "target": {
+                "username": "alice-private-target",
+                "site_id": "github"
+            },
+            "outcome": {
+                "kind": "definitive",
+                "verdict": "found"
+            },
+            "provenance": {
+                "rule_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+                "rule_pack_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+                "engine_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+                "rule_pack_metadata_id": "4444444444444444444444444444444444444444444444444444444444444444",
+                "rule_promotion_id": "5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "vantage": {
+                "region_class": "jp",
+                "network_class": "managed"
+            },
+            "evidence_class": "e4_structured_identity",
+            "evidence_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "profile_url": null,
+            "probes": [{
+                "probe_id": "api",
+                "transport": "completed",
+                "status": 200,
+                "final_url": null,
+                "content_type": "application/json",
+                "body_bytes": 128,
+                "body_truncated": false,
+                "latency_bucket_ms": 100
+            }],
+            "matcher_trace": [{
+                "path": "found.all[0]",
+                "matched": true,
+                "detail": "status Some(200)"
+            }],
+            "collected_at_unix_ms": 1_000,
+            "structured_retained_until_unix_ms": 7_776_001_000_i64,
+            "research_extension": null,
+            "research_retained_until_unix_ms": null
+        })
+    );
 }
 
 fn watch_resource() -> WatchResource {
