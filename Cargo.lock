@@ -4025,6 +4025,8 @@ dependencies = [
 name = "socialname-engine"
 version = "0.2.0"
 dependencies = [
+ "brotli",
+ "flate2",
  "futures-util",
  "regex",
  "reqwest",
@@ -4038,6 +4040,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "zstd",
 ]
 
 [[package]]
@@ -4109,6 +4112,24 @@ dependencies = [
  "socialname-engine",
  "socialname-rule-compiler",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "socialname-worker"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "serde",
+ "serde_json",
+ "socialname-canary",
+ "socialname-domain",
+ "socialname-engine",
+ "socialname-rule-compiler",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

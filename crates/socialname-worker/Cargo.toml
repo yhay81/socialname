@@ -1,0 +1,28 @@
+[package]
+name = "socialname-worker"
+description = "Signed-rule-only managed probe worker for SocialName"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+socialname-canary = { path = "../socialname-canary" }
+socialname-engine = { path = "../socialname-engine" }
+socialname-rule-compiler = { path = "../socialname-rule-compiler" }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+socialname-domain = { path = "../socialname-domain" }
+
+[lints]
+workspace = true

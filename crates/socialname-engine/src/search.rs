@@ -19,6 +19,12 @@ impl SearchEngine {
         })
     }
 
+    pub fn new_managed() -> Result<Self, reqwest::Error> {
+        Ok(Self {
+            probes: ProbeClient::new_managed()?,
+        })
+    }
+
     pub async fn search(&self, rule: &CompiledSiteRule, username: &str) -> SearchResult {
         let Some(normalized) = rule.normalize_username(username) else {
             return SearchResult {
