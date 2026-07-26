@@ -31,8 +31,9 @@ use socialname_protocol::{
     OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass,
     ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
     SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId, SyncPolicy, Target,
-    TargetSelection, Username, Validate, WatchCreateRequest, WatchPatchRequest, WatchResource,
-    WatchSchedule, WatchState, WatchStateUpdate, WorkspaceResource,
+    TargetSelection, Username, Validate, WatchCreateRequest, WatchListPage, WatchPatchRequest,
+    WatchResource, WatchSchedule, WatchState, WatchStateUpdate, WatchTransitionPage,
+    WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{ServerConfig, build_router, migrate_database};
@@ -78,6 +79,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_private_search_and_event_stream_boundary(&pool).await;
     assert_watch_api_boundary(&pool).await;
     assert_managed_probe_job_boundary(&pool).await;
+    assert_monitoring_console_boundary(&pool).await;
 
     pool.close().await;
 }
@@ -592,7 +594,9 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT SELECT ON
             sites, consent_grants, searches, search_targets, search_events,
             watches, watch_targets, watch_notification_endpoints,
-            notification_endpoints, watch_runs, watch_run_targets
+            notification_endpoints, watch_runs, watch_run_targets,
+            transitions, transition_basis, notification_deliveries,
+            rule_versions
             TO socialname_migration_test_app;
         GRANT INSERT ON
             searches, search_targets, search_events, watches, watch_targets,
@@ -2856,7 +2860,7 @@ async fn assert_webhook_delivery_boundary(administrator_pool: &PgPool, worker_po
     assert_eq!(first_attempt, 1);
     sqlx::query(
         "UPDATE notification_deliveries \
-         SET next_attempt_at = clock_timestamp() - interval '1 second' \
+         SET next_attempt_at = created_at \
          WHERE id = $1",
     )
     .bind(delivery_id)
@@ -3042,6 +3046,189 @@ async fn assert_webhook_delivery_boundary(administrator_pool: &PgPool, worker_po
     assert_eq!(leaked_audit_details, 0);
 
     store.close().await;
+}
+
+async fn assert_monitoring_console_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let reader_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let wrong_scope_token = api_key_token("cccccccccccccccc", 0x33);
+    let managed_watch_id: Uuid = sqlx::query_scalar(
+        "SELECT target.watch_id \
+         FROM transitions AS transition \
+         JOIN watch_targets AS target \
+           ON target.tenant_id = transition.tenant_id \
+          AND target.id = transition.watch_target_id \
+         WHERE transition.tenant_id = $1 \
+           AND transition.transition_class = 'measurement_health' \
+         ORDER BY transition.detected_at DESC \
+         LIMIT 1",
+    )
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+
+    let wrong_scope = server_request(
+        &application_pool,
+        "/v1/watches?limit=1",
+        Some(&wrong_scope_token),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_scope, ApiErrorCode::Forbidden).await;
+
+    let first = server_request(
+        &application_pool,
+        "/v1/watches?limit=1",
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_page: WatchListPage = serde_json::from_value(json_body(first).await).unwrap();
+    assert!(first_page.validate().is_ok());
+    assert_eq!(first_page.watches.len(), 1);
+    let first_watch_id = first_page.watches[0].watch_id.clone();
+    let cursor = first_page.next_cursor.as_ref().unwrap().as_str();
+
+    let second = server_request(
+        &application_pool,
+        &format!("/v1/watches?limit=1&after={cursor}"),
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let second_page: WatchListPage = serde_json::from_value(json_body(second).await).unwrap();
+    assert!(second_page.validate().is_ok());
+    assert_eq!(second_page.watches.len(), 1);
+    assert_ne!(second_page.watches[0].watch_id, first_watch_id);
+
+    let foreign_cursor = server_request(
+        &application_pool,
+        &format!("/v1/watches?limit=1&after={managed_watch_id}"),
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(foreign_cursor.status(), StatusCode::BAD_REQUEST);
+    assert_api_error(foreign_cursor, ApiErrorCode::InvalidRequest).await;
+
+    let foreign_page = server_request(
+        &application_pool,
+        "/v1/watches?limit=50",
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(foreign_page.status(), StatusCode::OK);
+    let foreign_page: WatchListPage =
+        serde_json::from_value(json_body(foreign_page).await).unwrap();
+    assert!(foreign_page.validate().is_ok());
+    assert!(foreign_page.watches.is_empty());
+
+    let foreign_timeline = server_request(
+        &application_pool,
+        &format!("/v1/watches/{managed_watch_id}/transitions"),
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(foreign_timeline.status(), StatusCode::NOT_FOUND);
+    assert_api_error(foreign_timeline, ApiErrorCode::NotFound).await;
+
+    let timeline = server_request(
+        &application_pool,
+        &format!("/v1/watches/{managed_watch_id}/transitions?limit=50"),
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(timeline.status(), StatusCode::OK);
+    let timeline_json = json_body(timeline).await;
+    let timeline_page: WatchTransitionPage = serde_json::from_value(timeline_json.clone()).unwrap();
+    assert!(timeline_page.validate().is_ok());
+    assert!(timeline_page.entries.len() >= 3);
+    assert!(timeline_page.entries.iter().any(|entry| {
+        matches!(
+            &entry.transition.change,
+            socialname_protocol::TransitionChange::AccountState { .. }
+        )
+    }));
+    assert!(timeline_page.entries.iter().any(|entry| {
+        matches!(
+            &entry.transition.change,
+            socialname_protocol::TransitionChange::MeasurementHealth { .. }
+        )
+    }));
+    let delivery_states = timeline_page
+        .entries
+        .iter()
+        .flat_map(|entry| entry.deliveries.iter())
+        .map(|delivery| delivery.state)
+        .collect::<Vec<_>>();
+    assert!(delivery_states.contains(&socialname_protocol::NotificationDeliveryState::Delivered));
+    assert!(
+        delivery_states
+            .contains(&socialname_protocol::NotificationDeliveryState::PermanentlyFailed)
+    );
+    let serialized = serde_json::to_string(&timeline_json).unwrap();
+    for forbidden in [
+        "destination",
+        "signature",
+        "request_body_sha256",
+        "worker_id",
+        "hooks.example",
+    ] {
+        assert!(!serialized.contains(forbidden));
+    }
+
+    let first_transition = server_request(
+        &application_pool,
+        &format!("/v1/watches/{managed_watch_id}/transitions?limit=1"),
+        Some(&reader_token),
+    )
+    .await;
+    let first_transition_page: WatchTransitionPage =
+        serde_json::from_value(json_body(first_transition).await).unwrap();
+    assert_eq!(first_transition_page.entries.len(), 1);
+    let transition_cursor = first_transition_page.next_cursor.unwrap();
+    let continued = server_request(
+        &application_pool,
+        &format!(
+            "/v1/watches/{managed_watch_id}/transitions?limit=1&after={}",
+            transition_cursor.as_str()
+        ),
+        Some(&reader_token),
+    )
+    .await;
+    let continued_page: WatchTransitionPage =
+        serde_json::from_value(json_body(continued).await).unwrap();
+    assert_eq!(continued_page.entries.len(), 1);
+    assert_ne!(
+        continued_page.entries[0].transition.transition_id,
+        transition_cursor
+    );
+
+    let direct_transition_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) \
+         FROM transitions AS transition \
+         JOIN watch_targets AS target \
+           ON target.tenant_id = transition.tenant_id \
+          AND target.id = transition.watch_target_id \
+         WHERE target.watch_id = $1",
+    )
+    .bind(managed_watch_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        i64::try_from(timeline_page.entries.len()).unwrap(),
+        direct_transition_count
+    );
+
+    application_pool.close().await;
 }
 
 fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {

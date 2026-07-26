@@ -657,7 +657,7 @@ async fn replace_watch_endpoints(
     Ok(())
 }
 
-async fn load_watch_resource(
+pub(crate) async fn load_watch_resource(
     transaction: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     watch_id: Uuid,
@@ -909,7 +909,7 @@ struct StoredWatch {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum WatchError {
+pub(crate) enum WatchError {
     #[error("watch request is invalid")]
     InvalidRequest(&'static str, ValidationCode),
     #[error("watch validation failed")]

@@ -2,6 +2,7 @@
 
 mod common;
 mod error;
+mod monitoring;
 mod notification;
 mod schema;
 mod search;
@@ -19,6 +20,9 @@ pub use common::{
     WorkspaceId,
 };
 pub use error::{ApiError, ApiErrorCode, ApiErrorResponse, FieldViolation};
+pub use monitoring::{
+    MAX_MONITORING_PAGE_ITEMS, WatchListPage, WatchTransitionEntry, WatchTransitionPage,
+};
 pub use notification::{
     NotificationChannel, NotificationDelivery, NotificationDeliveryState, NotificationDestination,
     NotificationEndpointCreateRequest, NotificationEndpointResource, NotificationEndpointState,

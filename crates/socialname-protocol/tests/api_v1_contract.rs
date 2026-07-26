@@ -1,17 +1,50 @@
 use socialname_protocol::{
     API_V1_SCHEMA, AccountState, ConfirmationBasis, ConsentGrantId, EventId, NotificationChannel,
     NotificationDelivery, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
-    ObservationId, OperationalFailure, OperationalFailureKind, ProtocolVersion, RegionClass,
-    ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
-    SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy, Target,
-    TargetSelection, Transition, TransitionChange, TransitionConfirmation, TransitionId, Username,
-    Validate, WatchId, WebhookNotification,
+    ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion,
+    RegionClass, ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId,
+    SearchMode, SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy,
+    Target, TargetSelection, Transition, TransitionChange, TransitionConfirmation, TransitionId,
+    Username, Validate, WatchCreateRequest, WatchId, WatchListPage, WatchResource, WatchSchedule,
+    WatchState, WatchTransitionEntry, WatchTransitionPage, WebhookNotification,
 };
 
 fn target() -> Target {
     Target {
         username: Username::new("alice-private-target").unwrap(),
         site_id: SiteId::new("github").unwrap(),
+    }
+}
+
+fn watch_resource() -> WatchResource {
+    WatchResource {
+        schema: ProtocolVersion::ApiV1,
+        watch_id: WatchId::new("watch_01").unwrap(),
+        state: WatchState::Active,
+        revision: 1,
+        configuration: WatchCreateRequest {
+            schema: ProtocolVersion::ApiV1,
+            targets: TargetSelection {
+                usernames: vec![Username::new("alice-private-target").unwrap()],
+                site_ids: vec![SiteId::new("github").unwrap()],
+            },
+            region_classes: vec![RegionClass::new("jp").unwrap()],
+            maximum_age_ms: 60_000,
+            schedule: WatchSchedule {
+                interval_seconds: 300,
+                jitter_percent: 0,
+            },
+            probe_budget: ProbeBudget {
+                maximum_probes_per_run: 1,
+                maximum_bytes_per_run: 1_024,
+            },
+            notification_endpoint_ids: vec![NotificationEndpointId::new("endpoint_01").unwrap()],
+            private_history_consent_grant_id: ConsentGrantId::new("grant_01").unwrap(),
+            retention_days: 30,
+        },
+        created_at_unix_ms: 1_000,
+        updated_at_unix_ms: 1_000,
+        next_run_at_unix_ms: Some(301_000),
     }
 }
 
@@ -188,6 +221,87 @@ fn webhook_notification_has_one_exact_v1_wire_shape() {
             }
         })
     );
+}
+
+#[test]
+fn monitoring_pages_have_one_exact_v1_wire_shape() {
+    let watch_page = WatchListPage {
+        schema: ProtocolVersion::ApiV1,
+        watches: vec![watch_resource()],
+        next_cursor: Some(WatchId::new("watch_01").unwrap()),
+    };
+    assert!(watch_page.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(watch_page).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "watches": [{
+                "schema": API_V1_SCHEMA,
+                "watch_id": "watch_01",
+                "state": "active",
+                "revision": 1,
+                "configuration": {
+                    "schema": API_V1_SCHEMA,
+                    "targets": {
+                        "usernames": ["alice-private-target"],
+                        "site_ids": ["github"]
+                    },
+                    "region_classes": ["jp"],
+                    "maximum_age_ms": 60_000,
+                    "schedule": {
+                        "interval_seconds": 300,
+                        "jitter_percent": 0
+                    },
+                    "probe_budget": {
+                        "maximum_probes_per_run": 1,
+                        "maximum_bytes_per_run": 1_024
+                    },
+                    "notification_endpoint_ids": ["endpoint_01"],
+                    "private_history_consent_grant_id": "grant_01",
+                    "retention_days": 30
+                },
+                "created_at_unix_ms": 1_000,
+                "updated_at_unix_ms": 1_000,
+                "next_run_at_unix_ms": 301_000
+            }],
+            "next_cursor": "watch_01"
+        })
+    );
+
+    let transition = Transition {
+        schema: ProtocolVersion::ApiV1,
+        transition_id: TransitionId::new("transition_01").unwrap(),
+        watch_id: WatchId::new("watch_01").unwrap(),
+        target: target(),
+        change: TransitionChange::AccountState {
+            from: AccountState::NotFound,
+            to: AccountState::Found,
+        },
+        confirmation: TransitionConfirmation::Confirmed {
+            basis: ConfirmationBasis::ManagedE4,
+        },
+        supporting_observation_ids: vec![ObservationId::new("observation_01").unwrap()],
+        detected_at_unix_ms: 2_000,
+    };
+    let transition_page = WatchTransitionPage {
+        schema: ProtocolVersion::ApiV1,
+        watch_id: WatchId::new("watch_01").unwrap(),
+        entries: vec![WatchTransitionEntry {
+            transition,
+            deliveries: Vec::new(),
+        }],
+        next_cursor: None,
+    };
+    assert!(transition_page.validate().is_ok());
+    let json = serde_json::to_value(transition_page).unwrap();
+    assert_eq!(json["schema"], API_V1_SCHEMA);
+    assert_eq!(json["watch_id"], "watch_01");
+    assert_eq!(
+        json["entries"][0]["transition"]["change"]["class"],
+        "account_state"
+    );
+    assert_eq!(json["entries"][0]["deliveries"], serde_json::json!([]));
+    assert_eq!(json["next_cursor"], serde_json::Value::Null);
 }
 
 #[test]

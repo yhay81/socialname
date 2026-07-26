@@ -4,6 +4,7 @@ mod api_key;
 mod auth;
 mod config;
 mod database;
+mod monitoring;
 mod search;
 mod watch;
 mod workspace;
@@ -166,7 +167,12 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             authenticate_request,
         ));
     let watch_read_routes = Router::new()
+        .route("/v1/watches", get(monitoring::list_watches))
         .route("/v1/watches/{watch_id}", get(watch::get_watch))
+        .route(
+            "/v1/watches/{watch_id}/transitions",
+            get(monitoring::list_watch_transitions),
+        )
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),

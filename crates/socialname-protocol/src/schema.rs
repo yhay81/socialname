@@ -5,7 +5,8 @@ use schemars::{Schema, schema_for};
 use crate::{
     ApiErrorResponse, NotificationDelivery, NotificationEndpointCreateRequest,
     NotificationEndpointResource, SearchCreateRequest, SearchEvent, SearchResource, Transition,
-    WatchCreateRequest, WatchPatchRequest, WatchResource, WebhookNotification, WorkspaceResource,
+    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchTransitionPage,
+    WebhookNotification, WorkspaceResource,
 };
 
 #[must_use]
@@ -26,8 +27,10 @@ pub fn api_v1_schemas() -> BTreeMap<&'static str, Schema> {
         ("search_resource", schema_for!(SearchResource)),
         ("transition", schema_for!(Transition)),
         ("watch_create_request", schema_for!(WatchCreateRequest)),
+        ("watch_list_page", schema_for!(WatchListPage)),
         ("watch_patch_request", schema_for!(WatchPatchRequest)),
         ("watch_resource", schema_for!(WatchResource)),
+        ("watch_transition_page", schema_for!(WatchTransitionPage)),
         ("webhook_notification", schema_for!(WebhookNotification)),
         ("workspace_resource", schema_for!(WorkspaceResource)),
     ])
@@ -52,8 +55,10 @@ mod tests {
                 "search_resource",
                 "transition",
                 "watch_create_request",
+                "watch_list_page",
                 "watch_patch_request",
                 "watch_resource",
+                "watch_transition_page",
                 "webhook_notification",
                 "workspace_resource",
             ]
