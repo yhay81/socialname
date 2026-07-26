@@ -24,16 +24,18 @@ use socialname_domain::{
 };
 use socialname_engine::{Classification, SearchResult};
 use socialname_protocol::{
-    ApiErrorCode, ApiErrorResponse, ConsentGrantId, EventId, OperationalFailure,
-    OperationalFailureKind, ProtocolVersion, RegionClass, ResultSource, SearchCreateRequest,
-    SearchEvent, SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource,
-    SearchState, SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection, Username,
-    Validate, WorkspaceResource,
+    ApiErrorCode, ApiErrorResponse, ConsentGrantId, EventId, NotificationEndpointId,
+    OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion, RegionClass,
+    ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
+    SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId, SyncPolicy, Target,
+    TargetSelection, Username, Validate, WatchCreateRequest, WatchPatchRequest, WatchResource,
+    WatchSchedule, WatchState, WatchStateUpdate, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{ServerConfig, build_router, migrate_database};
 use socialname_worker::{
     ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule,
+    WatchPlanOutcome,
 };
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -70,6 +72,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_deletion_deadlines_and_receipts(&pool).await;
     assert_authenticated_workspace_boundary(&pool).await;
     assert_private_search_and_event_stream_boundary(&pool).await;
+    assert_watch_api_boundary(&pool).await;
     assert_managed_probe_job_boundary(&pool).await;
 
     pool.close().await;
@@ -82,7 +85,8 @@ async fn reset_test_state(pool: &PgPool) {
             tenants, memberships, api_keys, api_key_credentials, clients, sites,
             rule_packs, rule_versions, rule_health_records, consent_grants,
             consent_events, searches, search_targets, search_events, watches,
-            watch_targets, probe_jobs, probe_job_consumers, observations,
+            watch_targets, watch_notification_endpoints, watch_runs,
+            watch_run_targets, probe_jobs, probe_job_consumers, observations,
             assertions, assertion_support, transitions, transition_basis,
             notification_endpoints, notification_deliveries, audit_events,
             data_lineage_edges, deletion_requests, deletion_tasks,
@@ -131,7 +135,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('rule_packs'), ('rule_versions'), ('rule_health_records'),
                 ('consent_grants'), ('consent_events'), ('searches'), ('search_targets'),
                 ('search_events'),
-                ('watches'), ('watch_targets'), ('probe_jobs'), ('probe_job_consumers'),
+                ('watches'), ('watch_targets'), ('watch_notification_endpoints'),
+                ('watch_runs'), ('watch_run_targets'), ('probe_jobs'), ('probe_job_consumers'),
                 ('observations'), ('assertions'), ('assertion_support'), ('transitions'),
                 ('transition_basis'), ('notification_endpoints'),
                 ('notification_deliveries'), ('audit_events'), ('data_lineage_edges'),
@@ -146,7 +151,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 31);
+    assert_eq!(required_tables, 34);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -155,7 +160,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 26);
+    assert_eq!(tenant_policies, 29);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -165,7 +170,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 26);
+    assert_eq!(forced_rls_tables, 29);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -274,13 +279,14 @@ async fn install_fixtures(pool: &PgPool) {
         );
 
         INSERT INTO watch_targets (
-            id, tenant_id, watch_id, normalized_username, site_id, created_at
+            id, tenant_id, watch_id, requested_username, ordinal,
+            normalized_username, site_id, created_at
         )
         VALUES (
             '00000000-0000-0000-0000-000000000052',
             '00000000-0000-0000-0000-000000000001',
             '00000000-0000-0000-0000-000000000051',
-            'fixture-user', 'github', '2026-01-01T00:00:00Z'
+            'fixture-user', 0, 'fixture-user', 'github', '2026-01-01T00:00:00Z'
         );
 
         INSERT INTO probe_jobs (
@@ -407,7 +413,13 @@ async fn install_api_key_fixtures(pool: &PgPool) {
             membership_id: "00000000-0000-0000-0000-000000000011",
             prefix: "aaaaaaaaaaaaaaaa",
             secret_byte: 0x11,
-            scopes: &["workspace:read", "search:read", "search:write"],
+            scopes: &[
+                "workspace:read",
+                "search:read",
+                "search:write",
+                "watch:read",
+                "watch:write",
+            ],
             state: "active",
             expires_at_unix_ms: None,
         },
@@ -417,7 +429,13 @@ async fn install_api_key_fixtures(pool: &PgPool) {
             membership_id: "00000000-0000-0000-0000-000000000012",
             prefix: "bbbbbbbbbbbbbbbb",
             secret_byte: 0x22,
-            scopes: &["workspace:read", "search:read", "search:write"],
+            scopes: &[
+                "workspace:read",
+                "search:read",
+                "search:write",
+                "watch:read",
+                "watch:write",
+            ],
             state: "active",
             expires_at_unix_ms: None,
         },
@@ -545,13 +563,29 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT SELECT, INSERT ON tenants, memberships TO socialname_migration_test_app;
         GRANT SELECT ON api_keys TO socialname_migration_test_app;
         GRANT UPDATE (last_used_at) ON api_keys TO socialname_migration_test_app;
-        GRANT SELECT ON sites, consent_grants, searches, search_targets, search_events
+        GRANT SELECT ON
+            sites, consent_grants, searches, search_targets, search_events,
+            watches, watch_targets, watch_notification_endpoints,
+            notification_endpoints, watch_runs, watch_run_targets
             TO socialname_migration_test_app;
-        GRANT INSERT ON searches, search_targets, search_events
+        GRANT INSERT ON
+            searches, search_targets, search_events, watches, watch_targets,
+            watch_notification_endpoints
             TO socialname_migration_test_app;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
             TO socialname_migration_test_app;
         GRANT UPDATE (state, completed_at) ON search_targets
+            TO socialname_migration_test_app;
+        GRANT UPDATE (
+            state, revision, maximum_age_ms, interval_seconds, jitter_percent,
+            maximum_probes_per_run, maximum_bytes_per_run, retention_days,
+            next_run_at, updated_at
+        ) ON watches TO socialname_migration_test_app;
+        GRANT UPDATE (retired_at) ON watch_targets
+            TO socialname_migration_test_app;
+        GRANT UPDATE (state, completed_at) ON watch_runs, watch_run_targets
+            TO socialname_migration_test_app;
+        GRANT DELETE ON watch_notification_endpoints
             TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
             TO socialname_migration_test_app;
@@ -1313,6 +1347,184 @@ async fn assert_private_search_and_event_stream_boundary(administrator_pool: &Pg
     application_pool.close().await;
 }
 
+async fn assert_watch_api_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let request = WatchCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        targets: TargetSelection {
+            usernames: vec![Username::new("watch-target").unwrap()],
+            site_ids: vec![SiteId::new("github").unwrap()],
+        },
+        region_classes: vec![RegionClass::new("jp").unwrap()],
+        maximum_age_ms: 3_600_000,
+        schedule: WatchSchedule {
+            interval_seconds: 3_600,
+            jitter_percent: 10,
+        },
+        probe_budget: ProbeBudget {
+            maximum_probes_per_run: 1,
+            maximum_bytes_per_run: 1_048_576,
+        },
+        notification_endpoint_ids: vec![
+            NotificationEndpointId::new("00000000-0000-0000-0000-000000000071").unwrap(),
+        ],
+        private_history_consent_grant_id: ConsentGrantId::new(
+            "00000000-0000-0000-0000-000000000031",
+        )
+        .unwrap(),
+        retention_days: 400,
+    };
+    let created = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/watches",
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let location = created.headers()[LOCATION].to_str().unwrap().to_owned();
+    let created_resource: WatchResource = serde_json::from_value(json_body(created).await).unwrap();
+    assert!(created_resource.validate().is_ok());
+    assert_eq!(created_resource.state, WatchState::Active);
+    assert_eq!(created_resource.revision, 1);
+    assert!(created_resource.next_run_at_unix_ms.is_some());
+    assert_eq!(
+        location,
+        format!("/v1/watches/{}", created_resource.watch_id.as_str())
+    );
+
+    let wrong_scope = server_request(
+        &application_pool,
+        &location,
+        Some(&api_key_token("cccccccccccccccc", 0x33)),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_scope, ApiErrorCode::Forbidden).await;
+    let foreign = server_request(
+        &application_pool,
+        &location,
+        Some(&api_key_token("bbbbbbbbbbbbbbbb", 0x22)),
+    )
+    .await;
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    assert_api_error(foreign, ApiErrorCode::NotFound).await;
+
+    let paused_patch = WatchPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 1,
+        state: Some(WatchStateUpdate::Paused),
+        maximum_age_ms: None,
+        schedule: None,
+        probe_budget: None,
+        notification_endpoint_ids: None,
+        retention_days: None,
+    };
+    let paused = server_request_with(
+        &application_pool,
+        Method::PATCH,
+        &location,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&paused_patch).unwrap(),
+    )
+    .await;
+    assert_eq!(paused.status(), StatusCode::OK);
+    let paused_resource: WatchResource = serde_json::from_value(json_body(paused).await).unwrap();
+    assert_eq!(paused_resource.state, WatchState::Paused);
+    assert_eq!(paused_resource.revision, 2);
+    assert_eq!(paused_resource.next_run_at_unix_ms, None);
+    assert!(paused_resource.validate().is_ok());
+
+    let stale = server_request_with(
+        &application_pool,
+        Method::PATCH,
+        &location,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&paused_patch).unwrap(),
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_api_error(stale, ApiErrorCode::Conflict).await;
+
+    let active_patch = WatchPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 2,
+        state: Some(WatchStateUpdate::Active),
+        maximum_age_ms: Some(60_000),
+        schedule: None,
+        probe_budget: None,
+        notification_endpoint_ids: None,
+        retention_days: None,
+    };
+    let active = server_request_with(
+        &application_pool,
+        Method::PATCH,
+        &location,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&active_patch).unwrap(),
+    )
+    .await;
+    assert_eq!(active.status(), StatusCode::OK);
+    let active_resource: WatchResource = serde_json::from_value(json_body(active).await).unwrap();
+    assert_eq!(active_resource.state, WatchState::Active);
+    assert_eq!(active_resource.revision, 3);
+    assert!(active_resource.next_run_at_unix_ms.is_some());
+    assert!(active_resource.validate().is_ok());
+
+    let deleted = server_request_with(
+        &application_pool,
+        Method::DELETE,
+        &location,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[],
+        String::new(),
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::OK);
+    let deleted_resource: WatchResource = serde_json::from_value(json_body(deleted).await).unwrap();
+    assert_eq!(deleted_resource.state, WatchState::Deleting);
+    assert_eq!(deleted_resource.revision, 4);
+    assert_eq!(deleted_resource.next_run_at_unix_ms, None);
+    assert!(deleted_resource.validate().is_ok());
+    let repeated_delete = server_request_with(
+        &application_pool,
+        Method::DELETE,
+        &location,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[],
+        String::new(),
+    )
+    .await;
+    let repeated_resource: WatchResource =
+        serde_json::from_value(json_body(repeated_delete).await).unwrap();
+    assert_eq!(repeated_resource.revision, 4);
+
+    let persisted_target: (String, Option<String>, i32) = sqlx::query_as(
+        "SELECT requested_username, normalized_username, ordinal \
+         FROM watch_targets WHERE watch_id = $1",
+    )
+    .bind(Uuid::parse_str(created_resource.watch_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted_target.0, "watch-target");
+    assert_eq!(persisted_target.1, None);
+    assert_eq!(persisted_target.2, 0);
+
+    application_pool.close().await;
+}
+
 const MANAGED_JOB_RULE: &str = r#"
 schema: socialname.dev/site/v1
 id: managed-test
@@ -1380,6 +1592,8 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
          WHERE proc.proname IN (\
              'socialname_worker_resolve_rule', \
              'socialname_worker_lock_next_target', \
+             'socialname_worker_lock_due_watch', \
+             'socialname_worker_lock_next_watch_target', \
              'socialname_worker_claim_job', \
              'socialname_worker_lock_claim_consent'\
          )",
@@ -1440,6 +1654,34 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
         SECOND_CONSENT_GRANT_ID,
     )
     .await;
+    let managed_watch = create_managed_watch(
+        &application_pool,
+        "private-search-target",
+        SECOND_CONSENT_GRANT_ID,
+    )
+    .await;
+    let managed_watch_id = Uuid::parse_str(managed_watch.watch_id.as_str()).unwrap();
+    sqlx::query(
+        "UPDATE watches SET \
+             updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let first_watch_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned {
+            run_id,
+            target_count: 1,
+        } => run_id,
+        other => panic!("expected one planned watch target, got {other:?}"),
+    };
+    assert_eq!(
+        store.plan_one_watch(&binding).await.unwrap(),
+        WatchPlanOutcome::Idle
+    );
 
     let first_expansion = store.expand_one(&binding, &managed_rule).await.unwrap();
     let first_job_id = match first_expansion {
@@ -1457,6 +1699,15 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
         other => panic!("expected a purpose-isolated job, got {other:?}"),
     };
     assert_ne!(first_job_id, second_job_id);
+    assert_eq!(
+        store
+            .expand_one_watch(&binding, &managed_rule)
+            .await
+            .unwrap(),
+        ExpandOutcome::Coalesced {
+            job_id: second_job_id
+        }
+    );
     assert_eq!(
         store.expand_one(&binding, &managed_rule).await.unwrap(),
         ExpandOutcome::Idle
@@ -1480,7 +1731,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(active_jobs, 2);
-    assert_eq!(consumers, 3);
+    assert_eq!(consumers, 4);
 
     let first_claim = store
         .claim(&binding, "worker-a", Duration::from_secs(5))
@@ -1522,6 +1773,66 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             .await
             .unwrap(),
         JobDisposition::AlreadyFinal
+    );
+    let completed_watch_run: (String, i32, i32, i64, i64, String) = sqlx::query_as(
+        "SELECT run.state, run.reserved_probes, run.maximum_probes, \
+                run.reserved_bytes, run.maximum_bytes, target.state \
+         FROM watch_runs AS run \
+         JOIN watch_run_targets AS target \
+           ON target.tenant_id = run.tenant_id \
+          AND target.watch_run_id = run.id \
+         WHERE run.id = $1",
+    )
+    .bind(first_watch_run_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(completed_watch_run.0, "completed");
+    assert_eq!(completed_watch_run.1, 1);
+    assert_eq!(completed_watch_run.2, 4);
+    assert_eq!(
+        completed_watch_run.3,
+        i64::try_from(managed_rule.maximum_inspected_bytes_per_search()).unwrap()
+    );
+    assert!(completed_watch_run.3 <= completed_watch_run.4);
+    assert_eq!(completed_watch_run.5, "completed");
+
+    sqlx::query(
+        "UPDATE watches SET \
+             updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let freshness_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected a freshness watch run, got {other:?}"),
+    };
+    assert_eq!(
+        store
+            .expand_one_watch(&binding, &managed_rule)
+            .await
+            .unwrap(),
+        ExpandOutcome::FreshObservationCompleted
+    );
+    let freshness_run: (String, i64, String) = sqlx::query_as(
+        "SELECT run.state, run.reserved_bytes, target.state \
+         FROM watch_runs AS run \
+         JOIN watch_run_targets AS target \
+           ON target.tenant_id = run.tenant_id \
+          AND target.watch_run_id = run.id \
+         WHERE run.id = $1",
+    )
+    .bind(freshness_run_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        freshness_run,
+        ("completed".to_owned(), 0, "satisfied".to_owned())
     );
 
     sqlx::query(
@@ -1583,6 +1894,167 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             .unwrap(),
         JobDisposition::Failed
     );
+
+    assert!(managed_rule.maximum_inspected_bytes_per_search() > 1_024);
+    let managed_watch_location = format!("/v1/watches/{}", managed_watch.watch_id.as_str());
+    let budget_patch = WatchPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 1,
+        state: None,
+        maximum_age_ms: Some(1),
+        schedule: None,
+        probe_budget: Some(ProbeBudget {
+            maximum_probes_per_run: 1,
+            maximum_bytes_per_run: 1_024,
+        }),
+        notification_endpoint_ids: None,
+        retention_days: None,
+    };
+    let budget_response = server_request_with(
+        &application_pool,
+        Method::PATCH,
+        &managed_watch_location,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&budget_patch).unwrap(),
+    )
+    .await;
+    assert_eq!(budget_response.status(), StatusCode::OK);
+    let budget_resource: WatchResource =
+        serde_json::from_value(json_body(budget_response).await).unwrap();
+    assert_eq!(budget_resource.revision, 2);
+    sqlx::query(
+        "UPDATE watches SET \
+             updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let budget_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected a budget-limited watch run, got {other:?}"),
+    };
+    assert_eq!(
+        store
+            .expand_one_watch(&binding, &managed_rule)
+            .await
+            .unwrap(),
+        ExpandOutcome::BudgetExceededCompleted
+    );
+    let budget_run: (String, i64, i64) = sqlx::query_as(
+        "SELECT state, reserved_bytes, maximum_bytes \
+         FROM watch_runs WHERE id = $1",
+    )
+    .bind(budget_run_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(budget_run, ("failed".to_owned(), 0, 1_024));
+
+    let restored_patch = WatchPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 2,
+        state: None,
+        maximum_age_ms: Some(1),
+        schedule: None,
+        probe_budget: Some(ProbeBudget {
+            maximum_probes_per_run: 1,
+            maximum_bytes_per_run: 1_048_576,
+        }),
+        notification_endpoint_ids: None,
+        retention_days: None,
+    };
+    let restored_response = server_request_with(
+        &application_pool,
+        Method::PATCH,
+        &managed_watch_location,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&restored_patch).unwrap(),
+    )
+    .await;
+    assert_eq!(restored_response.status(), StatusCode::OK);
+    let restored_resource: WatchResource =
+        serde_json::from_value(json_body(restored_response).await).unwrap();
+    assert_eq!(restored_resource.revision, 3);
+    sqlx::query(
+        "UPDATE watches SET \
+             updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let cancelled_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected a cancellable watch run, got {other:?}"),
+    };
+    let cancelled_job_id = match store
+        .expand_one_watch(&binding, &managed_rule)
+        .await
+        .unwrap()
+    {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected a watch-only managed job, got {other:?}"),
+    };
+    let pause_patch = WatchPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 3,
+        state: Some(WatchStateUpdate::Paused),
+        maximum_age_ms: None,
+        schedule: None,
+        probe_budget: None,
+        notification_endpoint_ids: None,
+        retention_days: None,
+    };
+    let pause_response = server_request_with(
+        &application_pool,
+        Method::PATCH,
+        &managed_watch_location,
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&pause_patch).unwrap(),
+    )
+    .await;
+    assert_eq!(pause_response.status(), StatusCode::OK);
+    let paused_resource: WatchResource =
+        serde_json::from_value(json_body(pause_response).await).unwrap();
+    assert_eq!(paused_resource.state, WatchState::Paused);
+    let cancelled_run: (String, String) = sqlx::query_as(
+        "SELECT run.state, target.state \
+         FROM watch_runs AS run \
+         JOIN watch_run_targets AS target \
+           ON target.tenant_id = run.tenant_id \
+          AND target.watch_run_id = run.id \
+         WHERE run.id = $1",
+    )
+    .bind(cancelled_run_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        cancelled_run,
+        ("cancelled".to_owned(), "cancelled".to_owned())
+    );
+    assert!(
+        store
+            .claim(&binding, "worker-watch-cancel", Duration::from_secs(5))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let cancelled_job_state: String =
+        sqlx::query_scalar("SELECT state FROM probe_jobs WHERE id = $1")
+            .bind(cancelled_job_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(cancelled_job_state, "cancelled");
 
     let observation_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM observations WHERE probe_job_id = $1")
@@ -1995,16 +2467,27 @@ async fn install_worker_role(pool: &PgPool) {
         GRANT USAGE ON SCHEMA public TO socialname_migration_test_worker;
         GRANT SELECT ON
             consent_grants, searches, search_targets, search_events, probe_jobs,
-            probe_job_consumers, data_lineage_edges
+            probe_job_consumers, data_lineage_edges, watches, watch_targets,
+            watch_notification_endpoints, notification_endpoints, watch_runs,
+            watch_run_targets, observations
             TO socialname_migration_test_worker;
         GRANT INSERT ON
             search_events, probe_jobs, probe_job_consumers, observations,
-            data_lineage_edges
+            data_lineage_edges, watch_runs, watch_run_targets
             TO socialname_migration_test_worker;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
             TO socialname_migration_test_worker;
         GRANT UPDATE (normalized_username, state, completed_at) ON search_targets
             TO socialname_migration_test_worker;
+        GRANT UPDATE (next_run_at, updated_at) ON watches
+            TO socialname_migration_test_worker;
+        GRANT UPDATE (normalized_username) ON watch_targets
+            TO socialname_migration_test_worker;
+        GRANT UPDATE (state, reserved_bytes, completed_at) ON watch_runs
+            TO socialname_migration_test_worker;
+        GRANT UPDATE (
+            state, probe_job_id, observation_id, reserved_bytes, completed_at
+        ) ON watch_run_targets TO socialname_migration_test_worker;
         GRANT UPDATE (
             state, attempt_count, available_at, lease_owner, lease_expires_at,
             last_error_code, updated_at, completed_at
@@ -2012,6 +2495,8 @@ async fn install_worker_role(pool: &PgPool) {
         GRANT EXECUTE ON FUNCTION
             socialname_worker_resolve_rule(text, bytea, bytea, text),
             socialname_worker_lock_next_target(uuid, text),
+            socialname_worker_lock_due_watch(uuid, text),
+            socialname_worker_lock_next_watch_target(uuid, text),
             socialname_worker_claim_job(uuid, text, text, integer),
             socialname_worker_lock_claim_consent(uuid, integer, text)
             TO socialname_migration_test_worker;
@@ -2055,6 +2540,46 @@ async fn create_managed_search(
     let resource: SearchResource = serde_json::from_value(json_body(response).await).unwrap();
     assert_eq!(resource.state, SearchState::Accepted);
     resource
+}
+
+async fn create_managed_watch(
+    application_pool: &PgPool,
+    username: &str,
+    consent_grant_id: &str,
+) -> WatchResource {
+    let request = WatchCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        targets: TargetSelection {
+            usernames: vec![Username::new(username).unwrap()],
+            site_ids: vec![SiteId::new("managed-test").unwrap()],
+        },
+        region_classes: vec![RegionClass::new("jp").unwrap()],
+        maximum_age_ms: 60_000,
+        schedule: WatchSchedule {
+            interval_seconds: 300,
+            jitter_percent: 20,
+        },
+        probe_budget: ProbeBudget {
+            maximum_probes_per_run: 4,
+            maximum_bytes_per_run: 1_048_576,
+        },
+        notification_endpoint_ids: vec![
+            NotificationEndpointId::new("00000000-0000-0000-0000-000000000071").unwrap(),
+        ],
+        private_history_consent_grant_id: ConsentGrantId::new(consent_grant_id).unwrap(),
+        retention_days: 400,
+    };
+    let response = server_request_with(
+        application_pool,
+        Method::POST,
+        "/v1/watches",
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    serde_json::from_value(json_body(response).await).unwrap()
 }
 
 fn managed_result(

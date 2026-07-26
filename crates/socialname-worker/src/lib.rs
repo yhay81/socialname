@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 pub use job::{
     ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError, JobStore, RuleBinding,
-    WORKER_DATABASE_URL_ENV,
+    WORKER_DATABASE_URL_ENV, WatchPlanOutcome,
 };
 
 #[derive(Clone, Debug)]
@@ -118,6 +118,11 @@ impl ManagedRule {
             .filter(|normalized| {
                 (1..=256).contains(&normalized.len()) && !normalized.chars().any(char::is_control)
             })
+    }
+
+    #[must_use]
+    pub fn maximum_inspected_bytes_per_search(&self) -> usize {
+        self.candidate.maximum_inspected_bytes_per_search()
     }
 
     pub async fn execute(

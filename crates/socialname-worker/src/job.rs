@@ -103,6 +103,474 @@ impl JobStore {
         })
     }
 
+    pub async fn plan_one_watch(
+        &self,
+        binding: &RuleBinding,
+    ) -> Result<WatchPlanOutcome, JobError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        let locked: Option<LockedWatchId> = sqlx::query_as(
+            "SELECT tenant_id, watch_id \
+             FROM socialname_worker_lock_due_watch($1, $2)",
+        )
+        .bind(binding.rule_version_id)
+        .bind(&binding.region_class)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+        let Some(locked) = locked else {
+            transaction
+                .commit()
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+            return Ok(WatchPlanOutcome::Idle);
+        };
+        set_tenant(&mut transaction, locked.tenant_id).await?;
+        let watch: WatchPlan = sqlx::query_as(
+            "SELECT revision, interval_seconds, jitter_percent, \
+                    maximum_probes_per_run, maximum_bytes_per_run, region_classes, \
+                    (EXTRACT(EPOCH FROM next_run_at) * 1000)::bigint \
+                        AS scheduled_for_unix_ms \
+             FROM watches \
+             WHERE tenant_id = $1 AND id = $2 \
+               AND state = 'active' AND next_run_at <= clock_timestamp() \
+             FOR UPDATE",
+        )
+        .bind(locked.tenant_id)
+        .bind(locked.watch_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        let watch_target_ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM watch_targets \
+             WHERE tenant_id = $1 AND watch_id = $2 AND retired_at IS NULL \
+             ORDER BY ordinal, id",
+        )
+        .bind(locked.tenant_id)
+        .bind(locked.watch_id)
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        let planned_count = watch_target_ids
+            .len()
+            .checked_mul(watch.region_classes.len())
+            .ok_or(JobError::StorageInvariant)?;
+        if planned_count == 0
+            || planned_count
+                > usize::try_from(watch.maximum_probes_per_run)
+                    .map_err(|_| JobError::StorageInvariant)?
+        {
+            return Err(JobError::StorageInvariant);
+        }
+        let planned_count_i32 =
+            i32::try_from(planned_count).map_err(|_| JobError::StorageInvariant)?;
+        let now_unix_ms = database_now_ms(&mut transaction).await?;
+        let next_run_at_unix_ms = now_unix_ms
+            .checked_add(watch_schedule_delay_ms(
+                locked.watch_id,
+                watch.revision,
+                watch.scheduled_for_unix_ms,
+                watch.interval_seconds,
+                watch.jitter_percent,
+            )?)
+            .ok_or(JobError::StorageInvariant)?;
+        let run_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO watch_runs (\
+                id, tenant_id, watch_id, watch_revision, scheduled_for, state, \
+                maximum_probes, maximum_bytes, reserved_probes, reserved_bytes, \
+                created_at\
+             ) VALUES (\
+                $1, $2, $3, $4, to_timestamp($5::double precision / 1000.0), \
+                'planned', $6, $7, $8, 0, clock_timestamp()\
+             )",
+        )
+        .bind(run_id)
+        .bind(locked.tenant_id)
+        .bind(locked.watch_id)
+        .bind(watch.revision)
+        .bind(watch.scheduled_for_unix_ms)
+        .bind(watch.maximum_probes_per_run)
+        .bind(watch.maximum_bytes_per_run)
+        .bind(planned_count_i32)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        insert_lineage(
+            &mut transaction,
+            locked.tenant_id,
+            "watch",
+            locked.watch_id,
+            "watch_run",
+            run_id,
+            "scheduled_run",
+        )
+        .await?;
+        for watch_target_id in watch_target_ids {
+            for region_class in &watch.region_classes {
+                let run_target_id = Uuid::new_v4();
+                sqlx::query(
+                    "INSERT INTO watch_run_targets (\
+                        id, tenant_id, watch_run_id, watch_target_id, region_class, \
+                        state, created_at\
+                     ) VALUES ($1, $2, $3, $4, $5, 'pending', clock_timestamp())",
+                )
+                .bind(run_target_id)
+                .bind(locked.tenant_id)
+                .bind(run_id)
+                .bind(watch_target_id)
+                .bind(region_class)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|_| JobError::StorageInvariant)?;
+                insert_lineage(
+                    &mut transaction,
+                    locked.tenant_id,
+                    "watch_run",
+                    run_id,
+                    "watch_run_target",
+                    run_target_id,
+                    "scheduled_target",
+                )
+                .await?;
+            }
+        }
+        let advanced = sqlx::query(
+            "UPDATE watches \
+             SET next_run_at = to_timestamp($4::double precision / 1000.0), \
+                 updated_at = clock_timestamp() \
+             WHERE tenant_id = $1 AND id = $2 AND revision = $3 \
+               AND state = 'active'",
+        )
+        .bind(locked.tenant_id)
+        .bind(locked.watch_id)
+        .bind(watch.revision)
+        .bind(next_run_at_unix_ms)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?
+        .rows_affected();
+        if advanced != 1 {
+            return Err(JobError::StorageInvariant);
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        Ok(WatchPlanOutcome::Planned {
+            run_id,
+            target_count: u32::try_from(planned_count).map_err(|_| JobError::StorageInvariant)?,
+        })
+    }
+
+    pub async fn expand_one_watch(
+        &self,
+        binding: &RuleBinding,
+        rule: &ManagedRule,
+    ) -> Result<ExpandOutcome, JobError> {
+        binding.matches_rule(rule)?;
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        let locked: Option<LockedWatchTargetId> = sqlx::query_as(
+            "SELECT tenant_id, watch_run_target_id \
+             FROM socialname_worker_lock_next_watch_target($1, $2)",
+        )
+        .bind(binding.rule_version_id)
+        .bind(&binding.region_class)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+        let Some(locked) = locked else {
+            transaction
+                .commit()
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+            return Ok(ExpandOutcome::Idle);
+        };
+        set_tenant(&mut transaction, locked.tenant_id).await?;
+        let target: WatchExpansionTarget = sqlx::query_as(
+            "SELECT run_target.watch_run_id, run_target.watch_target_id, \
+                    target.requested_username, target.site_id, \
+                    watch.consent_grant_id, watch.maximum_age_ms \
+             FROM watch_run_targets AS run_target \
+             JOIN watch_runs AS run \
+               ON run.tenant_id = run_target.tenant_id \
+              AND run.id = run_target.watch_run_id \
+             JOIN watches AS watch \
+               ON watch.tenant_id = run.tenant_id \
+              AND watch.id = run.watch_id \
+             JOIN watch_targets AS target \
+               ON target.tenant_id = run_target.tenant_id \
+              AND target.id = run_target.watch_target_id \
+             WHERE run_target.tenant_id = $1 AND run_target.id = $2 \
+               AND run_target.state = 'pending' \
+             FOR UPDATE OF run_target, run, watch, target",
+        )
+        .bind(locked.tenant_id)
+        .bind(locked.watch_run_target_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        if target.site_id != binding.site_id {
+            return Err(JobError::StorageInvariant);
+        }
+        let Some(normalized_username) = rule.normalize_username(&target.requested_username) else {
+            finalize_watch_target_without_observation(
+                &mut transaction,
+                locked.tenant_id,
+                locked.watch_run_target_id,
+                target.watch_run_id,
+                "failed",
+            )
+            .await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+            return Ok(ExpandOutcome::InvalidTargetCompleted);
+        };
+        sqlx::query(
+            "UPDATE watch_targets SET normalized_username = $3 \
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(locked.tenant_id)
+        .bind(target.watch_target_id)
+        .bind(&normalized_username)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        let fresh_observation_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM observations \
+             WHERE tenant_id = $1 \
+               AND normalized_username = $2 \
+               AND site_id = $3 \
+               AND rule_version_id = $4 \
+               AND region_class = $5 \
+               AND consent_grant_id = $6 \
+               AND visibility = 'private' \
+               AND source = 'managed_probe' \
+               AND producer_kind = 'managed_worker' \
+               AND rule_health_green \
+               AND expires_at > clock_timestamp() \
+               AND observed_at >= clock_timestamp() \
+                   - ($7::bigint::text || ' milliseconds')::interval \
+             ORDER BY observed_at DESC, id \
+             LIMIT 1",
+        )
+        .bind(locked.tenant_id)
+        .bind(&normalized_username)
+        .bind(&binding.site_id)
+        .bind(binding.rule_version_id)
+        .bind(&binding.region_class)
+        .bind(target.consent_grant_id)
+        .bind(target.maximum_age_ms)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        if let Some(observation_id) = fresh_observation_id {
+            let affected = sqlx::query(
+                "UPDATE watch_run_targets \
+                 SET state = 'satisfied', observation_id = $3, \
+                     completed_at = clock_timestamp() \
+                 WHERE tenant_id = $1 AND id = $2 AND state = 'pending'",
+            )
+            .bind(locked.tenant_id)
+            .bind(locked.watch_run_target_id)
+            .bind(observation_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| JobError::StorageInvariant)?
+            .rows_affected();
+            if affected != 1 {
+                return Err(JobError::StorageInvariant);
+            }
+            insert_lineage(
+                &mut transaction,
+                locked.tenant_id,
+                "observation",
+                observation_id,
+                "watch_run_target",
+                locked.watch_run_target_id,
+                "freshness_reuse",
+            )
+            .await?;
+            finish_watch_run(&mut transaction, locked.tenant_id, target.watch_run_id).await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+            return Ok(ExpandOutcome::FreshObservationCompleted);
+        }
+
+        let reserved_bytes = i64::try_from(rule.maximum_inspected_bytes_per_search())
+            .map_err(|_| JobError::StorageInvariant)?;
+        if reserved_bytes <= 0 {
+            return Err(JobError::StorageInvariant);
+        }
+        let reserved: Option<i64> = sqlx::query_scalar(
+            "UPDATE watch_runs \
+             SET reserved_bytes = reserved_bytes + $3 \
+             WHERE tenant_id = $1 AND id = $2 \
+               AND state IN ('planned', 'running') \
+               AND reserved_bytes + $3 <= maximum_bytes \
+             RETURNING reserved_bytes",
+        )
+        .bind(locked.tenant_id)
+        .bind(target.watch_run_id)
+        .bind(reserved_bytes)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        if reserved.is_none() {
+            finalize_watch_target_without_observation(
+                &mut transaction,
+                locked.tenant_id,
+                locked.watch_run_target_id,
+                target.watch_run_id,
+                "failed",
+            )
+            .await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+            return Ok(ExpandOutcome::BudgetExceededCompleted);
+        }
+
+        let work_key_hash = work_key_hash(
+            locked.tenant_id,
+            &normalized_username,
+            binding,
+            target.consent_grant_id,
+            "private",
+        );
+        let proposed_job_id = Uuid::new_v4();
+        let inserted_job_id: Option<Uuid> = sqlx::query_scalar(
+            "INSERT INTO probe_jobs (\
+                id, tenant_id, normalized_username, site_id, rule_version_id, \
+                region_class, work_key_hash, consent_grant_id, visibility, state, \
+                available_at, created_at, updated_at\
+             ) VALUES (\
+                $1, $2, $3, $4, $5, $6, $7, $8, 'private', 'queued', \
+                clock_timestamp(), clock_timestamp(), clock_timestamp()\
+             ) \
+             ON CONFLICT (\
+                tenant_id, normalized_username, site_id, rule_version_id, \
+                region_class, consent_grant_id, visibility\
+             ) WHERE state IN ('queued', 'leased', 'retry_wait') \
+             DO NOTHING \
+             RETURNING id",
+        )
+        .bind(proposed_job_id)
+        .bind(locked.tenant_id)
+        .bind(&normalized_username)
+        .bind(&binding.site_id)
+        .bind(binding.rule_version_id)
+        .bind(&binding.region_class)
+        .bind(work_key_hash.as_slice())
+        .bind(target.consent_grant_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        let job_was_inserted = inserted_job_id.is_some();
+        let job_id = if let Some(job_id) = inserted_job_id {
+            job_id
+        } else {
+            sqlx::query_scalar(
+                "SELECT id FROM probe_jobs \
+                 WHERE tenant_id = $1 \
+                   AND normalized_username = $2 \
+                   AND site_id = $3 \
+                   AND rule_version_id = $4 \
+                   AND region_class = $5 \
+                   AND consent_grant_id = $6 \
+                   AND visibility = 'private' \
+                   AND state IN ('queued', 'leased', 'retry_wait') \
+                 FOR UPDATE",
+            )
+            .bind(locked.tenant_id)
+            .bind(&normalized_username)
+            .bind(&binding.site_id)
+            .bind(binding.rule_version_id)
+            .bind(&binding.region_class)
+            .bind(target.consent_grant_id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| JobError::StorageInvariant)?
+        };
+        let linked: Option<Uuid> = sqlx::query_scalar(
+            "INSERT INTO probe_job_consumers (\
+                id, tenant_id, probe_job_id, watch_target_id, \
+                watch_run_target_id, created_at\
+             ) VALUES ($1, $2, $3, $4, $5, clock_timestamp()) \
+             ON CONFLICT (tenant_id, watch_run_target_id) \
+             WHERE watch_run_target_id IS NOT NULL \
+             DO NOTHING \
+             RETURNING id",
+        )
+        .bind(Uuid::new_v4())
+        .bind(locked.tenant_id)
+        .bind(job_id)
+        .bind(target.watch_target_id)
+        .bind(locked.watch_run_target_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        if linked.is_none() {
+            return Err(JobError::StorageInvariant);
+        }
+        let affected = sqlx::query(
+            "UPDATE watch_run_targets \
+             SET state = 'queued', probe_job_id = $3, reserved_bytes = $4 \
+             WHERE tenant_id = $1 AND id = $2 AND state = 'pending'",
+        )
+        .bind(locked.tenant_id)
+        .bind(locked.watch_run_target_id)
+        .bind(job_id)
+        .bind(reserved_bytes)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?
+        .rows_affected();
+        if affected != 1 {
+            return Err(JobError::StorageInvariant);
+        }
+        sqlx::query(
+            "UPDATE watch_runs SET state = 'running' \
+             WHERE tenant_id = $1 AND id = $2 AND state = 'planned'",
+        )
+        .bind(locked.tenant_id)
+        .bind(target.watch_run_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        insert_lineage(
+            &mut transaction,
+            locked.tenant_id,
+            "watch_run_target",
+            locked.watch_run_target_id,
+            "probe_job",
+            job_id,
+            "managed_probe_request",
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        if job_was_inserted {
+            Ok(ExpandOutcome::Enqueued { job_id })
+        } else {
+            Ok(ExpandOutcome::Coalesced { job_id })
+        }
+    }
+
     pub async fn expand_one(
         &self,
         binding: &RuleBinding,
@@ -499,8 +967,10 @@ impl JobStore {
                 .map_err(|_| JobError::DatabaseUnavailable)?;
             return Ok(JobDisposition::Cancelled);
         }
-        let consumers = load_live_consumers(&mut transaction, claim).await?;
-        if consumers.is_empty() {
+        prune_dead_watch_consumers(&mut transaction, claim).await?;
+        let search_consumers = load_live_search_consumers(&mut transaction, claim).await?;
+        let watch_consumers = load_live_watch_consumers(&mut transaction, claim).await?;
+        if search_consumers.is_empty() && watch_consumers.is_empty() {
             cancel_orphaned_claim(&mut transaction, claim).await?;
             transaction
                 .commit()
@@ -559,7 +1029,7 @@ impl JobStore {
         )
         .await?;
 
-        for consumer in consumers {
+        for consumer in search_consumers {
             let event = result_event(
                 result,
                 outcome,
@@ -589,6 +1059,21 @@ impl JobStore {
             .await?;
             finish_search_if_complete(&mut transaction, claim.tenant_id, consumer.search_id)
                 .await?;
+        }
+        for consumer in watch_consumers {
+            complete_watch_consumer(&mut transaction, claim.tenant_id, &consumer, observation_id)
+                .await?;
+            insert_lineage(
+                &mut transaction,
+                claim.tenant_id,
+                "observation",
+                observation_id,
+                "watch_run_target",
+                consumer.watch_run_target_id,
+                "watch_result",
+            )
+            .await?;
+            finish_watch_run(&mut transaction, claim.tenant_id, consumer.watch_run_id).await?;
         }
         transaction
             .commit()
@@ -629,8 +1114,10 @@ impl JobStore {
                 .map_err(|_| JobError::DatabaseUnavailable)?;
             return Ok(JobDisposition::Cancelled);
         }
-        let consumers = load_live_consumers(&mut transaction, claim).await?;
-        if consumers.is_empty() {
+        prune_dead_watch_consumers(&mut transaction, claim).await?;
+        let search_consumers = load_live_search_consumers(&mut transaction, claim).await?;
+        let watch_consumers = load_live_watch_consumers(&mut transaction, claim).await?;
+        if search_consumers.is_empty() && watch_consumers.is_empty() {
             cancel_orphaned_claim(&mut transaction, claim).await?;
             transaction
                 .commit()
@@ -672,7 +1159,7 @@ impl JobStore {
         )
         .await?;
         let occurred_at_unix_ms = database_now_ms(&mut transaction).await?;
-        for consumer in consumers {
+        for consumer in search_consumers {
             let event =
                 operational_failure_event(claim, &consumer, kind, false, occurred_at_unix_ms)?;
             insert_search_result(
@@ -695,6 +1182,20 @@ impl JobStore {
             .await?;
             finish_search_if_complete(&mut transaction, claim.tenant_id, consumer.search_id)
                 .await?;
+        }
+        for consumer in watch_consumers {
+            fail_watch_consumer(&mut transaction, claim.tenant_id, &consumer).await?;
+            insert_lineage(
+                &mut transaction,
+                claim.tenant_id,
+                "probe_job",
+                claim.job_id,
+                "watch_run_target",
+                consumer.watch_run_target_id,
+                "operational_failure",
+            )
+            .await?;
+            finish_watch_run(&mut transaction, claim.tenant_id, consumer.watch_run_id).await?;
         }
         transaction
             .commit()
@@ -743,19 +1244,53 @@ impl JobStore {
                       (job.visibility = 'shared' \
                        AND consent.purpose = 'shared_observation')\
                   ) \
-                  AND EXISTS (\
-                      SELECT 1 \
-                      FROM probe_job_consumers AS consumer \
-                      JOIN search_targets AS target \
-                        ON target.tenant_id = consumer.tenant_id \
-                       AND target.id = consumer.search_target_id \
-                      JOIN searches AS search \
-                        ON search.tenant_id = target.tenant_id \
-                       AND search.id = target.search_id \
-                      WHERE consumer.tenant_id = job.tenant_id \
-                        AND consumer.probe_job_id = job.id \
-                        AND target.state IN ('pending', 'running') \
-                        AND search.state IN ('accepted', 'running')\
+                  AND (\
+                      EXISTS (\
+                          SELECT 1 \
+                          FROM probe_job_consumers AS consumer \
+                          JOIN search_targets AS target \
+                            ON target.tenant_id = consumer.tenant_id \
+                           AND target.id = consumer.search_target_id \
+                          JOIN searches AS search \
+                            ON search.tenant_id = target.tenant_id \
+                           AND search.id = target.search_id \
+                          WHERE consumer.tenant_id = job.tenant_id \
+                            AND consumer.probe_job_id = job.id \
+                            AND target.state IN ('pending', 'running') \
+                            AND search.state IN ('accepted', 'running')\
+                      ) \
+                      OR EXISTS (\
+                          SELECT 1 \
+                          FROM probe_job_consumers AS consumer \
+                          JOIN watch_run_targets AS run_target \
+                            ON run_target.tenant_id = consumer.tenant_id \
+                           AND run_target.id = consumer.watch_run_target_id \
+                          JOIN watch_runs AS run \
+                            ON run.tenant_id = run_target.tenant_id \
+                           AND run.id = run_target.watch_run_id \
+                          JOIN watches AS watch \
+                            ON watch.tenant_id = run.tenant_id \
+                           AND watch.id = run.watch_id \
+                          WHERE consumer.tenant_id = job.tenant_id \
+                            AND consumer.probe_job_id = job.id \
+                            AND run_target.state = 'queued' \
+                            AND run_target.probe_job_id = job.id \
+                            AND run.state IN ('planned', 'running') \
+                            AND watch.state = 'active' \
+                            AND watch.revision = run.watch_revision \
+                            AND watch.consent_grant_id = job.consent_grant_id \
+                            AND job.visibility = 'private' \
+                            AND EXISTS (\
+                                SELECT 1 \
+                                FROM watch_notification_endpoints AS link \
+                                JOIN notification_endpoints AS endpoint \
+                                  ON endpoint.tenant_id = link.tenant_id \
+                                 AND endpoint.id = link.endpoint_id \
+                                WHERE link.tenant_id = watch.tenant_id \
+                                  AND link.watch_id = watch.id \
+                                  AND endpoint.state = 'active'\
+                            )\
+                      )\
                   )\
              )",
         )
@@ -891,6 +1426,14 @@ pub enum ExpandOutcome {
     Enqueued { job_id: Uuid },
     Coalesced { job_id: Uuid },
     InvalidTargetCompleted,
+    FreshObservationCompleted,
+    BudgetExceededCompleted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchPlanOutcome {
+    Idle,
+    Planned { run_id: Uuid, target_count: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -939,6 +1482,39 @@ struct LockedTargetId {
 }
 
 #[derive(FromRow)]
+struct LockedWatchId {
+    tenant_id: Uuid,
+    watch_id: Uuid,
+}
+
+#[derive(FromRow)]
+struct LockedWatchTargetId {
+    tenant_id: Uuid,
+    watch_run_target_id: Uuid,
+}
+
+#[derive(FromRow)]
+struct WatchPlan {
+    revision: i64,
+    interval_seconds: i32,
+    jitter_percent: i16,
+    maximum_probes_per_run: i32,
+    maximum_bytes_per_run: i64,
+    region_classes: Vec<String>,
+    scheduled_for_unix_ms: i64,
+}
+
+#[derive(FromRow)]
+struct WatchExpansionTarget {
+    watch_run_id: Uuid,
+    watch_target_id: Uuid,
+    requested_username: String,
+    site_id: String,
+    consent_grant_id: Uuid,
+    maximum_age_ms: i64,
+}
+
+#[derive(FromRow)]
 struct ExpansionTarget {
     search_id: Uuid,
     requested_username: String,
@@ -975,10 +1551,16 @@ struct LockedClaimRow {
 }
 
 #[derive(FromRow)]
-struct LiveConsumer {
+struct LiveSearchConsumer {
     search_target_id: Uuid,
     search_id: Uuid,
     maximum_age_ms: i64,
+}
+
+#[derive(FromRow)]
+struct LiveWatchConsumer {
+    watch_run_target_id: Uuid,
+    watch_run_id: Uuid,
 }
 
 #[derive(Clone, Copy)]
@@ -1079,6 +1661,54 @@ fn work_key_hash(
     hasher.finalize().into()
 }
 
+fn watch_schedule_delay_ms(
+    watch_id: Uuid,
+    revision: i64,
+    scheduled_for_unix_ms: i64,
+    interval_seconds: i32,
+    jitter_percent: i16,
+) -> Result<i64, JobError> {
+    if revision <= 0
+        || interval_seconds <= 0
+        || !(0..=20).contains(&jitter_percent)
+        || scheduled_for_unix_ms <= 0
+    {
+        return Err(JobError::StorageInvariant);
+    }
+    let interval_ms = i64::from(interval_seconds)
+        .checked_mul(1_000)
+        .ok_or(JobError::StorageInvariant)?;
+    let jitter_window = interval_ms
+        .checked_mul(i64::from(jitter_percent))
+        .and_then(|value| value.checked_div(100))
+        .ok_or(JobError::StorageInvariant)?;
+    if jitter_window == 0 {
+        return Ok(interval_ms);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(watch_id.as_bytes());
+    hasher.update(revision.to_be_bytes());
+    hasher.update(scheduled_for_unix_ms.to_be_bytes());
+    let digest = hasher.finalize();
+    let sample = u64::from_be_bytes(
+        digest[..8]
+            .try_into()
+            .map_err(|_| JobError::StorageInvariant)?,
+    );
+    let span = u64::try_from(
+        jitter_window
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(JobError::StorageInvariant)?,
+    )
+    .map_err(|_| JobError::StorageInvariant)?;
+    let offset =
+        i64::try_from(sample % span).map_err(|_| JobError::StorageInvariant)? - jitter_window;
+    interval_ms
+        .checked_add(offset)
+        .ok_or(JobError::StorageInvariant)
+}
+
 fn decode_digest(value: &str) -> Result<Vec<u8>, JobError> {
     let bytes = hex::decode(value).map_err(|_| JobError::InvalidProtocol)?;
     if bytes.len() == 32 {
@@ -1145,10 +1775,10 @@ async fn lock_claim(
     Ok(ClaimState::Active)
 }
 
-async fn load_live_consumers(
+async fn load_live_search_consumers(
     transaction: &mut Transaction<'_, Postgres>,
     claim: &JobClaim,
-) -> Result<Vec<LiveConsumer>, JobError> {
+) -> Result<Vec<LiveSearchConsumer>, JobError> {
     sqlx::query_as(
         "SELECT target.id AS search_target_id, target.search_id, \
                 search.maximum_age_ms \
@@ -1166,6 +1796,53 @@ async fn load_live_consumers(
            AND search.sync_policy = $4 \
          ORDER BY search.id, target.id \
          FOR UPDATE OF search, target",
+    )
+    .bind(claim.tenant_id)
+    .bind(claim.job_id)
+    .bind(claim.consent_grant_id)
+    .bind(&claim.visibility)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)
+}
+
+async fn load_live_watch_consumers(
+    transaction: &mut Transaction<'_, Postgres>,
+    claim: &JobClaim,
+) -> Result<Vec<LiveWatchConsumer>, JobError> {
+    sqlx::query_as(
+        "SELECT run_target.id AS watch_run_target_id, \
+                run_target.watch_run_id \
+         FROM probe_job_consumers AS consumer \
+         JOIN watch_run_targets AS run_target \
+           ON run_target.tenant_id = consumer.tenant_id \
+          AND run_target.id = consumer.watch_run_target_id \
+         JOIN watch_runs AS run \
+           ON run.tenant_id = run_target.tenant_id \
+          AND run.id = run_target.watch_run_id \
+         JOIN watches AS watch \
+           ON watch.tenant_id = run.tenant_id \
+          AND watch.id = run.watch_id \
+         WHERE consumer.tenant_id = $1 AND consumer.probe_job_id = $2 \
+           AND run_target.state = 'queued' \
+           AND run_target.probe_job_id = $2 \
+           AND run.state IN ('planned', 'running') \
+           AND watch.state = 'active' \
+           AND watch.revision = run.watch_revision \
+           AND watch.consent_grant_id = $3 \
+           AND $4 = 'private' \
+           AND EXISTS (\
+               SELECT 1 \
+               FROM watch_notification_endpoints AS link \
+               JOIN notification_endpoints AS endpoint \
+                 ON endpoint.tenant_id = link.tenant_id \
+                AND endpoint.id = link.endpoint_id \
+               WHERE link.tenant_id = watch.tenant_id \
+                 AND link.watch_id = watch.id \
+                 AND endpoint.state = 'active'\
+           ) \
+         ORDER BY run.id, run_target.id \
+         FOR UPDATE OF run, run_target, watch",
     )
     .bind(claim.tenant_id)
     .bind(claim.job_id)
@@ -1222,7 +1899,186 @@ async fn cancel_orphaned_claim(
     transaction: &mut Transaction<'_, Postgres>,
     claim: &JobClaim,
 ) -> Result<(), JobError> {
+    prune_dead_watch_consumers(transaction, claim).await?;
     transition_job_to_final(transaction, claim, "cancelled", Some("consumer_cancelled")).await
+}
+
+async fn prune_dead_watch_consumers(
+    transaction: &mut Transaction<'_, Postgres>,
+    claim: &JobClaim,
+) -> Result<(), JobError> {
+    let dead_consumers: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT run_target.id, run_target.watch_run_id \
+         FROM probe_job_consumers AS consumer \
+         JOIN watch_run_targets AS run_target \
+           ON run_target.tenant_id = consumer.tenant_id \
+          AND run_target.id = consumer.watch_run_target_id \
+         JOIN watch_runs AS run \
+           ON run.tenant_id = run_target.tenant_id \
+          AND run.id = run_target.watch_run_id \
+         JOIN watches AS watch \
+           ON watch.tenant_id = run.tenant_id \
+          AND watch.id = run.watch_id \
+         WHERE consumer.tenant_id = $1 AND consumer.probe_job_id = $2 \
+           AND run_target.state = 'queued' \
+           AND NOT (\
+               run.state IN ('planned', 'running') \
+               AND watch.state = 'active' \
+               AND watch.revision = run.watch_revision \
+               AND watch.consent_grant_id = $3 \
+               AND $4 = 'private' \
+               AND EXISTS (\
+                   SELECT 1 \
+                   FROM watch_notification_endpoints AS link \
+                   JOIN notification_endpoints AS endpoint \
+                     ON endpoint.tenant_id = link.tenant_id \
+                    AND endpoint.id = link.endpoint_id \
+                   WHERE link.tenant_id = watch.tenant_id \
+                     AND link.watch_id = watch.id \
+                     AND endpoint.state = 'active'\
+               )\
+           ) \
+         ORDER BY run.id, run_target.id \
+         FOR UPDATE OF run, run_target, watch",
+    )
+    .bind(claim.tenant_id)
+    .bind(claim.job_id)
+    .bind(claim.consent_grant_id)
+    .bind(&claim.visibility)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?;
+    for (run_target_id, run_id) in dead_consumers {
+        sqlx::query(
+            "UPDATE watch_run_targets \
+             SET state = 'cancelled', completed_at = clock_timestamp() \
+             WHERE tenant_id = $1 AND id = $2 AND state = 'queued'",
+        )
+        .bind(claim.tenant_id)
+        .bind(run_target_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        finish_watch_run(transaction, claim.tenant_id, run_id).await?;
+    }
+    Ok(())
+}
+
+async fn finalize_watch_target_without_observation(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    watch_run_target_id: Uuid,
+    watch_run_id: Uuid,
+    state: &str,
+) -> Result<(), JobError> {
+    if !matches!(state, "failed" | "cancelled") {
+        return Err(JobError::StorageInvariant);
+    }
+    let affected = sqlx::query(
+        "UPDATE watch_run_targets \
+         SET state = $3, completed_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'pending'",
+    )
+    .bind(tenant_id)
+    .bind(watch_run_target_id)
+    .bind(state)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?
+    .rows_affected();
+    if affected != 1 {
+        return Err(JobError::StorageInvariant);
+    }
+    finish_watch_run(transaction, tenant_id, watch_run_id).await
+}
+
+async fn complete_watch_consumer(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    consumer: &LiveWatchConsumer,
+    observation_id: Uuid,
+) -> Result<(), JobError> {
+    let affected = sqlx::query(
+        "UPDATE watch_run_targets \
+         SET state = 'completed', observation_id = $3, \
+             completed_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'queued'",
+    )
+    .bind(tenant_id)
+    .bind(consumer.watch_run_target_id)
+    .bind(observation_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?
+    .rows_affected();
+    if affected == 1 {
+        Ok(())
+    } else {
+        Err(JobError::StorageInvariant)
+    }
+}
+
+async fn fail_watch_consumer(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    consumer: &LiveWatchConsumer,
+) -> Result<(), JobError> {
+    let affected = sqlx::query(
+        "UPDATE watch_run_targets \
+         SET state = 'failed', completed_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'queued'",
+    )
+    .bind(tenant_id)
+    .bind(consumer.watch_run_target_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?
+    .rows_affected();
+    if affected == 1 {
+        Ok(())
+    } else {
+        Err(JobError::StorageInvariant)
+    }
+}
+
+async fn finish_watch_run(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    watch_run_id: Uuid,
+) -> Result<(), JobError> {
+    sqlx::query(
+        "UPDATE watch_runs AS run \
+         SET state = CASE \
+                 WHEN EXISTS (\
+                     SELECT 1 FROM watch_run_targets AS target \
+                     WHERE target.tenant_id = run.tenant_id \
+                       AND target.watch_run_id = run.id \
+                       AND target.state = 'failed'\
+                 ) THEN 'failed' \
+                 WHEN EXISTS (\
+                     SELECT 1 FROM watch_run_targets AS target \
+                     WHERE target.tenant_id = run.tenant_id \
+                       AND target.watch_run_id = run.id \
+                       AND target.state = 'cancelled'\
+                 ) THEN 'cancelled' \
+                 ELSE 'completed' \
+             END, \
+             completed_at = clock_timestamp() \
+         WHERE run.tenant_id = $1 AND run.id = $2 \
+           AND run.state IN ('planned', 'running') \
+           AND NOT EXISTS (\
+               SELECT 1 FROM watch_run_targets AS target \
+               WHERE target.tenant_id = run.tenant_id \
+                 AND target.watch_run_id = run.id \
+                 AND target.state IN ('pending', 'queued')\
+           )",
+    )
+    .bind(tenant_id)
+    .bind(watch_run_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?;
+    Ok(())
 }
 
 async fn transition_job_to_final(
@@ -1396,7 +2252,7 @@ fn result_event(
     outcome: RecordedOutcome,
     observation_id: Uuid,
     claim: &JobClaim,
-    consumer: &LiveConsumer,
+    consumer: &LiveSearchConsumer,
     observed_at_unix_ms: i64,
     expires_at_unix_ms: i64,
 ) -> Result<SearchEvent, JobError> {
@@ -1461,7 +2317,7 @@ fn result_event(
 
 fn operational_failure_event(
     claim: &JobClaim,
-    consumer: &LiveConsumer,
+    consumer: &LiveSearchConsumer,
     kind: OperationalFailureKind,
     retryable: bool,
     occurred_at_unix_ms: i64,
@@ -1513,7 +2369,7 @@ fn new_search_event(
 async fn insert_search_result(
     transaction: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
-    consumer: &LiveConsumer,
+    consumer: &LiveSearchConsumer,
     event: &SearchEvent,
     target_state: &str,
 ) -> Result<(), JobError> {
@@ -1824,6 +2680,22 @@ mod tests {
         assert!(!valid_label("-worker"));
         assert!(!valid_label("worker-"));
         assert!(!valid_label("Worker"));
+    }
+
+    #[test]
+    fn watch_jitter_is_deterministic_and_bounded_per_scheduled_run() {
+        let watch_id = Uuid::from_u128(7);
+        let delay = watch_schedule_delay_ms(watch_id, 3, 1_000_000, 300, 20).unwrap();
+        assert_eq!(
+            delay,
+            watch_schedule_delay_ms(watch_id, 3, 1_000_000, 300, 20).unwrap()
+        );
+        assert!((240_000..=360_000).contains(&delay));
+        assert_eq!(
+            watch_schedule_delay_ms(watch_id, 3, 1_000_000, 300, 0).unwrap(),
+            300_000
+        );
+        assert!(watch_schedule_delay_ms(watch_id, 0, 1_000_000, 300, 20).is_err());
     }
 
     #[test]

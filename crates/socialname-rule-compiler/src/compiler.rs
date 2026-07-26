@@ -55,6 +55,26 @@ impl CompiledSiteRule {
             .is_match(&normalized)
             .then_some(normalized)
     }
+
+    #[must_use]
+    pub fn maximum_inspected_bytes_per_search(&self) -> usize {
+        let probe_limit = |probe_id: &str| {
+            self.probe_index
+                .get(probe_id)
+                .and_then(|index| self.source.probes.get(*index))
+                .map_or(0, |probe| probe.http.limits.inspected_bytes)
+        };
+        match &self.source.plan {
+            ProbePlanSource::Single { probe } => probe_limit(probe),
+            ProbePlanSource::Fallback {
+                primary, fallback, ..
+            } => probe_limit(primary).saturating_add(probe_limit(fallback)),
+            ProbePlanSource::ParallelAll { probes } => probes
+                .iter()
+                .map(|probe| probe_limit(probe))
+                .fold(0_usize, usize::saturating_add),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

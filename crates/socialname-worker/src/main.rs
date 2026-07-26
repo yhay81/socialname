@@ -15,7 +15,8 @@ use socialname_canary::{PromotionTrustPolicy, PromotionVerifier};
 use socialname_engine::SearchResult;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_worker::{
-    ExpandOutcome, JobDisposition, JobExecutionError, JobStore, ManagedRule, WorkerError,
+    ExpandOutcome, JobDisposition, JobExecutionError, JobStore, ManagedRule, WatchPlanOutcome,
+    WorkerError,
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -36,7 +37,7 @@ struct Cli {
 enum Command {
     /// Execute one explicitly acknowledged managed probe; read the target from stdin JSON.
     Probe(ProbeArgs),
-    /// Expand accepted searches and execute at most one leased managed probe job.
+    /// Schedule due watches, expand pending consumers, and execute at most one managed job.
     ProcessOne(ProcessOneArgs),
 }
 
@@ -112,6 +113,7 @@ struct ProbeOutput<'a> {
 struct ProcessOneOutput {
     schema: &'static str,
     status: &'static str,
+    planned_watch_runs: u32,
     expanded_targets: u32,
     job_id: Option<Uuid>,
     attempt_count: Option<u32>,
@@ -189,16 +191,32 @@ async fn process_one_with_store(
     expansion_limit: u32,
 ) -> Result<ProcessOneOutput> {
     let binding = store.bind_rule(managed_rule).await?;
+    let planned_watch_runs = match store.plan_one_watch(&binding).await? {
+        WatchPlanOutcome::Idle => 0,
+        WatchPlanOutcome::Planned { .. } => 1,
+    };
     let mut expanded_targets = 0_u32;
-    for _ in 0..expansion_limit {
-        match store.expand_one(&binding, managed_rule).await? {
-            ExpandOutcome::Idle => break,
-            ExpandOutcome::Enqueued { .. }
-            | ExpandOutcome::Coalesced { .. }
-            | ExpandOutcome::InvalidTargetCompleted => {
-                expanded_targets += 1;
+    let mut prefer_watch = true;
+    while expanded_targets < expansion_limit {
+        let first = if prefer_watch {
+            store.expand_one_watch(&binding, managed_rule).await?
+        } else {
+            store.expand_one(&binding, managed_rule).await?
+        };
+        let outcome = if first == ExpandOutcome::Idle {
+            if prefer_watch {
+                store.expand_one(&binding, managed_rule).await?
+            } else {
+                store.expand_one_watch(&binding, managed_rule).await?
             }
+        } else {
+            first
+        };
+        if outcome == ExpandOutcome::Idle {
+            break;
         }
+        expanded_targets += 1;
+        prefer_watch = !prefer_watch;
     }
     let Some(claim) = store
         .claim(&binding, worker_id, Duration::from_secs(lease_seconds))
@@ -207,6 +225,7 @@ async fn process_one_with_store(
         return Ok(ProcessOneOutput {
             schema: "socialname.dev/managed-job-process/v1",
             status: "idle",
+            planned_watch_runs,
             expanded_targets,
             job_id: None,
             attempt_count: None,
@@ -248,6 +267,7 @@ async fn process_one_with_store(
     Ok(ProcessOneOutput {
         schema: "socialname.dev/managed-job-process/v1",
         status: disposition_name(disposition),
+        planned_watch_runs,
         expanded_targets,
         job_id: Some(job_id),
         attempt_count: Some(attempt_count),
@@ -460,6 +480,7 @@ mod tests {
         let output = serde_json::to_string(&ProcessOneOutput {
             schema: "socialname.dev/managed-job-process/v1",
             status: disposition_name(JobDisposition::RetryScheduled),
+            planned_watch_runs: 1,
             expanded_targets: 2,
             job_id: Some(Uuid::nil()),
             attempt_count: Some(1),
@@ -467,7 +488,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             output,
-            "{\"schema\":\"socialname.dev/managed-job-process/v1\",\"status\":\"retry_scheduled\",\"expanded_targets\":2,\"job_id\":\"00000000-0000-0000-0000-000000000000\",\"attempt_count\":1}"
+            "{\"schema\":\"socialname.dev/managed-job-process/v1\",\"status\":\"retry_scheduled\",\"planned_watch_runs\":1,\"expanded_targets\":2,\"job_id\":\"00000000-0000-0000-0000-000000000000\",\"attempt_count\":1}"
         );
         assert!(!output.contains("username"));
         assert!(!output.contains("result"));

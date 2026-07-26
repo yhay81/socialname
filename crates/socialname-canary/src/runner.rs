@@ -448,22 +448,7 @@ pub(crate) fn maximum_requests_per_search(rule: &CompiledSiteRule) -> usize {
 }
 
 pub(crate) fn maximum_inspected_bytes_per_search(rule: &CompiledSiteRule) -> usize {
-    let probe_limit = |probe_id: &str| {
-        rule.probe_index
-            .get(probe_id)
-            .and_then(|index| rule.source.probes.get(*index))
-            .map_or(0, |probe| probe.http.limits.inspected_bytes)
-    };
-    match &rule.source.plan {
-        ProbePlanSource::Single { probe } => probe_limit(probe),
-        ProbePlanSource::Fallback {
-            primary, fallback, ..
-        } => probe_limit(primary).saturating_add(probe_limit(fallback)),
-        ProbePlanSource::ParallelAll { probes } => probes
-            .iter()
-            .map(|probe| probe_limit(probe))
-            .fold(0_usize, usize::saturating_add),
-    }
+    rule.maximum_inspected_bytes_per_search()
 }
 
 pub(crate) fn completed_case(

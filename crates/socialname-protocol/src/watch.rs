@@ -76,7 +76,7 @@ pub struct WatchCreateRequest {
 
 impl Validate for WatchCreateRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
-        collect_validations([
+        let mut validations = vec![
             self.targets.validate(),
             validate_regions(&self.region_classes),
             validate_maximum_age(self.maximum_age_ms),
@@ -88,7 +88,22 @@ impl Validate for WatchCreateRequest {
                 16,
             ),
             validate_retention(self.retention_days),
-        ])
+        ];
+        let planned_probes = self
+            .targets
+            .usernames
+            .len()
+            .checked_mul(self.targets.site_ids.len())
+            .and_then(|count| count.checked_mul(self.region_classes.len()));
+        if planned_probes.is_none_or(|count| {
+            count > usize::try_from(self.probe_budget.maximum_probes_per_run).unwrap_or(usize::MAX)
+        }) {
+            validations.push(Err(ValidationErrors::new(
+                "probe_budget.maximum_probes_per_run",
+                ValidationCode::InvalidRelation,
+            )));
+        }
+        collect_validations(validations)
     }
 }
 
@@ -273,6 +288,19 @@ mod tests {
         request.probe_budget.maximum_probes_per_run = u32::MAX;
         request.retention_days = u16::MAX;
         assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn run_budget_covers_every_target_and_region() {
+        let mut request = create_request();
+        request.region_classes = vec![
+            RegionClass::new("jp").unwrap(),
+            RegionClass::new("us").unwrap(),
+        ];
+        request.probe_budget.maximum_probes_per_run = 1;
+        assert!(request.validate().is_err());
+        request.probe_budget.maximum_probes_per_run = 2;
+        assert!(request.validate().is_ok());
     }
 
     #[test]

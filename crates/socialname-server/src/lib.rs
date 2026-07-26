@@ -5,6 +5,7 @@ mod auth;
 mod config;
 mod database;
 mod search;
+mod watch;
 mod workspace;
 mod workspace_operator;
 
@@ -151,6 +152,28 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let watch_write_routes = Router::new()
+        .route("/v1/watches", axum::routing::post(watch::create_watch))
+        .route(
+            "/v1/watches/{watch_id}",
+            axum::routing::patch(watch::patch_watch).delete(watch::delete_watch),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::WatchWrite,
+            },
+            authenticate_request,
+        ));
+    let watch_read_routes = Router::new()
+        .route("/v1/watches/{watch_id}", get(watch::get_watch))
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::WatchRead,
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
@@ -158,6 +181,8 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(search_create_routes)
         .merge(search_read_routes)
         .merge(search_cancel_routes)
+        .merge(watch_write_routes)
+        .merge(watch_read_routes)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state.clone());
