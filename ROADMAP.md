@@ -1172,6 +1172,10 @@ idempotency. Analytics completion, completed deletion receipts, daily
 delete-through tests, restore-ledger replay, production scheduling, and
 backup-expiry proof remain the next ordered item. The complete boundary is in
 [`docs/deletion-workflows.md`](docs/deletion-workflows.md).
+Quality run
+[`30209676004`](https://github.com/yhay81/socialname/actions/runs/30209676004)
+passed Rust core with PostgreSQL 18 migrations/tests, Windows/macOS desktop,
+monitoring console, and managed-worker OCI for commit `073e7e1`.
 
 Acceptance gate:
 
