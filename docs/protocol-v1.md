@@ -126,7 +126,9 @@ The result variants deliberately remain separate:
   failure, plus nonretryable `invalid_target` when the exact signed site's
   username policy rejects the request. It has no verdict or uncertainty field;
 - `assertion_updated` carries the replaceable current interpretation plus its
-  support and conflicts;
+  support, conflicts, and independently validated per-region projections.
+  New worker events always include the projection; absence is accepted only
+  for backward-compatible decoding of historical stored events;
 - `finished` records a terminal state and self-consistent totals.
 
 An invalid target or any other operational failure therefore cannot

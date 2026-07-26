@@ -134,11 +134,11 @@ observation, event, or watch-target creation.
 ## Atomic observation, assertion, and event ingestion
 
 A successful job creates at most one immutable observation. The observation,
-job terminal state, current `assertion/v1` generation and support, per-search
-result and assertion events, watch-run target completions, watch-local baseline
-or transition, terminal search/run states, and lineage edges commit in one
-tenant transaction. A repeated completion of the same fenced claim returns
-`already_final`; it cannot duplicate any derived output.
+job terminal state, current global and regional `assertion/v1` generations and
+support, per-search result and assertion events, watch-run target completions,
+watch-local baseline or transition, terminal search/run states, and lineage
+edges commit in one tenant transaction. A repeated completion of the same
+fenced claim returns `already_final`; it cannot duplicate any derived output.
 
 Observation persistence retains only typed outcome, evidence class/digest,
 exact rule/region, consent/visibility, source, and bounded freshness. It does
@@ -155,6 +155,18 @@ records:
 
 Assertion and transition rules are specified in
 [Assertion recomputation and transition persistence](assertion-recomputation.md).
+
+## Budget-preserving verification order
+
+Watch jobs carry a numeric priority and a database-generated reason:
+`routine` (0), `account_confirmation` (50), or `regional_conflict` (100).
+Expansion reads the current assertion and durable account candidate after the
+watch run has reserved its ordinary probe and byte budgets. A fresh conflict
+outranks a pending high-value account transition, which outranks routine work.
+Interpretation can raise an already queued or retry-wait sibling but never
+creates an unscheduled probe, expands a run budget, or changes a leased job.
+Search jobs remain routine unless coalescing with an already authorized watch
+consumer raises the shared job.
 
 ## One-job operator entry point
 
@@ -211,6 +223,10 @@ worker roles and proves:
 - claims, expiry reclamation, and stale-fence rejection;
 - bounded retry and exhaustion;
 - idempotent observation/event ingestion;
+- immutable regional assertion/support persistence and regional event output;
+- global conflict with preserved opposing regional truths;
+- budget-preserving priority 100 conflict and priority 50 account-confirmation
+  follow-ups;
 - multi-consumer fan-out and lineage;
 - invalid-target separation;
 - search cancellation, watch revision cancellation, consent withdrawal, and

@@ -2,11 +2,12 @@
 
 ## Scope
 
-Migration `0006_assertion_recomputation.sql` and the managed worker connect the
+Migrations `0006_assertion_recomputation.sql` and
+`0008_regional_assertion_escalation.sql`, plus the managed worker, connect the
 existing `assertion/v1` trust model to PostgreSQL. A successful managed job now
-commits the immutable observation, current assertion generation, explicit
-support, search assertion event, watch baseline or transition, and generic
-lineage in one tenant transaction.
+commits the immutable observation, global and regional assertion generations,
+explicit support, search assertion event, watch baseline or transition, and
+generic lineage in one tenant transaction.
 
 This slice does not add shared-observation upload, producer-reputation
 admission or a public transition route. Shared rows
@@ -70,6 +71,36 @@ after its typed result and before the terminal event. The event is constructed
 from the same persisted derivation. Its source, regions, support count,
 freshness, managed support, and observation IDs remain explicit.
 
+## Regional assertion projection
+
+The same eligible exact-rule observation set is grouped by `region_class` and
+passed through `derive_assertion` once per region. The global assertion and
+every regional projection therefore use the same policy, evaluation time, and
+immutable observations:
+
+- opposing regions make the global assertion `conflicted`;
+- each internally unanimous region retains its definitive
+  `found`/`not_found` and quality;
+- opposing observations within one region keep that regional projection
+  `conflicted`;
+- no region is inferred from deployment configuration or an absent
+  observation.
+
+Migration `0008` stores each projection in immutable
+`regional_assertions` and `regional_assertion_support` rows. Lineage is
+observation -> regional assertion -> global assertion, so a later withdrawal
+or recomputation can find both derived layers. A pre-migration current
+assertion is not backfilled from historical guesses. The next ordinary
+recomputation supersedes it with an otherwise equivalent generation carrying
+the complete regional projection.
+
+New `assertion_updated` events always include a non-empty
+`regional_assertions` projection. Validation requires unique regions equal to
+the global region set, regional sources and observation IDs contained in the
+global assertion, and independently valid regional outcome/quality/freshness
+relations. The field is optional only when decoding historical stored event
+JSON; reserializing such an event does not invent the missing projection.
+
 ## Per-watch account baseline
 
 The tenant-wide current assertion is not itself a watch transition baseline.
@@ -113,6 +144,26 @@ transition. Pending rows can advance to confirmed when later evidence meets
 the threshold. `transition_basis` remains append-only and generic lineage
 connects the assertion to the transition.
 
+## Bounded active-verification priority
+
+Managed verification changes queue order, not observation budget. The worker
+uses three closed priority tiers:
+
+| Tier | Priority | Trigger |
+| --- | ---: | --- |
+| `routine` | 0 | no current conflict or open high-value candidate |
+| `account_confirmation` | 50 | pending account candidate or shared-only absence needing managed evidence |
+| `regional_conflict` | 100 | current fresh strong disagreement |
+
+`probe_jobs.priority_reason` is a stored generated column derived from the
+numeric priority, so its label cannot diverge. Watch expansion selects the
+tier from persisted assertion/transition state. Interpretation also raises
+already queued or retry-wait siblings for the same watch target. It never
+creates a follow-up outside a scheduled watch run, changes a leased job, or
+reserves another probe or byte. A single-region watch therefore remains
+pending until its next already-budgeted run; configured multi-region siblings
+can be processed first.
+
 ## Measurement degradation
 
 Measurement state is a separate transition class for an exact watch target,
@@ -155,20 +206,28 @@ Assertion and transition writes therefore remain behind forced tenant RLS.
 Deterministic unit tests cover:
 
 - unanimous support extending assertion expiry;
+- cross-region definitive projections behind a global conflict;
+- same-region conflict remaining regional conflict;
 - E4 and E3-follow-up appearance confirmation;
 - independent-region and time-separated disappearance confirmation;
 - shared-only absence suppression;
+- conflict-over-confirmation-over-routine priority ordering;
 - operational measurement transitions without fabricated observations.
 
 The PostgreSQL 18 integration test uses real non-owner application and worker
 roles and proves:
 
 - exact-rule, active-consent `verified` assertion persistence;
-- append-only support and generic lineage;
-- ordered search `assertion_updated` output;
+- append-only global/regional support and two-layer generic lineage;
+- ordered search `assertion_updated` output with a validated regional
+  projection;
 - first-observation watch baseline without a transition;
 - E4 appearance confirmation, including fresh-observation replay;
-- opposing strong observations becoming `conflicted` without account change;
+- opposing regional strong observations becoming globally `conflicted` while
+  preserving the two definitive regional assertions and account baseline;
+- budget-reserved follow-up jobs receiving `regional_conflict` priority 100;
+- a one-observation account candidate remaining pending and its next
+  budget-reserved job receiving `account_confirmation` priority 50;
 - conflict or typed uncertainty becoming `healthy -> degraded`;
 - terminal operational failure becoming `degraded -> unavailable` with
   probe-job lineage and no observation basis;

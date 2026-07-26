@@ -206,6 +206,7 @@ Assertion
   expires_at
   rule_hash
   region_scope
+  regional_assertions
   supporting_observation_ids
   conflicting_observation_ids
   derivation_version
@@ -293,6 +294,8 @@ Initial PostgreSQL tables:
 | `observations` | Append-only probe results |
 | `assertions` | Materialized current interpretation |
 | `assertion_support` | Observation support and conflict lineage |
+| `regional_assertions` | Immutable per-region projection of one global generation |
+| `regional_assertion_support` | Observation support and conflict lineage per regional projection |
 | `watches` | Monitoring configuration |
 | `watch_targets` | Expanded monitored targets |
 | `transitions` | Durable meaningful state changes |

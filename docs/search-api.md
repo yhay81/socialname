@@ -176,7 +176,7 @@ identity, and no delete privilege on these tables.
 ## Verification and remaining gate
 
 The PostgreSQL 18 integration test resets its disposable fixture database so
-back-to-back runs cover replay-safe migrations, 35 product tables, 30
+back-to-back runs cover replay-safe migrations, 37 product tables, 32
 forced-RLS policies, exact and conflicting idempotency replay,
 read-only/write scope separation, required consent purpose, unknown sites,
 target-free errors, two-tenant isolation, digest-only idempotency storage,
@@ -185,8 +185,9 @@ append-only rejection, idempotent cancellation, terminal-event uniqueness,
 least-privilege columns, bounded SSE connection recovery, job coalescing,
 claim/reclaim fencing, retry exhaustion, observation/event idempotency,
 multi-search and watch fan-out, watch freshness reuse and byte reservation,
-lineage, invalid-target handling, and cancellation, consent-withdrawal, and
-rule-health races.
+global/regional assertion support and lineage, regional event projection,
+invalid-target handling, and cancellation, consent-withdrawal, and rule-health
+races.
 
 The API process still initiates no network request and cannot normalize a
 target. A separate signed worker performs those operations only for an exact

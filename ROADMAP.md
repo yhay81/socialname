@@ -64,10 +64,10 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add region-aware assertions, conflict escalation, and
-managed confirmation of high-value transitions. The repository-completable
-regional worker deployment boundary is implemented; real canary/worker
-deployment remains an external evidence gate.
+Next executable item: complete signed rule-pack expiry, staged-rollout,
+rollback-protection, and key-rotation metadata. The repository-completable
+regional worker and region-aware assertion boundaries are implemented; real
+canary/worker deployment remains an external evidence gate.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -547,7 +547,7 @@ npm run check
 npm run build
 ```
 
-The seven embedded SQLx migrations create 35 bounded product tables and 30
+The eight embedded SQLx migrations create 37 bounded product tables and 32
 tenant-isolation policies with forced RLS. Composite tenant foreign keys,
 immutable observation and support history, closed observation outcomes,
 transition-specific confirmation bases, exact confirmed-delivery checks,
@@ -558,7 +558,7 @@ database URL, uses one connection with connection/migration deadlines, and
 returns fixed errors without reflecting credentials.
 
 The CI core job runs both the operator command and an integration test against
-`postgres:18-alpine`. The test reapplies all seven migrations, inventories all
+`postgres:18-alpine`. The test reapplies all eight migrations, inventories all
 tables and forced-RLS policies, uses a real non-owner `NOBYPASSRLS` role to
 prove tenant isolation, rejects cross-tenant references and observation
 mutation, suppresses shared-only absence delivery, accepts an independently
@@ -570,7 +570,7 @@ Authenticated-workspace evidence:
 cargo fmt --all -- --check
 cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-protocol -p socialname-server --all-targets
-# protocol: 30 unit + 7 contract; server: 26 library + 2 binary + 1 PostgreSQL
+# protocol: 33 unit + 7 contract; server: 26 library + 2 binary + 1 PostgreSQL
 cargo clippy --locked -p socialname-protocol -p socialname-server --all-targets --all-features -- -D warnings
 ```
 
@@ -635,7 +635,7 @@ Signed-managed-worker evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-engine -p socialname-worker --all-targets
-# engine: 11; worker: 14 library + 4 binary tests
+# engine: 11; worker: 16 library + 5 binary tests
 cargo clippy --locked -p socialname-engine -p socialname-worker --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-worker -- --help
 # probe without --allow-live exits before reading files or stdin
@@ -850,7 +850,7 @@ External evidence gate:
 Status: **Current; external deployment evidence pending**
 
 - [ ] Deploy managed canaries and workers in the required regions.
-- [ ] Add region-aware assertions, conflict escalation, and managed
+- [x] Add region-aware assertions, conflict escalation, and managed
       confirmation of high-value transitions.
 - [ ] Implement signed rule-pack metadata, expiry, staged rollout, rollback
       protection, and key rotation.
@@ -870,7 +870,7 @@ Regional deployment software evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked --workspace --all-targets
-# includes worker: 14 library + 5 binary + 3 deployment-contract tests
+# includes worker: 16 library + 5 binary + 3 deployment-contract tests
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-cli -- rules validate
 # validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
@@ -907,6 +907,53 @@ close it is recorded in
 [`docs/regional-worker-deployment.md`](docs/regional-worker-deployment.md).
 Repository work can therefore continue independently with region-aware
 assertion behavior without claiming a regional service.
+
+Regional assertion software evidence:
+
+```console
+cargo test --locked -p socialname-domain -p socialname-protocol -p socialname-worker
+# domain: 13; protocol: 33 unit + 7 contract; worker: 16 library,
+# 5 binary, and 3 deployment-contract tests passed
+cargo clippy --locked -p socialname-server -p socialname-worker \
+  --all-targets --all-features -- -D warnings
+# passed
+# With disposable PostgreSQL 18 administrator/application/worker URLs:
+cargo test --locked -p socialname-server --test postgres_migrations
+# 1 PostgreSQL 18 integration test passed
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# all passed
+```
+
+`assertion/v1` now derives and validates a regional projection from the same
+eligible exact-rule observations as the global assertion. Migration `0008`
+stores immutable regional generations and support with observation ->
+regional -> global lineage. A `jp` `found` and `us` `not_found` remain two
+definitive regional assertions behind one globally `conflicted` result; the
+watch account baseline and delivery stream do not move. New events carry the
+projection while historical JSON remains readable without inferred regions.
+Already-budgeted watch jobs use generated `routine` (0),
+`account_confirmation` (50), and `regional_conflict` (100) priority reasons;
+the worker raises only queued/retry work and never invents a probe, region, or
+deployment claim. The real PostgreSQL 18 test proves both elevated paths,
+their existing probe/byte reservations, forced RLS, lineage, and event output.
+Quality runs
+[`30193989488`](https://github.com/yhay81/socialname/actions/runs/30193989488)
+and
+[`30194494587`](https://github.com/yhay81/socialname/actions/runs/30194494587)
+passed Rust core, Windows/macOS desktop, monitoring console, and managed-worker
+OCI jobs for commits `ddd73b1` and `0761ca3`.
 
 Acceptance gate:
 
@@ -1072,3 +1119,9 @@ Choose these only when their trigger is measured:
   job. Completed the Milestone 2 software gate while leaving hosting,
   destination ownership, managed deployment, and production policy as explicit
   external evidence.
+- **2026-07-26:** Added compatible regional assertion event projections,
+  immutable PostgreSQL regional support and two-layer lineage, global conflict
+  with preserved regional truths, and budget-preserving managed verification
+  priorities for conflict and pending account transitions. Kept the real
+  multi-region worker/canary claim behind its external deployment evidence
+  gate and selected signed rollout/key-rotation metadata next.

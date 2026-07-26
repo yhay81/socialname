@@ -247,16 +247,27 @@ rules, evidence classes, quorum facts, freshness, and health.
 Every API result exposes facts rather than a synthetic confidence score:
 
 ```text
-quality: corroborated
+outcome: inconclusive/conflicting_evidence
+quality: conflicted
 evidence_class: E4
 observed_at: ...
 expires_at: ...
 regions: [jp, us]
-support_groups: 3
-managed_support: false
+regional_assertions:
+  - region: jp
+    outcome: found
+    quality: verified
+  - region: us
+    outcome: not_found
+    quality: verified
+support_groups: 0
+managed_support: true
 rule_health: green
-conflicts: 0
+conflicts: 2
 derivation_version: assertion/v1
 ```
 
 Producer IDs, tenant identities, ASNs, and raw evidence remain private.
+When regional outcomes disagree, neither region is overwritten and no global
+account-state alert is emitted. Historical event payloads created before
+regional projection remain readable without inventing regional facts.

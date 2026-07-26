@@ -15,7 +15,10 @@ search/watch consumers. Migration `0006_assertion_recomputation.sql` adds the
 per-watch account baseline and indexes for durable account candidates and
 regional measurement state. Migration `0007_webhook_delivery.sql` adds fenced
 webhook leases, append-only attempt history, bounded retry/dead-letter state,
-and a narrow cross-tenant claim coordinator.
+and a narrow cross-tenant claim coordinator. Migration
+`0008_regional_assertion_escalation.sql` adds immutable regional assertion and
+support projections plus a generated probe-priority reason for conflict and
+account-confirmation work.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -44,7 +47,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 35 product tables:
+The migrations create 37 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -53,7 +56,7 @@ The migrations create 35 product tables:
 | Consent | `consent_grants`, `consent_events` |
 | Interactive work | `searches`, `search_targets`, `search_events` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
-| Evidence and interpretation | `observations`, `assertions`, `assertion_support` |
+| Evidence and interpretation | `observations`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts` |
 | Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `suppression_tokens` |
 
@@ -63,7 +66,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Thirty tenant-owned tables have row-level security both enabled and
+Thirty-two tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -164,6 +167,14 @@ withdrawal unambiguously later. See
   rows reject updates.
 - Assertion and transition support are explicit join records. Generic lineage
   preserves withdrawal and recomputation ancestry across later derived data.
+- Regional assertions are immutable children of one global assertion
+  generation. Their support is explicit, and lineage connects observation ->
+  regional assertion -> global assertion without inferring missing historical
+  regions.
+- Probe priority reasons are generated from the numeric tier: routine below
+  50, account confirmation from 50, and regional conflict from 100. Workers
+  may raise priority only on queued or retry-wait jobs; watch budgets remain
+  the authority for whether work exists.
 - A watch target's account baseline is an all-null or fully populated
   state/assertion/time triple. The initial assertion establishes the baseline
   without fabricating a transition.
@@ -210,7 +221,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 35 tables and 30
+It applies the embedded migrations twice, inventories all 37 tables and 32
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
@@ -219,8 +230,10 @@ shared-only notification suppression, valid confirmed delivery, ordered
 deletion deadlines, receipts, lineage, and a second real NOBYPASSRLS worker
 role covering job coalescing, watch planning, freshness reuse, byte
 reservation, fencing, retry, atomic observation/assertion/search/watch
-ingestion, account baselines and confirmed transitions, conflicting evidence,
-measurement degradation, invalid targets, revision cancellation, consent
+ingestion, account baselines and confirmed transitions, global/regional
+assertion support and lineage, regional disagreement, bounded conflict and
+account-confirmation priority, measurement degradation, invalid targets,
+revision cancellation, consent
 withdrawal, regional rule degradation, logical webhook enqueue, timeout/retry,
 same-ID success, permanent 4xx, lease reclamation, stale fencing, final
 dead-letter state, attempt audit, lineage, and bounded watch/transition page

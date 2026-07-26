@@ -155,6 +155,16 @@ so status does not diverge across design records.
   client consumes only bounded same-origin Axum API v1 resources, keeps a
   pasted scoped key in page memory only, and has no CORS or direct PostgreSQL
   access.
+- Global and regional `assertion/v1` interpretations are derived from the same
+  eligible exact-rule observations and evaluation time. Cross-region
+  disagreement preserves definitive regional projections behind one global
+  conflict; same-region disagreement remains regionally conflicted. Regional
+  support is immutable and lineage-backed. Historical event JSON remains
+  readable without a regional field, but missing historical projections are
+  never inferred or backfilled. Managed verification may raise only an
+  already-budgeted queued/retry watch job: regional conflict outranks pending
+  account confirmation, which outranks routine work. Priority alone cannot
+  create a probe, region, or deployment claim.
 
 ## Detailed records
 
@@ -230,9 +240,15 @@ so status does not diverge across design records.
     resources under tenant-local forced RLS, then consume them from a
     same-origin React/Vite monitoring console with memory-only scoped-key
     handling and independent CI.
+18. **Done:** Derive compatible regional assertion projections, persist their
+    immutable support and two-layer lineage, preserve per-region truth behind
+    a global conflict, and prioritize already-budgeted managed verification for
+    conflicts and high-value account candidates.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
 deployment evidence remains pending, with affected capabilities disabled. The
-next work is the repository-completable deployment/operator boundary for
-Milestone 3 managed regional canaries and workers.
+Milestone 3's deployment/operator artifact and regional assertion behavior are
+repository-complete, while actual multi-region deployment remains an external
+gate. The next executable work is signed rule-pack expiry, staged rollout,
+rollback protection, and key-rotation metadata.
