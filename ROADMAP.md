@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: implement freshness-aware watch scheduling and
-equivalent-work coalescing, then recompute `assertion/v1`.
+Next executable item: recompute `assertion/v1`, persist meaningful
+transitions, and keep account change distinct from measurement degradation.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -466,7 +466,7 @@ derives a trustworthy transition, and delivers one auditable notification.
       SSRF/DNS-rebinding defenses.
 - [x] Implement transactional PostgreSQL job claims, leases, retries, and
       idempotent observation ingestion.
-- [ ] Implement freshness-aware watch scheduling and equivalent-work
+- [x] Implement freshness-aware watch scheduling and equivalent-work
       coalescing.
 - [ ] Recompute `assertion/v1`, persist meaningful transitions, and distinguish
       account change from measurement degradation.
@@ -511,8 +511,8 @@ cargo build --locked -p socialname-server
 
 `socialname-server` is an explicit Axum 0.8/Tower 0.5 binary with a
 loopback-only default. It exposes versioned liveness, PostgreSQL-aware
-readiness, authenticated workspace/search resources, polling, cancellation,
-and bounded ordered SSE; worker, watch, notification, and HTTP administration
+readiness, authenticated workspace/search/watch resources, polling,
+cancellation, and bounded ordered SSE; notification and HTTP administration
 routes remain absent. Configuration bounds the handler deadline,
 declared/default body size, database acquisition, ordinary in-flight work, and
 open SSE bodies, and rejects invalid values without echoing them. One outer
@@ -544,7 +544,7 @@ npm run check
 npm run build
 ```
 
-The three embedded SQLx migrations create 31 bounded product tables and 26
+The five embedded SQLx migrations create 34 bounded product tables and 29
 tenant-isolation policies with forced RLS. Composite tenant foreign keys,
 immutable observation and support history, closed observation outcomes,
 transition-specific confirmation bases, exact confirmed-delivery checks,
@@ -555,7 +555,7 @@ database URL, uses one connection with connection/migration deadlines, and
 returns fixed errors without reflecting credentials.
 
 The CI core job runs both the operator command and an integration test against
-`postgres:18-alpine`. The test reapplies all three migrations, inventories all
+`postgres:18-alpine`. The test reapplies all five migrations, inventories all
 tables and forced-RLS policies, uses a real non-owner `NOBYPASSRLS` role to
 prove tenant isolation, rejects cross-tenant references and observation
 mutation, suppresses shared-only absence delivery, accepts an independently
@@ -587,7 +587,8 @@ under transaction-local forced RLS. The PostgreSQL 18 test proves two-tenant
 isolation, wrong/revoked/expired uniform denial, distinct insufficient-scope
 denial, digest-only persistence, privilege revocation, last-use recording, and
 readiness degradation. `GET /v1/workspace` returns validated nonsecret
-workspace/key metadata; later non-search private routes remain closed.
+workspace/key metadata; later notification and governance routes remain
+closed.
 
 Private-search/SSE evidence:
 
@@ -661,9 +662,12 @@ Managed-job evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked --workspace --all-targets
-# includes 23 server library, 2 server binary, 1 PostgreSQL integration,
-# 6 worker library, and 4 worker binary tests
+# includes 25 server library, 2 server binary,
+# 7 worker library, and 4 worker binary tests
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# With the three documented disposable PostgreSQL test URLs:
+cargo test --locked -p socialname-server --test postgres_migrations -- --nocapture
+# 1 PostgreSQL 18 integration test passed
 cargo run --locked -p socialname-cli -- rules validate
 # validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
 cargo run --locked -p socialname-cli -- fixtures
@@ -674,29 +678,37 @@ npm run check
 npm run build
 ```
 
-Migration `0004_managed_probe_jobs.sql` and `JobStore` now bind the exact signed
-site/rule/pack/region to promoted, active, fresh-healthy registry state. A
-non-owner NOBYPASSRLS worker uses four narrow coordinator functions, then
-returns to transaction-local tenant RLS. Expansion normalizes through that
-rule, keeps invalid targets outside absence, and coalesces only equal tenant,
-target, rule, region, consent grant, and visibility scopes.
+Migrations `0004_managed_probe_jobs.sql` and `0005_watch_scheduling.sql`, plus
+`JobStore`, bind the exact signed site/rule/pack/region to promoted, active,
+fresh-healthy registry state. A non-owner NOBYPASSRLS worker uses six narrow
+coordinator functions, then returns to transaction-local tenant RLS. Expansion
+normalizes through that rule, keeps invalid targets outside absence, and
+coalesces only equal tenant, target, rule, region, consent grant, and visibility
+scopes.
 
 Claims increment an attempt fence; expired leases can be reclaimed while stale
 attempts cannot commit. Operational failures use bounded exponential retry.
-Execution continuously rechecks live consumers, purpose-specific consent, and
-rule health, and final ingestion locks consent. One transaction writes at most
-one immutable observation, per-consumer result events, target/search terminal
-state, and lineage; replay is `already_final`. The PostgreSQL 18 test proves
-coalescing and purpose isolation, claim/reclaim, stale fencing, retry
-exhaustion, multi-search fan-out, cancellation, consent withdrawal, rule
-degradation, invalid targets, and least-privilege RLS.
+Execution continuously rechecks live search/watch consumers,
+purpose-specific consent, watch revision/endpoints, and rule health, and final
+ingestion locks consent. One transaction writes at most one immutable
+observation, per-search result events, search/watch target and terminal state,
+and lineage; replay is `already_final`. The PostgreSQL 18 test proves
+search/watch coalescing and purpose isolation, claim/reclaim, stale fencing,
+retry exhaustion, multi-consumer fan-out, cancellation, consent withdrawal,
+rule degradation, invalid targets, and least-privilege RLS.
 
-`socialname-worker process-one` is the bounded operable entry point: it expands
-at most 128 targets, claims and executes at most one job, requires
-`--allow-live` before file/database access, and emits a target-free status
-object. Representative rules still cannot execute because their external
-promotion evidence is absent. The next item is freshness-aware watch
-scheduling and equivalent-work coalescing.
+`socialname-worker process-one` is the bounded operable entry point: it plans
+at most one due watch, alternates search/watch expansion for at most 128
+targets, claims and executes at most one job, requires `--allow-live` before
+file/database access, and emits a target-free status object. Due runs expand
+atomically with deterministic jitter and a complete probe-count reservation.
+Each target reuses only exact-rule, same-consent, private, fresh healthy
+evidence; otherwise it reserves the compiled rule's worst-case inspected bytes
+before coalescing into an equivalent active job. Pause, delete, revision
+change, consent withdrawal, endpoint deactivation, and rule quarantine prevent
+stale fan-out. Representative rules still cannot execute because their
+external promotion evidence is absent. The next item is current assertion and
+transition recomputation.
 
 Software acceptance gate:
 
@@ -875,3 +887,8 @@ Choose these only when their trigger is measured:
   cancellation, and idempotent atomic observation/event/lineage ingestion
   through the signed worker under a non-owner forced-RLS role; kept all
   discovery-only rules behind their external promotion gate.
+- **2026-07-26:** Added scoped revisioned watch CRUD, atomic due-run expansion
+  with deterministic jitter, exact-rule freshness reuse, conservative
+  inspected-byte reservation, search/watch job coalescing, and
+  revision/consent-aware cancellation with PostgreSQL 18 RLS evidence; kept
+  discovery-only rules quarantined and selected assertion recomputation next.

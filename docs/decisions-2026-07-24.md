@@ -127,11 +127,11 @@ so status does not diverge across design records.
   and atomically ingest only an exact promoted, region-healthy rule binding.
 - Active managed work coalesces only across equal tenant, normalized target,
   site, rule version, region, consent grant, and visibility. Attempt count is a
-  fencing token. A non-owner NOBYPASSRLS worker receives only four narrow
+  fencing token. A non-owner NOBYPASSRLS worker receives only six narrow
   coordinator functions; tenant rows remain behind transaction-local forced
   RLS. Final ingestion rechecks rule health and locks purpose-specific consent
   before atomically writing one immutable observation, per-search events,
-  terminal state, and lineage.
+  watch-run target state, terminal state, and lineage.
 
 ## Detailed records
 
@@ -187,9 +187,13 @@ so status does not diverge across design records.
     reclamation, bounded retries, continuous cancellation/authorization
     monitoring, and idempotent atomic observation/event/lineage ingestion under
     a non-owner forced-RLS worker role.
+14. **Done:** Add authenticated revisioned watches, atomic due-run expansion,
+    deterministic bounded jitter, exact-rule freshness reuse, conservative
+    pre-network byte reservation, search/watch work coalescing, and
+    revision/consent-aware cancellation under the same forced-RLS worker
+    boundary.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
-work is the first paid monitoring loop in Milestone 2, continuing with
-freshness-aware watch scheduling and equivalent-work coalescing before current
-assertion derivation.
+work is the first paid monitoring loop in Milestone 2, continuing with current
+assertion derivation from immutable eligible observations.

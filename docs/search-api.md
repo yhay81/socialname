@@ -176,7 +176,7 @@ identity, and no delete privilege on these tables.
 ## Verification and remaining gate
 
 The PostgreSQL 18 integration test resets its disposable fixture database so
-back-to-back runs cover replay-safe migrations, 31 product tables, 26
+back-to-back runs cover replay-safe migrations, 34 product tables, 29
 forced-RLS policies, exact and conflicting idempotency replay,
 read-only/write scope separation, required consent purpose, unknown sites,
 target-free errors, two-tenant isolation, digest-only idempotency storage,
@@ -184,13 +184,15 @@ polling, three ordered partial/terminal events, `Last-Event-ID` resumption,
 append-only rejection, idempotent cancellation, terminal-event uniqueness,
 least-privilege columns, bounded SSE connection recovery, job coalescing,
 claim/reclaim fencing, retry exhaustion, observation/event idempotency,
-multi-search fan-out, lineage, invalid-target handling, and cancellation,
-consent-withdrawal, and rule-health races.
+multi-search and watch fan-out, watch freshness reuse and byte reservation,
+lineage, invalid-target handling, and cancellation, consent-withdrawal, and
+rule-health races.
 
 The API process still initiates no network request and cannot normalize a
 target. A separate signed worker performs those operations only for an exact
-promoted, active, fresh healthy rule/pack/region binding. The next ordered gate
-is freshness-aware watch scheduling and equivalent-work coalescing; external
-live acceptance remains required before representative discovery rules can
-execute. See
-[Managed probe jobs and observation ingestion](managed-jobs.md).
+promoted, active, fresh healthy rule/pack/region binding. Search and watch
+consumers now coalesce only across the same consent/visibility work scope; the
+next ordered gate is current assertion recomputation. External live acceptance
+remains required before representative discovery rules can execute. See
+[Managed probe jobs and observation ingestion](managed-jobs.md) and
+[Freshness-aware watch scheduling](watch-scheduling.md).

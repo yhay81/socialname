@@ -8,8 +8,11 @@ slice. Migration `0003_search_event_stream.sql` separates requested from
 site-normalized usernames and adds append-only ordered search events.
 Migration `0004_managed_probe_jobs.sql` adds consent/visibility-scoped active
 work, fenced claims, narrow worker coordinator functions, and the final
-consent-lock boundary used by atomic observation/event ingestion. Assertion
-recomputation and delivery workers remain closed for their own vertical slices.
+consent-lock boundary used by atomic observation/event ingestion. Migration
+`0005_watch_scheduling.sql` adds revisioned watch endpoint links, immutable
+runs and run targets, freshness reuse, bounded scheduling coordination, and
+search/watch consumers. Assertion recomputation and delivery workers remain
+closed for their own vertical slices.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -38,7 +41,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 31 product tables:
+The migrations create 34 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -46,7 +49,7 @@ The migrations create 31 product tables:
 | Site and rules | `sites`, `rule_packs`, `rule_versions`, `rule_health_records` |
 | Consent | `consent_grants`, `consent_events` |
 | Interactive work | `searches`, `search_targets`, `search_events` |
-| Monitoring and execution | `watches`, `watch_targets`, `probe_jobs`, `probe_job_consumers` |
+| Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `assertions`, `assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries` |
 | Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `suppression_tokens` |
@@ -57,7 +60,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Twenty-six tenant-owned tables have row-level security both enabled and
+Twenty-nine tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -71,7 +74,7 @@ transaction must:
 4. keep all tenant work inside the same transaction and connection.
 
 Connection-level tenant state must never be allowed to leak through a pool.
-The authenticated workspace and search routes implement this contract. Their
+The authenticated workspace, search, and watch routes implement this contract. Their
 integration test uses a real `LOGIN NOSUPERUSER NOBYPASSRLS` non-owner role and
 proves that one tenant cannot read or insert another tenant row or observe a
 foreign search/event cursor.
@@ -100,12 +103,13 @@ for the complete request and operator contract.
 ## Managed worker coordinator boundary
 
 The worker is also a non-owner `NOSUPERUSER NOBYPASSRLS` role, but it must
-select the next tenant before it can set transaction-local RLS. Migration
-`0004_managed_probe_jobs.sql` therefore adds four fixed-search-path
-`SECURITY DEFINER` functions. They can resolve an exact eligible signed rule,
-lock one eligible target, claim one job with an incremented attempt fence, and
-lock the consent attached to an exact current lease. They return only opaque
-IDs, an attempt number, or a boolean.
+select the next tenant before it can set transaction-local RLS. Migrations
+`0004_managed_probe_jobs.sql` and `0005_watch_scheduling.sql` therefore provide
+six fixed-search-path `SECURITY DEFINER` functions. They can resolve an exact
+eligible signed rule, lock one eligible search target, lock one due watch, lock
+one eligible watch-run target, claim one job with an incremented attempt fence,
+and lock the consent attached to an exact current lease. They return only
+opaque IDs, an attempt number, or a boolean.
 
 `PUBLIC` execution is revoked. Deployment grants only these functions plus the
 column-limited ordinary table access exercised by the integration fixture. The
@@ -114,7 +118,7 @@ worker has no access to `api_key_credentials`, no table ownership or
 Target/consumer/observation/event/lineage work occurs only after the selected
 tenant is set locally on the transaction.
 
-Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the four coordinator
+Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the six coordinator
 functions must be owned by a dedicated `NOLOGIN BYPASSRLS` role or an
 equivalently privileged migration owner. The integration test asserts that
 owner capability separately from the worker's NOBYPASSRLS status. The
@@ -126,7 +130,8 @@ and a current lease before taking `FOR KEY SHARE` on its matching active
 purpose-specific consent. A withdrawal that commits first blocks ingestion; an
 ingestion transaction holding the lock commits first and makes the subsequent
 withdrawal unambiguously later. See
-[Managed probe jobs and observation ingestion](managed-jobs.md).
+[Managed probe jobs and observation ingestion](managed-jobs.md) and
+[Freshness-aware watch scheduling](watch-scheduling.md).
 
 ## Trust and privacy constraints
 
@@ -191,16 +196,17 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 31 tables and 26
+It applies the embedded migrations twice, inventories all 34 tables and 29
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
 foreign keys, immutable observations, transition confirmation bases,
 shared-only notification suppression, valid confirmed delivery, ordered
 deletion deadlines, receipts, lineage, and a second real NOBYPASSRLS worker
-role covering job coalescing, fencing, retry, atomic observation/event
-ingestion, invalid targets, cancellation, consent withdrawal, and regional
-rule degradation. Tests skip only when `SOCIALNAME_TEST_DATABASE_URL` is
+role covering job coalescing, watch planning, freshness reuse, byte
+reservation, fencing, retry, atomic observation/search/watch ingestion,
+invalid targets, revision cancellation, consent withdrawal, and regional rule
+degradation. Tests skip only when `SOCIALNAME_TEST_DATABASE_URL` is
 absent; the CI job always supplies it. The administrator, application, and
 worker test URLs must identify the same disposable test database with their
 intended roles: the integration test truncates product tables and resets
@@ -209,7 +215,7 @@ repeatedly.
 
 The HTTP process uses the separate `SOCIALNAME_SERVER_DATABASE_URL` runtime
 credential. Startup requires a database connection, readiness is
-PostgreSQL-aware, and every private workspace/search operation authenticates
+PostgreSQL-aware, and every private workspace/search/watch operation authenticates
 and sets a transaction-local tenant before product access. The schema-owner
 `SOCIALNAME_DATABASE_URL` remains limited to migration and explicit
 workspace/key operator commands.

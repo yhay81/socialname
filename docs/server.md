@@ -3,10 +3,10 @@
 `socialname-server` is the operable Axum/Tower process boundary for the managed
 SocialName product. It embeds forward-only PostgreSQL migrations, provides
 explicit workspace/API-key operator commands, exposes authenticated private
-workspace/search resources, and provides ordered SSE replay. Worker execution,
-watch, notification, and other product routes remain closed until their ordered
-roadmap slices add authorization, storage use, lineage, and failure behavior
-end to end.
+workspace/search/watch resources, and provides ordered SSE replay. Notification
+and other product routes remain closed until their ordered roadmap slices add
+authorization, storage use, lineage, and failure behavior end to end. Managed
+network execution remains in the separate signed worker.
 
 The server depends on `socialname-protocol`; it does not make the protocol,
 domain, or engine depend on HTTP or persistence.
@@ -71,6 +71,10 @@ POST /v1/searches
 GET /v1/searches/{search_id}
 GET /v1/searches/{search_id}/events
 DELETE /v1/searches/{search_id}
+POST /v1/watches
+GET /v1/watches/{watch_id}
+PATCH /v1/watches/{watch_id}
+DELETE /v1/watches/{watch_id}
 ```
 
 The two health endpoints return a small `socialname.dev/api/v1` JSON document
@@ -96,12 +100,19 @@ polling windows, batches, keep-alives, and open connection count are bounded.
 The complete contract is in
 [Private search API and ordered event stream](search-api.md).
 
+Watch creation, patching, and deletion require `watch:write`; single-resource
+reads require `watch:read`. Creation verifies active private-history consent,
+known sites, and active tenant-local notification endpoints. Revision-checked
+patches prevent last-writer-wins schedule loss, while pause/delete atomically
+cancel older pending runs. The API process stores policy but performs no
+probe. See [Freshness-aware watch scheduling](watch-scheduling.md).
+
 Every other path returns a protocol `not_found` response. Unsupported methods
-return a protocol `invalid_request` response. Watches, notification endpoints,
+return a protocol `invalid_request` response. Notification endpoint management,
 worker control, and HTTP key-administration routes do not exist yet, so
 authentication cannot accidentally make later product capabilities available.
 The separate one-shot signed worker does not share the server's HTTP router or
-database pool; PostgreSQL job integration remains closed.
+database pool.
 
 ## Request boundary
 
@@ -114,10 +125,10 @@ The Tower stack is ordered so one outer request guard:
    request ID to every response.
 
 A Tower concurrency layer bounds in-flight handler work. Axum's default body
-limit is set to the same configured maximum for future body-consuming
-extractors. Each future JSON route must still map extractor rejections into the
-closed protocol error envelope and must not bypass the body limit by polling raw
-frames.
+limit is set to the same configured maximum for body-consuming extractors.
+Search and watch JSON routes map extractor rejections into the closed protocol
+envelope; each future JSON route must do the same and must not bypass the body
+limit by polling raw frames.
 
 Missing routes, method errors, declared-body overflow, invalid content length,
 and deadline failure remain JSON protocol errors. They do not return framework
@@ -163,7 +174,8 @@ request-ID regeneration, closed 404/405 errors, typed content-length rejection,
 deadline failure, closed unimplemented routes, API-key parsing/redaction,
 managed-search validation/header parsing, operator configuration, and graceful
 shutdown. PostgreSQL CI additionally covers migration replay, schema inventory,
-forced RLS, non-owner authentication, workspace/search isolation, key
+forced RLS, non-owner authentication, workspace/search/watch isolation, key
 expiry/revocation/scope, consent, exact/conflicting idempotency, ordered SSE
-replay, bounded stream capacity, cancellation, readiness, operator lifecycle,
-evidence/event immutability, notification safety, and deletion lineage.
+replay, watch revision/cancellation, bounded stream capacity, readiness,
+operator lifecycle, evidence/event immutability, notification safety, and
+deletion lineage.

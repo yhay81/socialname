@@ -1,9 +1,10 @@
 # Managed probe jobs and observation ingestion
 
-This slice connects accepted managed searches to `socialname-worker` without
-giving the API process network authority or giving the worker unrestricted
-cross-tenant database access. Migration `0004_managed_probe_jobs.sql` and
-`JobStore` implement one complete search-target path:
+This boundary connects accepted managed searches and scheduled private watches
+to `socialname-worker` without giving the API process network authority or
+giving the worker unrestricted cross-tenant database access. Migrations
+`0004_managed_probe_jobs.sql` and `0005_watch_scheduling.sql`, plus `JobStore`,
+implement the complete consumer-to-observation path:
 
 1. select eligible accepted work;
 2. normalize through the exact signed site rule;
@@ -58,20 +59,23 @@ access, table delete privilege, observation update privilege, or unrestricted
 cross-tenant read.
 
 Forced RLS means the worker cannot discover the tenant before it has selected
-work. Four fixed-search-path `SECURITY DEFINER` functions provide only the
+work. Six fixed-search-path `SECURITY DEFINER` functions provide only the
 minimum coordinator operations:
 
 - `socialname_worker_resolve_rule` returns the exact currently eligible rule
   version ID;
 - `socialname_worker_lock_next_target` returns one eligible tenant/target ID
   while locking it with `SKIP LOCKED`;
+- `socialname_worker_lock_due_watch` returns one due eligible tenant/watch ID;
+- `socialname_worker_lock_next_watch_target` returns one eligible pending
+  tenant/run-target ID;
 - `socialname_worker_claim_job` returns one tenant/job ID and incremented
   attempt fence;
 - `socialname_worker_lock_claim_consent` locks only the active consent row
   attached to an exact current job/attempt/owner lease.
 
 `PUBLIC` execution is revoked. Because tenant tables use `FORCE ROW LEVEL
-SECURITY`, these four functions must be owned by a dedicated `NOLOGIN`
+SECURITY`, these six functions must be owned by a dedicated `NOLOGIN`
 coordinator role with `BYPASSRLS` (or an equivalently privileged migration
 owner). An ordinary table owner cannot cross forced RLS. That privileged role
 owns only the reviewed coordinator boundary and is never a server or worker
@@ -81,7 +85,7 @@ observation, event, state, and lineage access proceeds under ordinary forced
 RLS.
 
 A deployment worker role needs schema usage, the column-limited table grants
-exercised by `postgres_migrations.rs`, and execute only on those four
+exercised by `postgres_migrations.rs`, and execute only on those six
 functions. Treat that integration fixture as the executable grant manifest;
 do not grant ownership or `BYPASSRLS` to make deployment easier.
 
@@ -97,9 +101,9 @@ remain. Backoff starts at 5 seconds, doubles, and caps at 5 minutes. The
 operator-selected maximum is closed to 1 through 10. Exhaustion atomically:
 
 - marks the job failed;
-- appends one nonretryable operational failure for every still-live consumer;
-- completes those targets;
-- appends `finished/completed` when all search targets are accounted for.
+- appends one nonretryable operational failure for every still-live search;
+- completes still-live search and watch-run targets;
+- closes a search or watch run when all of its targets are accounted for.
 
 Transport, DNS, timeout, access, size, decode, rule, and capacity failure remain
 operational. Classification ambiguity remains uncertain. Only `found` and
@@ -112,49 +116,49 @@ the worker rechecks:
 
 - the exact live lease;
 - active purpose-specific consent;
-- at least one live search consumer;
+- at least one live search or watch-run consumer;
 - the exact promoted rule/pack and latest fresh healthy regional record.
 
-Shutdown, search cancellation, consent withdrawal, or rule quarantine drops
-the network future. Immediately before ingestion, the transaction re-resolves
-the exact signed rule and locks the leased job's consent through the narrow
-coordinator function. Cancellation and live consumers are rechecked under row
-locks. No observation can commit after a consent-withdrawal transaction wins
-that lock.
+Shutdown, search cancellation, a stale watch revision, pause/delete, endpoint
+deactivation, consent withdrawal, or rule quarantine drops the network future.
+Immediately before ingestion, the transaction re-resolves the exact signed
+rule and locks the leased job's consent through the narrow coordinator
+function. Cancellation and live consumers are rechecked under row locks. No
+observation can commit after a consent-withdrawal transaction wins that lock.
 
-An explicitly cancelled search makes the leased job terminally `cancelled`.
-Consent withdrawal also makes a claimed job ineligible and prevents
-observation or result-event creation. The later consent-governance slice still
-has to reconcile searches and queued jobs that were never claimed; this worker
-boundary intentionally does not invent a broad cross-tenant consent sweeper.
+The narrow claim coordinator cancels dead watch targets and an active job that
+no live search or watch still needs. A claimed job becomes ineligible before
+observation, event, or watch-target creation.
 
 ## Atomic observation and event ingestion
 
 A successful job creates at most one immutable observation. The observation,
-job terminal state, per-consumer result events, target states, terminal search
-events, and lineage edges commit in one tenant transaction. A repeated
-completion of the same fenced claim returns `already_final`; it cannot duplicate
-the observation or event.
+job terminal state, per-search result events, watch-run target completions,
+terminal search/run states, and lineage edges commit in one tenant transaction.
+A repeated completion of the same fenced claim returns `already_final`; it
+cannot duplicate the observation, event, or watch result.
 
 Observation persistence retains only typed outcome, evidence class/digest,
 exact rule/region, consent/visibility, source, and bounded freshness. It does
 not retain complete bodies, cookies, credentials, arbitrary headers, or
-matcher traces. One coalesced observation can support multiple searches, but
-each search receives its own event UUID and sequence. Lineage records:
+matcher traces. One coalesced observation can support multiple searches and
+watch runs, but each search receives its own event UUID and sequence. Lineage
+records:
 
 - search target to job;
 - job to observation;
 - observation to definitive/uncertain event;
+- observation to watch-run target;
 - job to terminal operational-failure event.
 
 Current assertion derivation is deliberately not part of this transaction.
-After the next ordered watch-scheduling and equivalent-work-coalescing slice,
-assertion derivation can replace current interpretations from eligible
-immutable observations while preserving this lineage.
+The next ordered assertion slice can replace current interpretations from
+eligible immutable observations while preserving this lineage.
 
 ## One-job operator entry point
 
-`process-one` performs a bounded expansion batch and executes at most one job.
+`process-one` plans at most one due watch, performs a bounded alternating
+search/watch expansion batch, and executes at most one job.
 Connections created by this command cap statement time at 10 seconds, lock wait
 at 5 seconds, idle transaction time at 15 seconds, pool acquisition at 5
 seconds, and initial connection establishment at 10 seconds:
@@ -187,10 +191,10 @@ request. Ctrl-C drops that request and leaves the fenced lease to expire
 safely.
 
 Standard output is one target-free
-`socialname.dev/managed-job-process/v1` object. It contains status, expansion
-count, optional job ID, and optional attempt count—never username, result,
-consent ID, tenant ID, or database URL. Errors use fixed classes and likewise
-do not reflect target or credential material.
+`socialname.dev/managed-job-process/v1` object. It contains status, planned
+watch-run count, expansion count, optional job ID, and optional attempt
+count—never username, result, consent ID, tenant ID, or database URL. Errors
+use fixed classes and likewise do not reflect target or credential material.
 
 ## Verification
 
@@ -201,13 +205,15 @@ worker roles and proves:
 
 - forced-RLS isolation and no worker credential-table access;
 - exact rule/pack/region eligibility;
-- coalescing and consent isolation;
+- search/watch coalescing and consent isolation;
+- due-run atomicity, freshness reuse, and conservative byte reservation;
 - claims, expiry reclamation, and stale-fence rejection;
 - bounded retry and exhaustion;
 - idempotent observation/event ingestion;
 - multi-consumer fan-out and lineage;
 - invalid-target separation;
-- search cancellation, consent withdrawal, and rule degradation before commit.
+- search cancellation, watch revision cancellation, consent withdrawal, and
+  rule degradation before commit.
 
 No test claims external deployment, production signing, live-site correctness,
 or multi-region evidence.

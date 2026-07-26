@@ -134,6 +134,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Managed probe jobs and observation ingestion](managed-jobs.md) — exact work
   identity, narrow forced-RLS coordination, fencing, retries, consent locks,
   atomic fan-out, and the bounded one-job operator.
+- [Freshness-aware watch scheduling](watch-scheduling.md) — authenticated
+  lifecycle, atomic due runs, exact-rule freshness reuse, byte reservation,
+  search/watch coalescing, and revision cancellation.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
@@ -169,8 +172,9 @@ These terms have distinct meanings and should not be used interchangeably:
 The current milestone is **First paid monitoring loop**. The canonical task
 breakdown and acceptance evidence live in [`ROADMAP.md`](../ROADMAP.md):
 
-1. Add freshness-aware watch scheduling and equivalent-work coalescing.
-2. Recompute current assertions from immutable managed observations.
+1. Recompute current assertions from immutable managed observations.
+2. Persist meaningful transitions while keeping account change separate from
+   measurement degradation.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

@@ -189,7 +189,7 @@ bounded database probe shorter than the outer request deadline and returns
 
 The PostgreSQL 18 integration gate covers:
 
-- replay-safe migrations, 31 product tables, and 26 forced-RLS policies;
+- replay-safe migrations, 34 product tables, and 29 forced-RLS policies;
 - credential-table and definer-function `PUBLIC` privilege revocation;
 - a real `LOGIN NOSUPERUSER NOBYPASSRLS` runtime role;
 - transaction-local tenant separation for two valid keys;

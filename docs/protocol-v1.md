@@ -144,11 +144,20 @@ and bounded execution policy:
 - maximum 256 probes and 64 MiB inspected bytes per run;
 - retention: 30 through 730 days.
 
+The probe maximum must cover the complete
+`usernames × sites × region_classes` run. This relation is checked before a
+watch can reach storage, so scheduling cannot silently truncate the requested
+set to fit a smaller budget.
+
 The schedule is an interval rather than arbitrary cron or executable code.
 `WatchPatchRequest` requires an expected nonzero revision and at least one real
-change, so the later server can implement optimistic concurrency without
-last-writer-wins configuration loss. Active watches require a future next-run
-time; paused and deleting watches cannot claim one.
+change. The authenticated server implements optimistic concurrency with that
+revision: active watches require a future next-run time, while paused and
+deleting watches cannot claim one. Creation and mutation require `watch:write`;
+single-resource reads require `watch:read`. The server additionally verifies
+active private-history consent, tenant-local endpoints, and known sites.
+Scheduling, freshness reuse, and worker coalescing are specified in
+[Freshness-aware watch scheduling](watch-scheduling.md).
 
 ## Transitions and notifications
 
