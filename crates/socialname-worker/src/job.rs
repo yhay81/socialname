@@ -14,6 +14,10 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::derivation::{
+    DerivationKey, MeasurementOutcome, WatchInterpretationKey, apply_watch_interpretation,
+    lock_derivation_target, recompute_assertion,
+};
 use crate::{ManagedRule, WorkerError};
 
 pub const WORKER_DATABASE_URL_ENV: &str = "SOCIALNAME_WORKER_DATABASE_URL";
@@ -29,7 +33,6 @@ const SESSION_LIMITS: [&str; 3] = [
 const MINIMUM_LEASE_MS: u64 = 5_000;
 const MAXIMUM_LEASE_MS: u64 = 300_000;
 const MAXIMUM_ATTEMPTS: u32 = 10;
-const OBSERVATION_TTL_MS: i64 = 24 * 60 * 60 * 1_000;
 const INITIAL_RETRY_DELAY_MS: i64 = 5_000;
 const MAXIMUM_RETRY_DELAY_MS: i64 = 5 * 60 * 1_000;
 
@@ -345,8 +348,8 @@ impl JobStore {
         .execute(&mut *transaction)
         .await
         .map_err(|_| JobError::StorageInvariant)?;
-        let fresh_observation_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM observations \
+        let fresh_observation: Option<FreshObservation> = sqlx::query_as(
+            "SELECT id, outcome_kind FROM observations \
              WHERE tenant_id = $1 \
                AND normalized_username = $2 \
                AND site_id = $3 \
@@ -373,7 +376,8 @@ impl JobStore {
         .fetch_optional(&mut *transaction)
         .await
         .map_err(|_| JobError::StorageInvariant)?;
-        if let Some(observation_id) = fresh_observation_id {
+        if let Some(fresh_observation) = fresh_observation {
+            let observation_id = fresh_observation.id;
             let affected = sqlx::query(
                 "UPDATE watch_run_targets \
                  SET state = 'satisfied', observation_id = $3, \
@@ -398,6 +402,39 @@ impl JobStore {
                 "watch_run_target",
                 locked.watch_run_target_id,
                 "freshness_reuse",
+            )
+            .await?;
+            let evaluated_at_unix_ms = database_now_ms(&mut transaction).await?;
+            let derivation_key = DerivationKey {
+                tenant_id: locked.tenant_id,
+                normalized_username: &normalized_username,
+                site_id: &binding.site_id,
+                rule_version_id: binding.rule_version_id,
+                rule_hash: &binding.rule_hash,
+            };
+            lock_derivation_target(&mut transaction, &derivation_key).await?;
+            let derived =
+                recompute_assertion(&mut transaction, &derivation_key, evaluated_at_unix_ms)
+                    .await?;
+            let measurement = match fresh_observation.outcome_kind.as_str() {
+                "definitive" if derived.as_ref().is_some_and(|value| value.is_conflicted()) => {
+                    MeasurementOutcome::Degraded { observation_id }
+                }
+                "definitive" => MeasurementOutcome::Healthy { observation_id },
+                "uncertain" => MeasurementOutcome::Degraded { observation_id },
+                _ => return Err(JobError::StorageInvariant),
+            };
+            apply_watch_interpretation(
+                &mut transaction,
+                &WatchInterpretationKey {
+                    tenant_id: locked.tenant_id,
+                    watch_target_id: target.watch_target_id,
+                    rule_version_id: binding.rule_version_id,
+                    region_class: &binding.region_class,
+                },
+                derived.as_ref(),
+                measurement,
+                evaluated_at_unix_ms,
             )
             .await?;
             finish_watch_run(&mut transaction, locked.tenant_id, target.watch_run_id).await?;
@@ -979,8 +1016,16 @@ impl JobStore {
             return Ok(JobDisposition::Cancelled);
         }
         let observed_at_unix_ms = database_now_ms(&mut transaction).await?;
+        let derivation_key = DerivationKey {
+            tenant_id: claim.tenant_id,
+            normalized_username: &claim.normalized_username,
+            site_id: &claim.site_id,
+            rule_version_id: claim.rule_version_id,
+            rule_hash: &claim.rule_hash,
+        };
+        lock_derivation_target(&mut transaction, &derivation_key).await?;
         let expires_at_unix_ms = observed_at_unix_ms
-            .checked_add(OBSERVATION_TTL_MS)
+            .checked_add(outcome.ttl_ms())
             .ok_or(JobError::StorageInvariant)?;
         let observation_id = Uuid::new_v4();
         let evidence_digest = decode_digest(&result.classification.evidence_digest)?;
@@ -1028,6 +1073,8 @@ impl JobStore {
             "managed_measurement",
         )
         .await?;
+        let derived =
+            recompute_assertion(&mut transaction, &derivation_key, observed_at_unix_ms).await?;
 
         for consumer in search_consumers {
             let event = result_event(
@@ -1057,12 +1104,57 @@ impl JobStore {
                 "search_result",
             )
             .await?;
+            if let Some(derived) = derived.as_ref() {
+                let assertion =
+                    derived.protocol_assertion(observed_at_unix_ms, consumer.maximum_age_ms)?;
+                let mut assertion_event = new_search_event(
+                    consumer.search_id,
+                    observed_at_unix_ms,
+                    SearchEventData::AssertionUpdated { assertion },
+                )?;
+                assertion_event.sequence =
+                    next_sequence(&mut transaction, claim.tenant_id, consumer.search_id).await?;
+                insert_event(
+                    &mut transaction,
+                    claim.tenant_id,
+                    consumer.search_id,
+                    None,
+                    &assertion_event,
+                )
+                .await?;
+                insert_lineage(
+                    &mut transaction,
+                    claim.tenant_id,
+                    "assertion",
+                    derived.id(),
+                    "search_event",
+                    event_uuid(&assertion_event)?,
+                    "assertion_update",
+                )
+                .await?;
+            }
             finish_search_if_complete(&mut transaction, claim.tenant_id, consumer.search_id)
                 .await?;
         }
         for consumer in watch_consumers {
             complete_watch_consumer(&mut transaction, claim.tenant_id, &consumer, observation_id)
                 .await?;
+            apply_watch_interpretation(
+                &mut transaction,
+                &WatchInterpretationKey {
+                    tenant_id: claim.tenant_id,
+                    watch_target_id: consumer.watch_target_id,
+                    rule_version_id: claim.rule_version_id,
+                    region_class: &claim.region_class,
+                },
+                derived.as_ref(),
+                outcome.measurement_outcome(
+                    observation_id,
+                    derived.as_ref().is_some_and(|value| value.is_conflicted()),
+                ),
+                observed_at_unix_ms,
+            )
+            .await?;
             insert_lineage(
                 &mut transaction,
                 claim.tenant_id,
@@ -1185,6 +1277,21 @@ impl JobStore {
         }
         for consumer in watch_consumers {
             fail_watch_consumer(&mut transaction, claim.tenant_id, &consumer).await?;
+            apply_watch_interpretation(
+                &mut transaction,
+                &WatchInterpretationKey {
+                    tenant_id: claim.tenant_id,
+                    watch_target_id: consumer.watch_target_id,
+                    rule_version_id: claim.rule_version_id,
+                    region_class: &claim.region_class,
+                },
+                None,
+                MeasurementOutcome::Unavailable {
+                    probe_job_id: claim.job_id,
+                },
+                occurred_at_unix_ms,
+            )
+            .await?;
             insert_lineage(
                 &mut transaction,
                 claim.tenant_id,
@@ -1515,6 +1622,12 @@ struct WatchExpansionTarget {
 }
 
 #[derive(FromRow)]
+struct FreshObservation {
+    id: Uuid,
+    outcome_kind: String,
+}
+
+#[derive(FromRow)]
 struct ExpansionTarget {
     search_id: Uuid,
     requested_username: String,
@@ -1561,6 +1674,7 @@ struct LiveSearchConsumer {
 struct LiveWatchConsumer {
     watch_run_target_id: Uuid,
     watch_run_id: Uuid,
+    watch_target_id: Uuid,
 }
 
 #[derive(Clone, Copy)]
@@ -1573,7 +1687,7 @@ enum ManagedResult {
 }
 
 #[derive(Clone, Copy)]
-enum RecordedOutcome {
+pub(crate) enum RecordedOutcome {
     Definitive(DefinitiveVerdict),
     Uncertain(UncertaintyReason),
 }
@@ -1597,6 +1711,28 @@ impl RecordedOutcome {
             Self::Uncertain(UncertaintyReason::ClassificationAmbiguous) => {
                 ("uncertain", None, Some("classification_ambiguous"))
             }
+        }
+    }
+
+    const fn ttl_ms(self) -> i64 {
+        match self {
+            Self::Definitive(DefinitiveVerdict::Found) => 24 * 60 * 60 * 1_000,
+            Self::Definitive(DefinitiveVerdict::NotFound) => 15 * 60 * 1_000,
+            Self::Uncertain(_) => 5 * 60 * 1_000,
+        }
+    }
+
+    const fn measurement_outcome(
+        self,
+        observation_id: Uuid,
+        assertion_is_conflicted: bool,
+    ) -> MeasurementOutcome {
+        match self {
+            Self::Definitive(_) if assertion_is_conflicted => {
+                MeasurementOutcome::Degraded { observation_id }
+            }
+            Self::Definitive(_) => MeasurementOutcome::Healthy { observation_id },
+            Self::Uncertain(_) => MeasurementOutcome::Degraded { observation_id },
         }
     }
 }
@@ -1812,7 +1948,7 @@ async fn load_live_watch_consumers(
 ) -> Result<Vec<LiveWatchConsumer>, JobError> {
     sqlx::query_as(
         "SELECT run_target.id AS watch_run_target_id, \
-                run_target.watch_run_id \
+                run_target.watch_run_id, run_target.watch_target_id \
          FROM probe_job_consumers AS consumer \
          JOIN watch_run_targets AS run_target \
            ON run_target.tenant_id = consumer.tenant_id \
@@ -1823,6 +1959,9 @@ async fn load_live_watch_consumers(
          JOIN watches AS watch \
            ON watch.tenant_id = run.tenant_id \
           AND watch.id = run.watch_id \
+         JOIN watch_targets AS target \
+           ON target.tenant_id = run_target.tenant_id \
+          AND target.id = run_target.watch_target_id \
          WHERE consumer.tenant_id = $1 AND consumer.probe_job_id = $2 \
            AND run_target.state = 'queued' \
            AND run_target.probe_job_id = $2 \
@@ -1840,9 +1979,9 @@ async fn load_live_watch_consumers(
                WHERE link.tenant_id = watch.tenant_id \
                  AND link.watch_id = watch.id \
                  AND endpoint.state = 'active'\
-           ) \
+         ) \
          ORDER BY run.id, run_target.id \
-         FOR UPDATE OF run, run_target, watch",
+         FOR UPDATE OF run_target, run, watch, target",
     )
     .bind(claim.tenant_id)
     .bind(claim.job_id)

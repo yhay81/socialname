@@ -114,11 +114,15 @@ pub struct Transition {
 impl Validate for Transition {
     fn validate(&self) -> Result<(), ValidationErrors> {
         self.change.validate()?;
-        validate_nonempty_ids(
-            "supporting_observation_ids",
-            &self.supporting_observation_ids,
-            32,
-        )?;
+        if matches!(self.change, TransitionChange::AccountState { .. })
+            || !self.supporting_observation_ids.is_empty()
+        {
+            validate_nonempty_ids(
+                "supporting_observation_ids",
+                &self.supporting_observation_ids,
+                32,
+            )?;
+        }
         validate_timestamp("detected_at_unix_ms", self.detected_at_unix_ms)?;
         validate_confirmation(&self.change, &self.confirmation)
     }
@@ -259,5 +263,23 @@ mod tests {
         assert_eq!(json["change"]["class"], "measurement_health");
         assert!(json["change"].get("from").is_some());
         assert!(json["change"].get("account_state").is_none());
+    }
+
+    #[test]
+    fn operational_measurement_failure_does_not_require_an_observation() {
+        let mut transition = transition(
+            TransitionChange::MeasurementHealth {
+                region_class: RegionClass::new("jp").unwrap(),
+                rule_hash: RuleHash::new("a".repeat(64)).unwrap(),
+                from: MeasurementState::Healthy,
+                to: MeasurementState::Unavailable,
+            },
+            TransitionConfirmation::Confirmed {
+                basis: ConfirmationBasis::MeasurementHealthEvidence,
+            },
+        );
+        transition.supporting_observation_ids.clear();
+
+        assert!(transition.validate().is_ok());
     }
 }

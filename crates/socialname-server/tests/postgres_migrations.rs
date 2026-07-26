@@ -1661,6 +1661,12 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     )
     .await;
     let managed_watch_id = Uuid::parse_str(managed_watch.watch_id.as_str()).unwrap();
+    let managed_watch_target_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM watch_targets WHERE watch_id = $1")
+            .bind(managed_watch_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
     sqlx::query(
         "UPDATE watches SET \
              updated_at = created_at, \
@@ -1797,6 +1803,89 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     assert!(completed_watch_run.3 <= completed_watch_run.4);
     assert_eq!(completed_watch_run.5, "completed");
 
+    let current_assertion: (Uuid, String, String, i64) = sqlx::query_as(
+        "SELECT id, verdict, quality, \
+                (extract(epoch FROM expires_at - observed_at) * 1000)::bigint \
+         FROM assertions \
+         WHERE tenant_id = '00000000-0000-0000-0000-000000000001' \
+           AND normalized_username = 'private-search-target' \
+           AND site_id = 'managed-test' \
+           AND is_current AND withdrawn_at IS NULL",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(current_assertion.1, "found");
+    assert_eq!(current_assertion.2, "verified");
+    assert_eq!(current_assertion.3, 24 * 60 * 60 * 1_000);
+    let assertion_support_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM assertion_support \
+         WHERE assertion_id = $1 AND support_role = 'supporting'",
+    )
+    .bind(current_assertion.0)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(assertion_support_count, 1);
+    let baseline: (String, Uuid) = sqlx::query_as(
+        "SELECT account_state, account_assertion_id \
+         FROM watch_targets WHERE id = $1",
+    )
+    .bind(managed_watch_target_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(baseline, ("found".to_owned(), current_assertion.0));
+    let initial_account_transitions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM transitions \
+         WHERE watch_target_id = $1 AND transition_class = 'account_state'",
+    )
+    .bind(managed_watch_target_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(initial_account_transitions, 0);
+    let assertion_event_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM search_events \
+         WHERE search_id = $1 AND event_type = 'assertion_updated'",
+    )
+    .bind(Uuid::parse_str(third.search_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(assertion_event_count, 1);
+
+    let historical_assertion_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO assertions (\
+            id, tenant_id, normalized_username, site_id, outcome_kind, verdict, \
+            quality, evidence_class, observed_at, expires_at, \
+            derivation_version, is_current, created_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', \
+            'private-search-target', 'managed-test', 'definitive', 'not_found', \
+            'verified', 'e3_explicit_endpoint', \
+            clock_timestamp() - interval '2 hours', \
+            clock_timestamp() - interval '1 hour', 'assertion/v1', false, \
+            clock_timestamp() - interval '1 hour'\
+         )",
+    )
+    .bind(historical_assertion_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watch_targets \
+         SET account_state = 'not_found', account_assertion_id = $2, \
+             account_state_since = clock_timestamp() - interval '2 hours' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_target_id)
+    .bind(historical_assertion_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
     sqlx::query(
         "UPDATE watches SET \
              updated_at = created_at, \
@@ -1834,6 +1923,149 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
         freshness_run,
         ("completed".to_owned(), 0, "satisfied".to_owned())
     );
+    let confirmed_appearance: (String, String, String, i64) = sqlx::query_as(
+        "SELECT transition.from_state, transition.to_state, \
+                transition.confirmation_basis, count(basis.observation_id) \
+         FROM transitions AS transition \
+         LEFT JOIN transition_basis AS basis \
+           ON basis.tenant_id = transition.tenant_id \
+          AND basis.transition_id = transition.id \
+         WHERE transition.watch_target_id = $1 \
+           AND transition.transition_class = 'account_state' \
+         GROUP BY transition.id",
+    )
+    .bind(managed_watch_target_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        confirmed_appearance,
+        (
+            "not_found".to_owned(),
+            "found".to_owned(),
+            "managed_e4".to_owned(),
+            1,
+        )
+    );
+    let confirmed_baseline: (String, Uuid) = sqlx::query_as(
+        "SELECT account_state, account_assertion_id \
+         FROM watch_targets WHERE id = $1",
+    )
+    .bind(managed_watch_target_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        confirmed_baseline,
+        ("found".to_owned(), current_assertion.0)
+    );
+
+    let conflicting_job_id = Uuid::new_v4();
+    let conflicting_observation_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO probe_jobs (\
+            id, tenant_id, normalized_username, site_id, rule_version_id, \
+            region_class, work_key_hash, consent_grant_id, visibility, state, \
+            available_at, created_at, updated_at, completed_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', \
+            'private-search-target', 'managed-test', $2, 'jp', \
+            decode(repeat('ef', 32), 'hex'), $3, 'private', 'succeeded', \
+            clock_timestamp(), clock_timestamp(), clock_timestamp(), \
+            clock_timestamp()\
+         )",
+    )
+    .bind(conflicting_job_id)
+    .bind(binding.rule_version_id())
+    .bind(Uuid::parse_str(SECOND_CONSENT_GRANT_ID).unwrap())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO observations (\
+            id, tenant_id, probe_job_id, consent_grant_id, \
+            normalized_username, site_id, rule_version_id, outcome_kind, \
+            verdict, evidence_class, evidence_digest, source, producer_kind, \
+            visibility, region_class, rule_health_green, observed_at, \
+            expires_at, created_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', $2, $3, \
+            'private-search-target', 'managed-test', $4, 'definitive', \
+            'not_found', 'e3_explicit_endpoint', \
+            decode(repeat('ee', 32), 'hex'), 'managed_probe', \
+            'managed_worker', 'private', 'jp', true, clock_timestamp(), \
+            clock_timestamp() + interval '15 minutes', clock_timestamp()\
+         )",
+    )
+    .bind(conflicting_observation_id)
+    .bind(conflicting_job_id)
+    .bind(Uuid::parse_str(SECOND_CONSENT_GRANT_ID).unwrap())
+    .bind(binding.rule_version_id())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watches SET \
+             updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let conflict_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected a conflict replay run, got {other:?}"),
+    };
+    assert_eq!(
+        store
+            .expand_one_watch(&binding, &managed_rule)
+            .await
+            .unwrap(),
+        ExpandOutcome::FreshObservationCompleted
+    );
+    let conflict_run_state: String =
+        sqlx::query_scalar("SELECT state FROM watch_runs WHERE id = $1")
+            .bind(conflict_run_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(conflict_run_state, "completed");
+    let conflicted_assertion: (String, Option<String>, String, i64) = sqlx::query_as(
+        "SELECT outcome_kind, verdict, quality, \
+                (SELECT count(*) FROM assertion_support AS support \
+                 WHERE support.tenant_id = assertion.tenant_id \
+                   AND support.assertion_id = assertion.id \
+                   AND support.support_role = 'conflicting') \
+         FROM assertions AS assertion \
+         WHERE tenant_id = '00000000-0000-0000-0000-000000000001' \
+           AND normalized_username = 'private-search-target' \
+           AND site_id = 'managed-test' \
+           AND is_current AND withdrawn_at IS NULL",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        conflicted_assertion,
+        ("inconclusive".to_owned(), None, "conflicted".to_owned(), 2)
+    );
+    let conflict_account_state: (String, i64) = sqlx::query_as(
+        "SELECT target.account_state, count(transition.id) \
+         FROM watch_targets AS target \
+         LEFT JOIN transitions AS transition \
+           ON transition.tenant_id = target.tenant_id \
+          AND transition.watch_target_id = target.id \
+          AND transition.transition_class = 'account_state' \
+         WHERE target.id = $1 \
+         GROUP BY target.id",
+    )
+    .bind(managed_watch_target_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(conflict_account_state, ("found".to_owned(), 1));
 
     sqlx::query(
         "UPDATE probe_jobs \
@@ -1980,6 +2212,173 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     let restored_resource: WatchResource =
         serde_json::from_value(json_body(restored_response).await).unwrap();
     assert_eq!(restored_resource.revision, 3);
+
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    sqlx::query(
+        "UPDATE watches SET \
+             updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let degraded_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected a degradation watch run, got {other:?}"),
+    };
+    let degraded_job_id = match store
+        .expand_one_watch(&binding, &managed_rule)
+        .await
+        .unwrap()
+    {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected a degradation probe job, got {other:?}"),
+    };
+    let degraded_claim = store
+        .claim(&binding, "worker-degraded", Duration::from_secs(5))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(degraded_claim.job_id(), degraded_job_id);
+    let uncertain = managed_result(
+        Verdict::Inconclusive,
+        Some(InconclusiveReason::SiteChanged),
+        DomainEvidenceClass::E2DifferentialTemplate,
+        &candidate.rule_hash,
+        "d",
+    );
+    assert_eq!(
+        store
+            .record_result(&degraded_claim, &uncertain, 1)
+            .await
+            .unwrap(),
+        JobDisposition::Succeeded
+    );
+    let degraded_run_state: String =
+        sqlx::query_scalar("SELECT state FROM watch_runs WHERE id = $1")
+            .bind(degraded_run_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(degraded_run_state, "completed");
+    let degraded_transition: (String, String, String, i64) = sqlx::query_as(
+        "SELECT transition.from_state, transition.to_state, \
+                transition.confirmation_basis, count(basis.observation_id) \
+         FROM transitions AS transition \
+         LEFT JOIN transition_basis AS basis \
+           ON basis.tenant_id = transition.tenant_id \
+          AND basis.transition_id = transition.id \
+         WHERE transition.watch_target_id = $1 \
+           AND transition.transition_class = 'measurement_health' \
+         GROUP BY transition.id \
+         ORDER BY max(transition.created_at) DESC \
+         LIMIT 1",
+    )
+    .bind(managed_watch_target_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        degraded_transition,
+        (
+            "healthy".to_owned(),
+            "degraded".to_owned(),
+            "measurement_health_evidence".to_owned(),
+            1,
+        )
+    );
+
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    sqlx::query(
+        "UPDATE watches SET \
+             updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let unavailable_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected an unavailable watch run, got {other:?}"),
+    };
+    let unavailable_job_id = match store
+        .expand_one_watch(&binding, &managed_rule)
+        .await
+        .unwrap()
+    {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected an unavailable probe job, got {other:?}"),
+    };
+    let unavailable_claim = store
+        .claim(&binding, "worker-unavailable", Duration::from_secs(5))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(unavailable_claim.job_id(), unavailable_job_id);
+    assert_eq!(
+        store
+            .record_result(&unavailable_claim, &timeout_result, 1)
+            .await
+            .unwrap(),
+        JobDisposition::Failed
+    );
+    let unavailable_run_state: String =
+        sqlx::query_scalar("SELECT state FROM watch_runs WHERE id = $1")
+            .bind(unavailable_run_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(unavailable_run_state, "failed");
+    let unavailable_transition: (String, String, i64, i64) = sqlx::query_as(
+        "SELECT transition.from_state, transition.to_state, \
+                count(basis.observation_id), \
+                count(lineage.id) FILTER (\
+                    WHERE lineage.parent_kind = 'probe_job' \
+                      AND lineage.parent_id = $2 \
+                      AND lineage.purpose = 'measurement_unavailable'\
+                ) \
+         FROM transitions AS transition \
+         LEFT JOIN transition_basis AS basis \
+           ON basis.tenant_id = transition.tenant_id \
+          AND basis.transition_id = transition.id \
+         LEFT JOIN data_lineage_edges AS lineage \
+           ON lineage.tenant_id = transition.tenant_id \
+          AND lineage.child_kind = 'transition' \
+          AND lineage.child_id = transition.id \
+         WHERE transition.watch_target_id = $1 \
+           AND transition.transition_class = 'measurement_health' \
+           AND transition.to_state = 'unavailable' \
+         GROUP BY transition.id",
+    )
+    .bind(managed_watch_target_id)
+    .bind(unavailable_job_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        unavailable_transition,
+        ("degraded".to_owned(), "unavailable".to_owned(), 0, 1)
+    );
+    let account_state_after_degradation: (String, i64) = sqlx::query_as(
+        "SELECT target.account_state, count(transition.id) \
+         FROM watch_targets AS target \
+         LEFT JOIN transitions AS transition \
+           ON transition.tenant_id = target.tenant_id \
+          AND transition.watch_target_id = target.id \
+          AND transition.transition_class = 'account_state' \
+         WHERE target.id = $1 \
+         GROUP BY target.id",
+    )
+    .bind(managed_watch_target_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(account_state_after_degradation, ("found".to_owned(), 1));
+
     sqlx::query(
         "UPDATE watches SET \
              updated_at = created_at, \
@@ -2469,10 +2868,12 @@ async fn install_worker_role(pool: &PgPool) {
             consent_grants, searches, search_targets, search_events, probe_jobs,
             probe_job_consumers, data_lineage_edges, watches, watch_targets,
             watch_notification_endpoints, notification_endpoints, watch_runs,
-            watch_run_targets, observations
+            watch_run_targets, observations, assertions, assertion_support,
+            transitions, transition_basis
             TO socialname_migration_test_worker;
         GRANT INSERT ON
             search_events, probe_jobs, probe_job_consumers, observations,
+            assertions, assertion_support, transitions, transition_basis,
             data_lineage_edges, watch_runs, watch_run_targets
             TO socialname_migration_test_worker;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
@@ -2481,8 +2882,17 @@ async fn install_worker_role(pool: &PgPool) {
             TO socialname_migration_test_worker;
         GRANT UPDATE (next_run_at, updated_at) ON watches
             TO socialname_migration_test_worker;
-        GRANT UPDATE (normalized_username) ON watch_targets
+        GRANT UPDATE (
+            normalized_username, account_state, account_assertion_id,
+            account_state_since
+        ) ON watch_targets
             TO socialname_migration_test_worker;
+        GRANT UPDATE (is_current) ON assertions
+            TO socialname_migration_test_worker;
+        GRANT UPDATE (
+            confirmation_status, confirmation_basis, pending_reason,
+            suppression_reason
+        ) ON transitions TO socialname_migration_test_worker;
         GRANT UPDATE (state, reserved_bytes, completed_at) ON watch_runs
             TO socialname_migration_test_worker;
         GRANT UPDATE (

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod derivation;
 mod job;
 
 use socialname_canary::ValidatedPromotion;
