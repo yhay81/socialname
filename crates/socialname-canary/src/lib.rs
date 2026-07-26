@@ -6,6 +6,7 @@ mod error;
 mod health;
 mod promotion;
 mod report;
+mod rule_pack_metadata;
 mod runner;
 mod schema;
 mod shadow;
@@ -30,6 +31,13 @@ pub use report::{
     CANARY_REPORT_V1, CanaryLatencySummary, CanaryRatio, CanaryReportBuilder, CanaryReportEnvelope,
     CanaryReportError, CanaryReportPolicy, CanaryReportSummary, CanaryReportV1,
     CanaryReportValidator, ValidatedCanaryReport,
+};
+pub use rule_pack_metadata::{
+    ActivatedRulePackMetadata, MAX_RULE_PACK_METADATA_VALIDITY_MS, RULE_PACK_METADATA_V1,
+    RULE_PACK_TRUST_V1, RulePackMetadataBuildRequest, RulePackMetadataBuilder,
+    RulePackMetadataEnvelope, RulePackMetadataError, RulePackMetadataSigningKey,
+    RulePackMetadataV1, RulePackMetadataVerifier, RulePackPromotionBinding,
+    RulePackRolloutRegistry, RulePackRolloutStage, RulePackTrustV1, ValidatedRulePackMetadata,
 };
 pub use runner::{
     CanaryCaseExpectation, CanaryCaseOutcome, CanaryProbe, CanaryProbeSummary, CanaryRun,
