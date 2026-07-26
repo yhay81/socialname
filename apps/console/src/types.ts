@@ -1,0 +1,181 @@
+export const API_SCHEMA = "socialname.dev/api/v1";
+
+export type ApiKeyScope =
+  | "workspace:read"
+  | "search:read"
+  | "search:write"
+  | "watch:read"
+  | "watch:write"
+  | "notification:read"
+  | "notification:write"
+  | "data:export"
+  | "data:delete";
+
+export interface WorkspaceResource {
+  schema: typeof API_SCHEMA;
+  workspace_id: string;
+  slug: string;
+  display_name: string;
+  state: "active";
+  authenticated_api_key: {
+    api_key_id: string;
+    key_prefix: string;
+    scopes: ApiKeyScope[];
+    state: "active";
+    expires_at_unix_ms: number | null;
+  };
+}
+
+export interface WatchCreateRequest {
+  schema: typeof API_SCHEMA;
+  targets: {
+    usernames: string[];
+    site_ids: string[];
+  };
+  region_classes: string[];
+  maximum_age_ms: number;
+  schedule: {
+    interval_seconds: number;
+    jitter_percent: number;
+  };
+  probe_budget: {
+    maximum_probes_per_run: number;
+    maximum_bytes_per_run: number;
+  };
+  notification_endpoint_ids: string[];
+  private_history_consent_grant_id: string;
+  retention_days: number;
+}
+
+export interface WatchResource {
+  schema: typeof API_SCHEMA;
+  watch_id: string;
+  state: "active" | "paused" | "deleting";
+  revision: number;
+  configuration: WatchCreateRequest;
+  created_at_unix_ms: number;
+  updated_at_unix_ms: number;
+  next_run_at_unix_ms: number | null;
+}
+
+export interface WatchListPage {
+  schema: typeof API_SCHEMA;
+  watches: WatchResource[];
+  next_cursor: string | null;
+}
+
+export type TransitionChange =
+  | {
+      class: "account_state";
+      from: "found" | "not_found";
+      to: "found" | "not_found";
+    }
+  | {
+      class: "measurement_health";
+      region_class: string;
+      rule_hash: string;
+      from:
+        | "healthy"
+        | "degraded"
+        | "quarantined"
+        | "recovering"
+        | "unavailable";
+      to:
+        | "healthy"
+        | "degraded"
+        | "quarantined"
+        | "recovering"
+        | "unavailable";
+    };
+
+export type TransitionConfirmation =
+  | {
+      status: "confirmed";
+      basis:
+        | "managed_e4"
+        | "managed_e3_follow_up"
+        | "two_managed_independent_regions"
+        | "two_managed_separated_in_time"
+        | "corroborated_shared_candidate_opt_in"
+        | "measurement_health_evidence";
+    }
+  | {
+      status: "pending";
+      reason:
+        | "managed_verification_required"
+        | "second_managed_observation_required"
+        | "regional_conflict";
+    }
+  | {
+      status: "suppressed";
+      reason:
+        | "shared_only_absence"
+        | "conflicting_evidence"
+        | "watch_paused"
+        | "supporting_evidence_deleted";
+    };
+
+export interface Transition {
+  schema: typeof API_SCHEMA;
+  transition_id: string;
+  watch_id: string;
+  target: {
+    username: string;
+    site_id: string;
+  };
+  change: TransitionChange;
+  confirmation: TransitionConfirmation;
+  supporting_observation_ids: string[];
+  detected_at_unix_ms: number;
+}
+
+export type DeliveryState =
+  | "queued"
+  | "delivering"
+  | "retry_scheduled"
+  | "delivered"
+  | "permanently_failed"
+  | "cancelled";
+
+export interface NotificationDelivery {
+  schema: typeof API_SCHEMA;
+  delivery_id: string;
+  transition_id: string;
+  endpoint_id: string;
+  logical_notification_key: string;
+  kind: "account_state" | "measurement_health";
+  channel: "email" | "webhook";
+  confirmation_basis: string;
+  state: DeliveryState;
+  attempt_count: number;
+  created_at_unix_ms: number;
+  next_attempt_at_unix_ms: number | null;
+  delivered_at_unix_ms: number | null;
+  last_error_code: string | null;
+}
+
+export interface WatchTransitionEntry {
+  transition: Transition;
+  deliveries: NotificationDelivery[];
+}
+
+export interface WatchTransitionPage {
+  schema: typeof API_SCHEMA;
+  watch_id: string;
+  entries: WatchTransitionEntry[];
+  next_cursor: string | null;
+}
+
+export interface ApiErrorResponse {
+  schema: typeof API_SCHEMA;
+  request_id: string;
+  error: {
+    code: string;
+    retryable: boolean;
+    retry_after_ms: number | null;
+    violations: Array<{
+      field: string;
+      code: string;
+    }>;
+  };
+}
