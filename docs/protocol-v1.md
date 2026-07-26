@@ -197,6 +197,16 @@ logical notification key for deduplication, endpoint and transition lineage,
 confirmation basis, attempt state, retry time, and a bounded error code rather
 than response content.
 
+`WebhookNotification` is the stable signed body. It contains the API schema,
+one stable delivery ID, and the complete typed confirmed transition. Its
+constructor repeats the confirmation admission check, so pending or suppressed
+transitions cannot be serialized for delivery. Retries reuse the same delivery
+ID and body. HTTP transport is at least once; receivers deduplicate the
+`socialname-webhook-id` header instead of treating a successful response as an
+exactly-once guarantee. Signature input, outbound network policy, retries,
+fencing, and audit are specified in
+[Signed webhook delivery](webhook-delivery.md).
+
 ## Predictable errors
 
 `ApiErrorResponse` contains a request ID and a closed error code:
@@ -222,6 +232,6 @@ field rejection, redaction, selection and execution bounds, consent relations,
 freshness relabelling, result/failure separation, progress consistency, watch
 revision and schedule rules, transition confirmation, shared-only absence,
 write-only notification destinations, delivery state consistency, bounded
-workspace metadata, closed unique API-key scopes, absence of key secret/digest
-fields, exact accepted private-search resources, and Cartesian target/progress
-consistency.
+webhook construction, workspace metadata, closed unique API-key scopes,
+absence of key secret/digest fields, exact accepted private-search resources,
+and Cartesian target/progress consistency.

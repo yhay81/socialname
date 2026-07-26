@@ -9,10 +9,11 @@ support, search assertion event, watch baseline or transition, and generic
 lineage in one tenant transaction.
 
 This slice does not add shared-observation upload, producer-reputation
-admission, notification delivery, or a public transition route. Shared rows
+admission or a public transition route. Shared rows
 without independently persisted reputation facts remain ineligible for a
-corroboration quorum. The next roadmap item consumes confirmed transitions;
-it must not re-derive account state.
+corroboration quorum. The separate
+[signed webhook delivery](webhook-delivery.md) slice consumes confirmed
+transitions without re-deriving account state.
 
 ## Eligible evidence
 
@@ -176,5 +177,5 @@ roles and proves:
   managed-job and watch-scheduling tests.
 
 The test does not claim live-site correctness, production health evidence,
-multi-region deployment, shared-client reputation admission, notification
-delivery, or external retention evidence.
+multi-region deployment, shared-client reputation admission, external webhook
+ownership, or external retention evidence.

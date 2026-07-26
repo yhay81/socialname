@@ -76,8 +76,12 @@ The first vertical slice is implemented in the repository:
   polling/cancellation, and bounded resumable PostgreSQL-backed SSE;
 - a signed managed worker with consent/visibility-isolated job expansion,
   fenced claims, bounded retries, continuous authorization cancellation, and
-  atomic observation/event/lineage ingestion under a non-owner forced-RLS
-  database role;
+  atomic observation/assertion/transition/event/lineage ingestion under a
+  non-owner forced-RLS database role;
+- freshness-aware revisioned watch scheduling plus confirmed-transition
+  webhook enqueue, endpoint-bound destination encryption, stable signed
+  payloads, bounded retry/dead-letter handling, append-only attempt history,
+  audit, and lineage;
 - a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache and
   cached-first sources, immutable observation persistence, source-preserving
   refresh streaming, freshness display, cancellation, and explicit
@@ -143,6 +147,9 @@ access. Live canaries are intentionally a separate acceptance gate.
   retention, lineage, and deletion guarantees.
 - [Assertion trust](assertion-trust.md) — evidence classes, producer reputation,
   quorum, conflict, and notification confirmation.
+- [Signed webhook delivery](webhook-delivery.md) — logical deduplication,
+  destination encryption, HMAC payloads, outbound SSRF policy, fenced retry,
+  dead letter, audit, and operator boundaries.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native
@@ -169,12 +176,11 @@ These terms have distinct meanings and should not be used interchangeably:
 
 ## Current execution focus
 
-The current milestone is **First paid monitoring loop**. The canonical task
-breakdown and acceptance evidence live in [`ROADMAP.md`](../ROADMAP.md):
-
-1. Recompute current assertions from immutable managed observations.
-2. Persist meaningful transitions while keeping account change separate from
-   measurement degradation.
+The current milestone is **First paid monitoring loop**. Managed observation,
+assertion recomputation, meaningful transitions, and deduplicated signed
+webhook delivery now form the tested backend loop. The next executable item in
+the canonical [`ROADMAP.md`](../ROADMAP.md) is a minimal monitoring UI without
+weakening the API boundary.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

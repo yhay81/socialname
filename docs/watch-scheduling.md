@@ -175,8 +175,10 @@ The PostgreSQL 18 test proves:
 - pause/revision cancellation of run targets and orphaned jobs;
 - ordinary NOBYPASSRLS worker operation through the narrow coordinator.
 
-The test does not claim production scheduling uptime, live-site promotion,
-multi-region deployment, notification delivery, shared-client reputation
-admission, or external retention evidence. Assertion recomputation and
-transition persistence are covered by the next vertical slice in
-[Assertion recomputation and transition persistence](assertion-recomputation.md).
+The scheduling slice does not claim production scheduling uptime, live-site
+promotion, multi-region deployment, shared-client reputation admission, or
+external retention evidence. Assertion recomputation and transition
+persistence are covered by
+[Assertion recomputation and transition persistence](assertion-recomputation.md);
+confirmed-transition notification delivery is covered by
+[Signed webhook delivery](webhook-delivery.md).

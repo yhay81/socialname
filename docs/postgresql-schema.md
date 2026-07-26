@@ -13,8 +13,9 @@ consent-lock boundary used by atomic observation/event ingestion. Migration
 runs and run targets, freshness reuse, bounded scheduling coordination, and
 search/watch consumers. Migration `0006_assertion_recomputation.sql` adds the
 per-watch account baseline and indexes for durable account candidates and
-regional measurement state. Notification delivery remains closed for its own
-vertical slice.
+regional measurement state. Migration `0007_webhook_delivery.sql` adds fenced
+webhook leases, append-only attempt history, bounded retry/dead-letter state,
+and a narrow cross-tenant claim coordinator.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -43,7 +44,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 34 product tables:
+The migrations create 35 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -53,7 +54,7 @@ The migrations create 34 product tables:
 | Interactive work | `searches`, `search_targets`, `search_events` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `assertions`, `assertion_support` |
-| Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries` |
+| Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts` |
 | Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `suppression_tokens` |
 
 Time partitioning is intentionally absent. PostgreSQL remains the source of
@@ -62,7 +63,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Twenty-nine tenant-owned tables have row-level security both enabled and
+Thirty tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -106,12 +107,14 @@ for the complete request and operator contract.
 
 The worker is also a non-owner `NOSUPERUSER NOBYPASSRLS` role, but it must
 select the next tenant before it can set transaction-local RLS. Migrations
-`0004_managed_probe_jobs.sql` and `0005_watch_scheduling.sql` therefore provide
-six fixed-search-path `SECURITY DEFINER` functions. They can resolve an exact
+`0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
+`0007_webhook_delivery.sql` therefore provide seven fixed-search-path
+`SECURITY DEFINER` functions. They can resolve an exact
 eligible signed rule, lock one eligible search target, lock one due watch, lock
 one eligible watch-run target, claim one job with an incremented attempt fence,
-and lock the consent attached to an exact current lease. They return only
-opaque IDs, an attempt number, or a boolean.
+lock the consent attached to an exact current lease, or claim one due webhook
+with an incremented attempt fence. They return only opaque IDs, an attempt
+number, or a boolean.
 
 `PUBLIC` execution is revoked. Deployment grants only these functions plus the
 column-limited ordinary table access exercised by the integration fixture. The
@@ -120,7 +123,7 @@ worker has no access to `api_key_credentials`, no table ownership or
 Target/consumer/observation/event/lineage work occurs only after the selected
 tenant is set locally on the transaction.
 
-Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the six coordinator
+Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the seven coordinator
 functions must be owned by a dedicated `NOLOGIN BYPASSRLS` role or an
 equivalently privileged migration owner. The integration test asserts that
 owner capability separately from the worker's NOBYPASSRLS status. The
@@ -170,6 +173,12 @@ withdrawal unambiguously later. See
 - A database trigger permits a notification delivery only when it copies the
   exact basis of a confirmed transition and references an active endpoint.
   Measurement degradation remains distinct from account-state change.
+- Logical delivery identity and transition/endpoint binding are immutable. One
+  unique SHA-256 key covers each tenant/transition/endpoint, while a bounded
+  lease and one-through-ten attempt counter fence stale webhook workers.
+- Notification attempt rows are append-only. They retain a closed event/error
+  class, bounded status, request-body digest, worker label, and time, never the
+  destination, signature, request body, or response body.
 - Evidence digests and suppression tokens are fixed-size hashes. Normal
   evidence has no complete response-body, cookie, credential, or unrelated
   profile-data column.
@@ -201,7 +210,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 34 tables and 29
+It applies the embedded migrations twice, inventories all 35 tables and 30
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
@@ -212,7 +221,9 @@ role covering job coalescing, watch planning, freshness reuse, byte
 reservation, fencing, retry, atomic observation/assertion/search/watch
 ingestion, account baselines and confirmed transitions, conflicting evidence,
 measurement degradation, invalid targets, revision cancellation, consent
-withdrawal, and regional rule degradation. Tests skip only when
+withdrawal, regional rule degradation, logical webhook enqueue, timeout/retry,
+same-ID success, permanent 4xx, lease reclamation, stale fencing, final
+dead-letter state, attempt audit, and lineage. Tests skip only when
 `SOCIALNAME_TEST_DATABASE_URL` is
 absent; the CI job always supplies it. The administrator, application, and
 worker test URLs must identify the same disposable test database with their

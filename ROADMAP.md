@@ -64,8 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: deliver a deduplicated signed webhook with bounded retry,
-dead-letter state, and audit history.
+Next executable item: add a minimal monitoring UI without weakening the API
+boundary.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -470,10 +470,10 @@ derives a trustworthy transition, and delivers one auditable notification.
       coalescing.
 - [x] Recompute `assertion/v1`, persist meaningful transitions, and distinguish
       account change from measurement degradation.
-- [ ] Deliver a deduplicated signed webhook with retry, dead-letter state, and
+- [x] Deliver a deduplicated signed webhook with retry, dead-letter state, and
       audit history.
 - [ ] Add a minimal monitoring UI without weakening the API boundary.
-- [ ] Provide one end-to-end test: watch creation -> managed observation ->
+- [x] Provide one end-to-end test: watch creation -> managed observation ->
       assertion change -> transition -> exactly-once logical notification.
 
 Protocol-slice evidence:
@@ -481,7 +481,7 @@ Protocol-slice evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-protocol
-# 25 unit tests and 5 public contract tests passed
+# 28 unit tests and 6 public contract tests passed
 cargo clippy --locked -p socialname-protocol --all-targets --all-features -- -D warnings
 ```
 
@@ -504,7 +504,7 @@ Server-runtime evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-server --all-targets
-# 23 library, 2 binary, and 1 PostgreSQL integration test passed
+# 25 library, 2 binary, and 1 PostgreSQL integration test passed
 cargo clippy --locked -p socialname-server --all-targets --all-features -- -D warnings
 cargo build --locked -p socialname-server
 ```
@@ -512,7 +512,8 @@ cargo build --locked -p socialname-server
 `socialname-server` is an explicit Axum 0.8/Tower 0.5 binary with a
 loopback-only default. It exposes versioned liveness, PostgreSQL-aware
 readiness, authenticated workspace/search/watch resources, polling,
-cancellation, and bounded ordered SSE; notification and HTTP administration
+cancellation, and bounded ordered SSE. Webhook delivery has a separate bounded
+worker entry point; notification endpoint and delivery administration HTTP
 routes remain absent. Configuration bounds the handler deadline,
 declared/default body size, database acquisition, ordinary in-flight work, and
 open SSE bodies, and rejects invalid values without echoing them. One outer
@@ -530,7 +531,7 @@ PostgreSQL-schema evidence:
 cargo fmt --all -- --check
 cargo run --locked -p socialname-server -- migrate
 cargo test --locked --workspace --all-targets
-# socialname-server: 23 library, 2 binary, and 1 PostgreSQL integration test passed
+# socialname-server: 25 library, 2 binary, and 1 PostgreSQL integration test passed
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-cli -- rules validate
 # validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
@@ -544,7 +545,7 @@ npm run check
 npm run build
 ```
 
-The six embedded SQLx migrations create 34 bounded product tables and 29
+The seven embedded SQLx migrations create 35 bounded product tables and 30
 tenant-isolation policies with forced RLS. Composite tenant foreign keys,
 immutable observation and support history, closed observation outcomes,
 transition-specific confirmation bases, exact confirmed-delivery checks,
@@ -555,7 +556,7 @@ database URL, uses one connection with connection/migration deadlines, and
 returns fixed errors without reflecting credentials.
 
 The CI core job runs both the operator command and an integration test against
-`postgres:18-alpine`. The test reapplies all six migrations, inventories all
+`postgres:18-alpine`. The test reapplies all seven migrations, inventories all
 tables and forced-RLS policies, uses a real non-owner `NOBYPASSRLS` role to
 prove tenant isolation, rejects cross-tenant references and observation
 mutation, suppresses shared-only absence delivery, accepts an independently
@@ -567,7 +568,7 @@ Authenticated-workspace evidence:
 cargo fmt --all -- --check
 cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-protocol -p socialname-server --all-targets
-# protocol: 25 unit + 5 contract; server: 23 library + 2 binary + 1 PostgreSQL
+# protocol: 28 unit + 6 contract; server: 25 library + 2 binary + 1 PostgreSQL
 cargo clippy --locked -p socialname-protocol -p socialname-server --all-targets --all-features -- -D warnings
 ```
 
@@ -632,7 +633,7 @@ Signed-managed-worker evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-engine -p socialname-worker --all-targets
-# engine: 10; worker: 6 library + 4 binary tests
+# engine: 11; worker: 14 library + 4 binary tests
 cargo clippy --locked -p socialname-engine -p socialname-worker --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-worker -- --help
 # probe without --allow-live exits before reading files or stdin
@@ -663,7 +664,7 @@ Managed-job evidence:
 cargo fmt --all -- --check
 cargo test --locked --workspace --all-targets
 # includes 25 server library, 2 server binary,
-# 10 worker library, and 4 worker binary tests
+# 14 worker library, and 4 worker binary tests
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 # With the three documented disposable PostgreSQL test URLs:
 cargo test --locked -p socialname-server --test postgres_migrations -- --nocapture
@@ -746,8 +747,52 @@ account baseline. Typed uncertainty creates a distinct regional
 `unavailable` from probe-job lineage without fabricating an observation. The
 PostgreSQL 18 test proves all of these paths under the real non-owner
 NOBYPASSRLS worker, including exact fresh-evidence replay and unchanged account
-state through degradation. The next executable item is deduplicated signed
-webhook delivery from confirmed transitions.
+state through degradation. Confirmed transitions are consumed only by the
+separate signed delivery boundary.
+
+Signed-webhook evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes protocol webhook construction, managed outbound policy,
+# worker crypto/retry/dedupe tests, and the PostgreSQL integration test
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# With disposable PostgreSQL 18 administrator/application/worker URLs:
+cargo test --locked -p socialname-server --test postgres_migrations -- --nocapture
+# 1 PostgreSQL 18 integration test passed
+cargo run --locked -p socialname-cli -- rules validate
+cargo run --locked -p socialname-cli -- fixtures
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+```
+
+Migration `0007_webhook_delivery.sql` adds fenced one-through-ten-attempt
+claims, append-only attempt history, lease-expiry reclamation, and terminal
+dead-letter state under the same non-owner forced-RLS worker boundary. A
+confirmed transition transaction inserts at most one SHA-256 logical delivery
+per tenant/transition/endpoint; every retry reuses its stable delivery ID and
+body. HTTP is intentionally at least once, so receivers deduplicate that ID
+rather than relying on an impossible exactly-once transport claim.
+
+The worker reconstructs the typed confirmed transition, signs the bounded JSON
+body with versioned HMAC-SHA-256 headers, and decrypts only an
+endpoint-bound XChaCha20-Poly1305 destination envelope. The proxy-free,
+redirect-free managed client accepts HTTPS public destinations only, applies
+the existing DNS-rebinding/SSRF rejection policy, bounds connection/request
+time and headers/body, and discards response bodies. Retryable HTTP/transport
+failure uses bounded exponential backoff; permanent 4xx, endpoint
+deactivation, stale workers, and final lease expiry have distinct outcomes.
+
+The PostgreSQL 18 test proves the complete managed-observation -> assertion ->
+confirmed-transition -> logical-delivery path, timeout then same-ID success,
+permanent 4xx, stale-lease fencing, lease-exhaustion dead letter, audit, and
+delivery/attempt lineage without persisting destination or body content.
+External destination ownership verification and production key management
+remain pending; absent keys or an encrypted verified active endpoint keep
+delivery disabled. The next executable item is the minimal monitoring UI.
 
 Software acceptance gate:
 
@@ -936,3 +981,8 @@ Choose these only when their trigger is measured:
   baselines, confirmation-aware account candidates, conflict suppression, and
   separate degraded/unavailable measurement transitions with PostgreSQL 18
   RLS evidence; selected deduplicated signed webhook delivery next.
+- **2026-07-26:** Added one-logical-delivery webhook enqueue, stable signed
+  payloads, encrypted endpoint-bound destinations, public-only managed
+  transport, fenced retry/dead-letter handling, append-only attempts, audit,
+  and lineage with PostgreSQL 18 evidence; selected the minimal monitoring UI
+  next.

@@ -127,7 +127,7 @@ so status does not diverge across design records.
   and atomically ingest only an exact promoted, region-healthy rule binding.
 - Active managed work coalesces only across equal tenant, normalized target,
   site, rule version, region, consent grant, and visibility. Attempt count is a
-  fencing token. A non-owner NOBYPASSRLS worker receives only six narrow
+  fencing token. A non-owner NOBYPASSRLS worker receives only seven narrow
   coordinator functions; tenant rows remain behind transaction-local forced
   RLS. Final ingestion rechecks rule health and locks purpose-specific consent
   before atomically writing one immutable observation, per-search events,
@@ -141,6 +141,14 @@ so status does not diverge across design records.
   and terminal operational failure create regional measurement transitions
   and never account disappearance; an operational measurement transition uses
   probe-job lineage instead of a fabricated observation.
+- A confirmed transition creates at most one logical webhook delivery per
+  tenant/transition/endpoint in the same transaction. Attempts reuse one stable
+  delivery ID and signed body. The network guarantee is at least once, so
+  receivers deduplicate that ID. Destinations are endpoint-bound
+  XChaCha20-Poly1305 envelopes; the HMAC-signed outbound client is HTTPS-only,
+  public-address-only, proxy-free, redirect-free, time-bounded, lease-fenced,
+  and response-body-blind. Attempt history, audit, and lineage retain closed
+  metadata rather than destinations or bodies.
 
 ## Detailed records
 
@@ -162,6 +170,7 @@ so status does not diverge across design records.
 - [Private search API and ordered event stream](search-api.md)
 - [Managed probe jobs and observation ingestion](managed-jobs.md)
 - [Assertion recomputation and transition persistence](assertion-recomputation.md)
+- [Signed webhook delivery](webhook-delivery.md)
 
 ## Implementation baseline
 
@@ -206,8 +215,11 @@ so status does not diverge across design records.
     stream assertion updates, establish per-watch account baselines, confirm or
     suppress meaningful account candidates, and persist measurement
     degradation separately with complete support and generic lineage.
+16. **Done:** Enqueue one logical delivery from each confirmed transition,
+    encrypt destinations, sign stable webhook payloads, enforce public-only
+    outbound networking, fence bounded retries and dead-letter state, and
+    preserve append-only attempts, audit, and lineage.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
-work in Milestone 2 is deduplicated signed webhook delivery from already
-confirmed transitions.
+work in Milestone 2 is the minimal monitoring UI.
