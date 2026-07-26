@@ -104,12 +104,9 @@ jobs:
               --site github \
               --region test-region \
               --rules-dir /opt/socialname/rules/sites \
-              --promotion /missing/promotion.json \
-              --manifest-hash 0000000000000000000000000000000000000000000000000000000000000000 \
-              --engine-hash 0000000000000000000000000000000000000000000000000000000000000000 \
-              --required-region test-region \
-              --key-id test-key \
-              --verifying-key-file /missing/key.hex \
+              --metadata /missing/metadata.json \
+              --current-trust-file /missing/trust.json \
+              --minimum-metadata-sequence-exclusive 0 \
               --worker-id test-region-worker 2>&1
           )"
           status="$?"
