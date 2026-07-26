@@ -65,15 +65,26 @@ impl JobStore {
     pub async fn bind_rule(&self, rule: &ManagedRule) -> Result<RuleBinding, JobError> {
         let rule_hash = decode_digest(rule.rule_hash())?;
         let pack_hash = decode_digest(rule.rule_pack_hash())?;
-        let rule_version_id: Option<Uuid> =
-            sqlx::query_scalar("SELECT socialname_worker_resolve_rule($1, $2, $3, $4)")
-                .bind(rule.site_id())
-                .bind(rule_hash)
-                .bind(pack_hash)
-                .bind(rule.region_class())
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|_| JobError::DatabaseUnavailable)?;
+        let metadata_id = decode_digest(rule.metadata_id())?;
+        let promotion_id = decode_digest(rule.promotion_id())?;
+        let metadata_sequence =
+            i64::try_from(rule.metadata_sequence()).map_err(|_| JobError::RuleUnavailable)?;
+        let promotion_sequence =
+            i64::try_from(rule.promotion_sequence()).map_err(|_| JobError::RuleUnavailable)?;
+        let rule_version_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT socialname_worker_resolve_rule($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(rule.site_id())
+        .bind(rule_hash)
+        .bind(pack_hash)
+        .bind(rule.region_class())
+        .bind(metadata_id)
+        .bind(metadata_sequence)
+        .bind(promotion_id)
+        .bind(promotion_sequence)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
         let rule_version_id = rule_version_id.ok_or(JobError::RuleUnavailable)?;
         Ok(RuleBinding {
             rule_version_id,
@@ -81,6 +92,10 @@ impl JobStore {
             rule_hash: rule.rule_hash().to_owned(),
             rule_pack_hash: rule.rule_pack_hash().to_owned(),
             region_class: rule.region_class().to_owned(),
+            metadata_id: rule.metadata_id().to_owned(),
+            metadata_sequence: rule.metadata_sequence(),
+            promotion_id: rule.promotion_id().to_owned(),
+            promotion_sequence: rule.promotion_sequence(),
         })
     }
 
@@ -1428,6 +1443,10 @@ pub struct RuleBinding {
     rule_hash: String,
     rule_pack_hash: String,
     region_class: String,
+    metadata_id: String,
+    metadata_sequence: u64,
+    promotion_id: String,
+    promotion_sequence: u64,
 }
 
 impl RuleBinding {
@@ -1451,6 +1470,10 @@ impl RuleBinding {
             && self.rule_hash == rule.rule_hash()
             && self.rule_pack_hash == rule.rule_pack_hash()
             && self.region_class == rule.region_class()
+            && self.metadata_id == rule.metadata_id()
+            && self.metadata_sequence == rule.metadata_sequence()
+            && self.promotion_id == rule.promotion_id()
+            && self.promotion_sequence == rule.promotion_sequence()
         {
             Ok(())
         } else {
@@ -2042,18 +2065,12 @@ async fn rule_is_available(
     transaction: &mut Transaction<'_, Postgres>,
     claim: &JobClaim,
 ) -> Result<bool, JobError> {
-    let rule_hash = decode_digest(&claim.rule_hash)?;
-    let pack_hash = decode_digest(&claim.rule_pack_hash)?;
-    let resolved: Option<Uuid> =
-        sqlx::query_scalar("SELECT socialname_worker_resolve_rule($1, $2, $3, $4)")
-            .bind(&claim.site_id)
-            .bind(rule_hash)
-            .bind(pack_hash)
-            .bind(&claim.region_class)
-            .fetch_one(&mut **transaction)
-            .await
-            .map_err(|_| JobError::DatabaseUnavailable)?;
-    Ok(resolved == Some(claim.rule_version_id))
+    sqlx::query_scalar("SELECT socialname_worker_rule_version_available($1, $2)")
+        .bind(claim.rule_version_id)
+        .bind(&claim.region_class)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)
 }
 
 async fn cancel_orphaned_claim(
@@ -2808,6 +2825,10 @@ mod tests {
             rule_hash: "11".repeat(32),
             rule_pack_hash: "22".repeat(32),
             region_class: "jp".to_owned(),
+            metadata_id: "33".repeat(32),
+            metadata_sequence: 1,
+            promotion_id: "44".repeat(32),
+            promotion_sequence: 1,
         }
     }
 

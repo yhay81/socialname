@@ -17,7 +17,9 @@ rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+socialname-canary = { path = "../socialname-canary" }
 socialname-protocol = { path = "../socialname-protocol" }
+socialname-rule-compiler = { path = "../socialname-rule-compiler" }
 sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -28,10 +30,8 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-socialname-canary = { path = "../socialname-canary" }
 socialname-domain = { path = "../socialname-domain" }
 socialname-engine = { path = "../socialname-engine" }
-socialname-rule-compiler = { path = "../socialname-rule-compiler" }
 socialname-worker = { path = "../socialname-worker" }
 tokio-util.workspace = true
 

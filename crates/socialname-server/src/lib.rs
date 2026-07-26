@@ -5,6 +5,7 @@ mod auth;
 mod config;
 mod database;
 mod monitoring;
+mod rule_registry_operator;
 mod search;
 mod watch;
 mod workspace;
@@ -49,6 +50,11 @@ pub use config::{
 pub use database::{
     DATABASE_URL_ENV, DatabaseError, MIGRATOR, RUNTIME_DATABASE_URL_ENV,
     connect_runtime_database_from_env, migrate_database, migrate_database_from_env,
+};
+pub use rule_registry_operator::{
+    AppliedRulePack, AppliedRulePackOutput, INITIAL_RULE_TRUST_FILE_ENV, INITIAL_RULE_TRUST_ID_ENV,
+    InitialRulePackTrust, RULE_METADATA_FILE_ENV, RULES_DIRECTORY_ENV, RuleRegistryError,
+    apply_rule_pack_metadata, apply_rule_pack_metadata_from_env,
 };
 pub use workspace_operator::{
     API_KEY_EXPIRES_AT_ENV, API_KEY_ID_ENV, API_KEY_SCOPES_ENV, IssuedApiKey, MEMBERSHIP_ID_ENV,

@@ -334,17 +334,12 @@ impl RulePackMetadataVerifier {
                 &envelope.metadata.trust,
             )?;
         }
-        let allowed_keys = current_trust
-            .keys
-            .keys()
-            .chain(envelope.metadata.trust.keys.keys())
-            .collect::<BTreeSet<_>>();
         if envelope.signatures.is_empty()
             || envelope.signatures.len() > MAX_KEYS * 2
             || envelope
                 .signatures
-                .keys()
-                .any(|key_id| !allowed_keys.contains(key_id))
+                .iter()
+                .any(|(key_id, signature)| !valid_label(key_id) || !valid_signature(signature))
         {
             return Err(RulePackMetadataError::InvalidSignatures);
         }
@@ -485,7 +480,12 @@ impl RulePackRolloutRegistry {
             | RulePackRolloutStage::General => self.apply_rollout(activated)?,
         }
         self.highest_sequence = metadata.sequence;
-        self.current_trust = metadata.trust.clone();
+        if matches!(
+            metadata.rollout_stage,
+            RulePackRolloutStage::General | RulePackRolloutStage::Rollback
+        ) {
+            self.current_trust = metadata.trust.clone();
+        }
         for (site_id, promotion) in &metadata.promotions {
             self.promotion_high_water
                 .insert(site_id.clone(), promotion.promotion.sequence);
@@ -1043,6 +1043,13 @@ fn valid_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn valid_signature(value: &str) -> bool {
+    value.len() == 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use socialname_domain::{RuleHealth, RuleHealthKey, RuleHealthRecord, SiteId};
@@ -1496,11 +1503,10 @@ mod tests {
         let validated = validate(&dual_signed, &initial_trust, START + 1);
         let mut registry = RulePackRolloutRegistry::new(initial_trust, START).unwrap();
         registry.apply(&validated, &pack, START + 1).unwrap();
-        assert_eq!(registry.current_trust().generation, 2);
+        assert_eq!(registry.current_trust().generation, 1);
 
-        let new_only_trust = trust(3, 1, &[&new]);
         let promotion_new = PromotionSigningKey::from_seed("release-new", [8; 32]).unwrap();
-        let removal = metadata(
+        let general = metadata(
             &[old.clone(), new.clone()],
             MetadataRequest {
                 sequence: 2,
@@ -1516,16 +1522,20 @@ mod tests {
                     START + 62_000,
                 ),
                 stage: RulePackRolloutStage::General,
-                trust: new_only_trust.clone(),
+                trust: overlapping.clone(),
                 issued_at: START + 1_000,
             },
         );
-        let removal = validate(&removal, registry.current_trust(), START + 1_001);
-        registry.apply(&removal, &pack, START + 1_001).unwrap();
-        assert_eq!(registry.current_trust(), &new_only_trust);
+        let general = validate(&general, registry.current_trust(), START + 1_001);
+        RulePackMetadataVerifier::new()
+            .validate_at(general.envelope(), &overlapping, START + 1_001)
+            .expect("activation metadata remains valid from the installed trust generation");
+        registry.apply(&general, &pack, START + 1_001).unwrap();
+        assert_eq!(registry.current_trust(), &overlapping);
 
-        let refreshed = metadata(
-            std::slice::from_ref(&new),
+        let new_only_trust = trust(3, 1, &[&new]);
+        let removal = metadata(
+            &[old.clone(), new.clone()],
             MetadataRequest {
                 sequence: 3,
                 pack: &pack,
@@ -1540,13 +1550,40 @@ mod tests {
                     START + 63_000,
                 ),
                 stage: RulePackRolloutStage::General,
-                trust: new_only_trust,
+                trust: new_only_trust.clone(),
                 issued_at: START + 2_000,
             },
         );
-        let refreshed = validate(&refreshed, registry.current_trust(), START + 2_001);
-        registry.apply(&refreshed, &pack, START + 2_001).unwrap();
-        assert_eq!(registry.highest_sequence(), 3);
+        let removal = validate(&removal, registry.current_trust(), START + 2_001);
+        RulePackMetadataVerifier::new()
+            .validate_at(removal.envelope(), &new_only_trust, START + 2_001)
+            .expect("rotation metadata remains valid from the installed trust generation");
+        registry.apply(&removal, &pack, START + 2_001).unwrap();
+        assert_eq!(registry.current_trust(), &new_only_trust);
+
+        let refreshed = metadata(
+            std::slice::from_ref(&new),
+            MetadataRequest {
+                sequence: 4,
+                pack: &pack,
+                previous: None,
+                promotion: promotion(
+                    &promotion_new,
+                    &candidate,
+                    &pack,
+                    None,
+                    4,
+                    START + 3_000,
+                    START + 64_000,
+                ),
+                stage: RulePackRolloutStage::General,
+                trust: new_only_trust,
+                issued_at: START + 3_000,
+            },
+        );
+        let refreshed = validate(&refreshed, registry.current_trust(), START + 3_001);
+        registry.apply(&refreshed, &pack, START + 3_001).unwrap();
+        assert_eq!(registry.highest_sequence(), 4);
     }
 
     #[test]

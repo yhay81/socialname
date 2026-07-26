@@ -18,9 +18,10 @@ use axum::{
 };
 use sha2::{Digest, Sha256};
 use socialname_canary::{
-    PromotionBuildRequest, PromotionBuilder, PromotionSigningKey, RULE_PACK_TRUST_V1,
-    RulePackMetadataBuildRequest, RulePackMetadataBuilder, RulePackMetadataSigningKey,
-    RulePackMetadataVerifier, RulePackRolloutStage, RulePackTrustV1,
+    PromotionBuildRequest, PromotionBuilder, PromotionEnvelope, PromotionSigningKey,
+    RULE_PACK_TRUST_V1, RulePackMetadataBuildRequest, RulePackMetadataBuilder,
+    RulePackMetadataEnvelope, RulePackMetadataSigningKey, RulePackMetadataVerifier,
+    RulePackRolloutStage, RulePackTrustV1,
 };
 use socialname_domain::{
     EvidenceClass as DomainEvidenceClass, InconclusiveReason, RuleHealth, RuleHealthKey,
@@ -37,7 +38,10 @@ use socialname_protocol::{
     WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
-use socialname_server::{ServerConfig, build_router, migrate_database};
+use socialname_server::{
+    InitialRulePackTrust, RuleRegistryError, ServerConfig, apply_rule_pack_metadata, build_router,
+    migrate_database,
+};
 use socialname_worker::{
     DeliveryError, DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets, DeliveryStore,
     ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule,
@@ -90,7 +94,9 @@ async fn reset_test_state(pool: &PgPool) {
         r#"
         TRUNCATE TABLE
             tenants, memberships, api_keys, api_key_credentials, clients, sites,
-            rule_packs, rule_versions, rule_health_records, consent_grants,
+            rule_packs, rule_versions, rule_health_records,
+            rule_pack_trust_roots, rule_pack_metadata, rule_pack_promotions,
+            rule_pack_registry, rule_site_promotion_high_water, consent_grants,
             consent_events, searches, search_targets, search_events, watches,
             watch_targets, watch_notification_endpoints, watch_runs,
             watch_run_targets, probe_jobs, probe_job_consumers, observations,
@@ -142,6 +148,9 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('tenants'), ('memberships'), ('api_keys'), ('api_key_credentials'),
                 ('clients'), ('sites'),
                 ('rule_packs'), ('rule_versions'), ('rule_health_records'),
+                ('rule_pack_trust_roots'), ('rule_pack_metadata'),
+                ('rule_pack_promotions'), ('rule_pack_registry'),
+                ('rule_site_promotion_high_water'),
                 ('consent_grants'), ('consent_events'), ('searches'), ('search_targets'),
                 ('search_events'),
                 ('watches'), ('watch_targets'), ('watch_notification_endpoints'),
@@ -162,7 +171,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 37);
+    assert_eq!(required_tables, 42);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -1622,14 +1631,49 @@ const MANAGED_MANIFEST_HASH: &str =
     "1111111111111111111111111111111111111111111111111111111111111111";
 const MANAGED_ENGINE_HASH: &str =
     "2222222222222222222222222222222222222222222222222222222222222222";
-const MANAGED_RULE_VERSION_ID: &str = "00000000-0000-0000-0000-0000000000d1";
-const MANAGED_RULE_PACK_ID: &str = "00000000-0000-0000-0000-0000000000d2";
 const SECOND_CONSENT_GRANT_ID: &str = "00000000-0000-0000-0000-0000000000d3";
 
 async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
-    let (managed_rule, candidate, pack) = managed_rule_fixture();
-    install_managed_rule_fixtures(administrator_pool, &candidate, &pack).await;
+    let fixture = managed_rule_fixture();
+    let initial_rule_trust = fixture.trust.clone();
+    let initial_trust_id = fixture.trust.content_id().unwrap();
+    apply_rule_pack_metadata(
+        administrator_pool,
+        Some(InitialRulePackTrust {
+            trust: &fixture.trust,
+            expected_trust_id: &initial_trust_id,
+        }),
+        &fixture.canary_metadata,
+        std::slice::from_ref(&fixture.candidate),
+        current_unix_ms(),
+    )
+    .await
+    .unwrap();
+    let applied = apply_rule_pack_metadata(
+        administrator_pool,
+        None,
+        &fixture.general_metadata,
+        std::slice::from_ref(&fixture.candidate),
+        current_unix_ms(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        apply_rule_pack_metadata(
+            administrator_pool,
+            None,
+            &fixture.general_metadata,
+            std::slice::from_ref(&fixture.candidate),
+            current_unix_ms(),
+        )
+        .await
+        .unwrap_err(),
+        RuleRegistryError::InvalidTransition
+    );
+    let rule_version_id = applied.rule_version_id("managed-test").unwrap();
+    install_managed_rule_fixtures(administrator_pool, rule_version_id).await;
     install_worker_role(administrator_pool).await;
+    let candidate = fixture.candidate;
 
     let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
         .expect("worker database URL must accompany the PostgreSQL integration test");
@@ -1639,17 +1683,16 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
         .await
         .unwrap();
     let store = JobStore::new(worker_pool.clone());
+    let managed_rule = fixture.managed_rule;
     let binding = store.bind_rule(&managed_rule).await.unwrap();
-    assert_eq!(
-        binding.rule_version_id(),
-        Uuid::parse_str(MANAGED_RULE_VERSION_ID).unwrap()
-    );
+    assert_eq!(binding.rule_version_id(), rule_version_id);
     let coordinator_owner_can_cross_forced_rls: bool = sqlx::query_scalar(
         "SELECT bool_and(owner.rolsuper OR owner.rolbypassrls) \
          FROM pg_proc AS proc \
          JOIN pg_roles AS owner ON owner.oid = proc.proowner \
          WHERE proc.proname IN (\
-             'socialname_worker_resolve_rule', \
+              'socialname_worker_resolve_rule', \
+              'socialname_worker_rule_version_available', \
              'socialname_worker_lock_next_target', \
              'socialname_worker_lock_due_watch', \
              'socialname_worker_lock_next_watch_target', \
@@ -3098,9 +3141,386 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             .unwrap();
     assert_eq!(degraded_observations, 0);
 
+    assert_persisted_rule_pack_rotation_and_rollback(
+        administrator_pool,
+        &store,
+        &candidate,
+        &managed_rule,
+        rule_version_id,
+        &initial_rule_trust,
+    )
+    .await;
     assert_webhook_delivery_boundary(administrator_pool, worker_pool.clone()).await;
     application_pool.close().await;
     store.close().await;
+}
+
+fn managed_release_health(
+    candidate: &CompiledSiteRule,
+    sequence: u64,
+    issued_at_unix_ms: i64,
+    expires_at_unix_ms: i64,
+) -> RuleHealthRecord {
+    RuleHealthRecord {
+        key: RuleHealthKey {
+            site_id: DomainSiteId::new("managed-test"),
+            rule_hash: candidate.rule_hash.clone(),
+            region: "jp".to_owned(),
+        },
+        state: RuleHealth::Healthy,
+        sequence,
+        entered_at_unix_ms: issued_at_unix_ms - 2_000,
+        updated_at_unix_ms: issued_at_unix_ms - 1_000,
+        consecutive_recovery_passes: 0,
+        consecutive_operational_failures: 0,
+        last_manifest_hash: Some(MANAGED_MANIFEST_HASH.to_owned()),
+        last_engine_hash: Some(MANAGED_ENGINE_HASH.to_owned()),
+        last_evidence_expires_at_unix_ms: Some(expires_at_unix_ms + 1_000),
+        last_evidence_ids: vec![
+            format!("{:064x}", 0x100_u64 + sequence),
+            format!("{:064x}", 0x200_u64 + sequence),
+        ],
+    }
+}
+
+fn managed_release_promotion(
+    key: &PromotionSigningKey,
+    candidate: &CompiledSiteRule,
+    pack: &CompiledRulePack,
+    previous_rule_pack_hash: Option<&str>,
+    sequence: u64,
+    issued_at_unix_ms: i64,
+    expires_at_unix_ms: i64,
+) -> PromotionEnvelope {
+    PromotionBuilder::new()
+        .build(
+            key,
+            PromotionBuildRequest {
+                sequence,
+                candidate,
+                rule_pack: pack,
+                previous_rule_pack_hash,
+                health_records: &[managed_release_health(
+                    candidate,
+                    sequence,
+                    issued_at_unix_ms,
+                    expires_at_unix_ms,
+                )],
+                required_regions: &BTreeSet::from(["jp".to_owned()]),
+                issued_at_unix_ms,
+                expires_at_unix_ms,
+            },
+        )
+        .unwrap()
+}
+
+struct ManagedMetadataRequest<'a> {
+    signing_keys: &'a [RulePackMetadataSigningKey],
+    trust: RulePackTrustV1,
+    pack: &'a CompiledRulePack,
+    previous_rule_pack_hash: Option<&'a str>,
+    promotion: PromotionEnvelope,
+    sequence: u64,
+    rollout_stage: RulePackRolloutStage,
+    issued_at_unix_ms: i64,
+    expires_at_unix_ms: i64,
+}
+
+fn managed_release_metadata(request: ManagedMetadataRequest<'_>) -> RulePackMetadataEnvelope {
+    let required_regions = BTreeSet::from(["jp".to_owned()]);
+    let eligible_workers = if request.rollout_stage == RulePackRolloutStage::Canary {
+        BTreeSet::from(["managed-test-worker".to_owned()])
+    } else {
+        BTreeSet::new()
+    };
+    RulePackMetadataBuilder::new()
+        .build(
+            request.signing_keys,
+            RulePackMetadataBuildRequest {
+                sequence: request.sequence,
+                rule_pack: request.pack,
+                previous_rule_pack_hash: request.previous_rule_pack_hash,
+                required_regions: &required_regions,
+                rollout_stage: request.rollout_stage,
+                eligible_regions: &required_regions,
+                eligible_workers: &eligible_workers,
+                issued_at_unix_ms: request.issued_at_unix_ms,
+                expires_at_unix_ms: request.expires_at_unix_ms,
+                trust: request.trust,
+                promotions: &[request.promotion],
+            },
+        )
+        .unwrap()
+}
+
+async fn assert_persisted_rule_pack_rotation_and_rollback(
+    administrator_pool: &PgPool,
+    store: &JobStore,
+    first_candidate: &CompiledSiteRule,
+    stale_managed_rule: &ManagedRule,
+    first_rule_version_id: Uuid,
+    initial_trust: &RulePackTrustV1,
+) {
+    let compiler = RuleCompiler::new();
+    let first_pack = compiler
+        .compile_pack(std::slice::from_ref(first_candidate))
+        .unwrap();
+    let mut second_source = first_candidate.source.clone();
+    second_source.metadata.notes = "staged replacement".to_owned();
+    let second_candidate = compiler
+        .compile_source(second_source, Some("managed-test"))
+        .unwrap();
+    let second_pack = compiler
+        .compile_pack(std::slice::from_ref(&second_candidate))
+        .unwrap();
+    let old_metadata_key =
+        RulePackMetadataSigningKey::from_seed("managed-job-test", [9; 32]).unwrap();
+    let new_metadata_key =
+        RulePackMetadataSigningKey::from_seed("managed-job-next", [10; 32]).unwrap();
+    let new_promotion_key = PromotionSigningKey::from_seed("managed-job-next", [10; 32]).unwrap();
+    let now = current_unix_ms();
+    let promotion_expires_at = now + 10 * 60 * 1_000;
+    let metadata_expires_at = promotion_expires_at - 1_000;
+    let overlapping_trust = RulePackTrustV1 {
+        schema: RULE_PACK_TRUST_V1.to_owned(),
+        generation: 2,
+        threshold: 2,
+        keys: BTreeMap::from([
+            (
+                old_metadata_key.key_id().to_owned(),
+                old_metadata_key.verifying_key_hex(),
+            ),
+            (
+                new_metadata_key.key_id().to_owned(),
+                new_metadata_key.verifying_key_hex(),
+            ),
+        ]),
+        expires_at_unix_ms: initial_trust.expires_at_unix_ms + 10 * 60 * 1_000,
+    };
+    let second_canary = managed_release_metadata(ManagedMetadataRequest {
+        signing_keys: &[old_metadata_key.clone(), new_metadata_key.clone()],
+        trust: overlapping_trust.clone(),
+        pack: &second_pack,
+        previous_rule_pack_hash: Some(&first_pack.content_hash),
+        promotion: managed_release_promotion(
+            &new_promotion_key,
+            &second_candidate,
+            &second_pack,
+            Some(&first_pack.content_hash),
+            3,
+            now - 500,
+            promotion_expires_at,
+        ),
+        sequence: 3,
+        rollout_stage: RulePackRolloutStage::Canary,
+        issued_at_unix_ms: now - 500,
+        expires_at_unix_ms: metadata_expires_at,
+    });
+    apply_rule_pack_metadata(
+        administrator_pool,
+        None,
+        &second_canary,
+        std::slice::from_ref(&second_candidate),
+        now,
+    )
+    .await
+    .unwrap();
+    let staged_trust_states: Vec<(i64, String)> =
+        sqlx::query_as("SELECT generation, state FROM rule_pack_trust_roots ORDER BY generation")
+            .fetch_all(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        staged_trust_states,
+        vec![(1, "active".to_owned()), (2, "staged".to_owned())]
+    );
+    let staged_registry: (i64, String, String) = sqlx::query_as(
+        "SELECT current_trust_generation, \
+                encode(active_metadata_id, 'hex'), encode(staged_metadata_id, 'hex') \
+         FROM rule_pack_registry WHERE singleton",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(staged_registry.0, 1);
+    assert_eq!(staged_registry.1, stale_managed_rule.metadata_id());
+    assert_eq!(staged_registry.2, second_canary.metadata_id);
+    let second_general = managed_release_metadata(ManagedMetadataRequest {
+        signing_keys: &[old_metadata_key.clone(), new_metadata_key.clone()],
+        trust: overlapping_trust.clone(),
+        pack: &second_pack,
+        previous_rule_pack_hash: Some(&first_pack.content_hash),
+        promotion: managed_release_promotion(
+            &new_promotion_key,
+            &second_candidate,
+            &second_pack,
+            Some(&first_pack.content_hash),
+            4,
+            now - 400,
+            promotion_expires_at,
+        ),
+        sequence: 4,
+        rollout_stage: RulePackRolloutStage::General,
+        issued_at_unix_ms: now - 400,
+        expires_at_unix_ms: metadata_expires_at,
+    });
+    apply_rule_pack_metadata(
+        administrator_pool,
+        None,
+        &second_general,
+        std::slice::from_ref(&second_candidate),
+        now,
+    )
+    .await
+    .unwrap();
+    let activated_trust_states: Vec<(i64, String)> =
+        sqlx::query_as("SELECT generation, state FROM rule_pack_trust_roots ORDER BY generation")
+            .fetch_all(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        activated_trust_states,
+        vec![(1, "retired".to_owned()), (2, "active".to_owned())]
+    );
+
+    let new_only_trust = RulePackTrustV1 {
+        schema: RULE_PACK_TRUST_V1.to_owned(),
+        generation: 3,
+        threshold: 1,
+        keys: BTreeMap::from([(
+            new_metadata_key.key_id().to_owned(),
+            new_metadata_key.verifying_key_hex(),
+        )]),
+        expires_at_unix_ms: overlapping_trust.expires_at_unix_ms + 10 * 60 * 1_000,
+    };
+    let rollback = managed_release_metadata(ManagedMetadataRequest {
+        signing_keys: &[old_metadata_key, new_metadata_key],
+        trust: new_only_trust.clone(),
+        pack: &first_pack,
+        previous_rule_pack_hash: Some(&second_pack.content_hash),
+        promotion: managed_release_promotion(
+            &new_promotion_key,
+            first_candidate,
+            &first_pack,
+            Some(&second_pack.content_hash),
+            5,
+            now - 300,
+            promotion_expires_at,
+        ),
+        sequence: 5,
+        rollout_stage: RulePackRolloutStage::Rollback,
+        issued_at_unix_ms: now - 300,
+        expires_at_unix_ms: metadata_expires_at,
+    });
+    apply_rule_pack_metadata(
+        administrator_pool,
+        None,
+        &rollback,
+        std::slice::from_ref(first_candidate),
+        now,
+    )
+    .await
+    .unwrap();
+    let validated_rollback = RulePackMetadataVerifier::new()
+        .validate_at(&rollback, &new_only_trust, now)
+        .unwrap();
+    let rollback_rule = ManagedRule::activate(
+        &validated_rollback,
+        &first_pack,
+        "managed-test",
+        "jp",
+        "managed-test-worker",
+        now,
+    )
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO rule_health_records (\
+            id, rule_version_id, region_class, state, evidence_id, \
+            evidence_expires_at, summary, recorded_at\
+         ) VALUES (\
+            $1, $2, 'jp', 'healthy', $3, \
+            to_timestamp($4::double precision / 1000.0), '{}', \
+            clock_timestamp()\
+         )",
+    )
+    .bind(Uuid::new_v4())
+    .bind(first_rule_version_id)
+    .bind(Uuid::new_v4())
+    .bind(promotion_expires_at)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        store.bind_rule(stale_managed_rule).await.unwrap_err(),
+        JobError::RuleUnavailable
+    );
+    assert_eq!(
+        store
+            .bind_rule(&rollback_rule)
+            .await
+            .unwrap()
+            .rule_version_id(),
+        first_rule_version_id
+    );
+    let registry: (i64, i64, bool, bool, String) = sqlx::query_as(
+        "SELECT highest_sequence, current_trust_generation, \
+                staged_metadata_id IS NULL, last_known_good_metadata_id IS NULL, \
+                encode(active_metadata_id, 'hex') \
+         FROM rule_pack_registry WHERE singleton",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(registry.0, 5);
+    assert_eq!(registry.1, 3);
+    assert!(registry.2);
+    assert!(registry.3);
+    assert_eq!(registry.4, rollback.metadata_id);
+    let pack_states: Vec<(String, String)> = sqlx::query_as(
+        "SELECT encode(pack_hash, 'hex'), state FROM rule_packs \
+         WHERE pack_hash IN ($1, $2) ORDER BY encode(pack_hash, 'hex')",
+    )
+    .bind(hex::decode(&first_pack.content_hash).unwrap())
+    .bind(hex::decode(&second_pack.content_hash).unwrap())
+    .fetch_all(administrator_pool)
+    .await
+    .unwrap();
+    assert!(pack_states.contains(&(first_pack.content_hash.clone(), "active".to_owned())));
+    assert!(pack_states.contains(&(second_pack.content_hash.clone(), "retired".to_owned())));
+    let high_water: (i64, String) = sqlx::query_as(
+        "SELECT highest_sequence, encode(metadata_id, 'hex') \
+         FROM rule_site_promotion_high_water WHERE site_id = 'managed-test'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(high_water, (5, rollback.metadata_id.clone()));
+    let trust_states: Vec<(i64, String)> =
+        sqlx::query_as("SELECT generation, state FROM rule_pack_trust_roots ORDER BY generation")
+            .fetch_all(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        trust_states,
+        vec![
+            (1, "retired".to_owned()),
+            (2, "retired".to_owned()),
+            (3, "active".to_owned()),
+        ]
+    );
+    assert_eq!(
+        apply_rule_pack_metadata(
+            administrator_pool,
+            None,
+            &second_general,
+            std::slice::from_ref(&second_candidate),
+            now,
+        )
+        .await
+        .unwrap_err(),
+        RuleRegistryError::InvalidArtifact
+    );
 }
 
 fn delivery_secrets() -> DeliverySecrets {
@@ -3574,7 +3994,15 @@ async fn assert_monitoring_console_boundary(administrator_pool: &PgPool) {
     application_pool.close().await;
 }
 
-fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {
+struct ManagedRuleFixture {
+    managed_rule: ManagedRule,
+    candidate: CompiledSiteRule,
+    trust: RulePackTrustV1,
+    canary_metadata: RulePackMetadataEnvelope,
+    general_metadata: RulePackMetadataEnvelope,
+}
+
+fn managed_rule_fixture() -> ManagedRuleFixture {
     let compiler = RuleCompiler::new();
     let candidate = compiler
         .compile_yaml(MANAGED_JOB_RULE, Some("managed-test"))
@@ -3603,7 +4031,7 @@ fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {
     };
     let required_regions = BTreeSet::from(["jp".to_owned()]);
     let key = PromotionSigningKey::from_seed("managed-job-test", [9; 32]).unwrap();
-    let promotion = PromotionBuilder::new()
+    let canary_promotion = PromotionBuilder::new()
         .build(
             &key,
             PromotionBuildRequest {
@@ -3611,7 +4039,7 @@ fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {
                 candidate: &candidate,
                 rule_pack: &pack,
                 previous_rule_pack_hash: None,
-                health_records: &[health],
+                health_records: std::slice::from_ref(&health),
                 required_regions: &required_regions,
                 issued_at_unix_ms: now - 500,
                 expires_at_unix_ms: evidence_expires_at,
@@ -3629,26 +4057,59 @@ fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {
         )]),
         expires_at_unix_ms: evidence_expires_at + 10 * 60 * 1_000,
     };
-    let metadata = RulePackMetadataBuilder::new()
+    let canary_metadata = RulePackMetadataBuilder::new()
+        .build(
+            std::slice::from_ref(&metadata_key),
+            RulePackMetadataBuildRequest {
+                sequence: 1,
+                rule_pack: &pack,
+                previous_rule_pack_hash: None,
+                required_regions: &required_regions,
+                rollout_stage: RulePackRolloutStage::Canary,
+                eligible_regions: &required_regions,
+                eligible_workers: &BTreeSet::from(["managed-test-worker".to_owned()]),
+                issued_at_unix_ms: now - 500,
+                expires_at_unix_ms: evidence_expires_at - 1_000,
+                trust: trust.clone(),
+                promotions: &[canary_promotion],
+            },
+        )
+        .unwrap();
+    let general_promotion = PromotionBuilder::new()
+        .build(
+            &key,
+            PromotionBuildRequest {
+                sequence: 2,
+                candidate: &candidate,
+                rule_pack: &pack,
+                previous_rule_pack_hash: None,
+                health_records: &[health],
+                required_regions: &required_regions,
+                issued_at_unix_ms: now - 400,
+                expires_at_unix_ms: evidence_expires_at,
+            },
+        )
+        .unwrap();
+    let general_metadata = RulePackMetadataBuilder::new()
         .build(
             &[metadata_key],
             RulePackMetadataBuildRequest {
-                sequence: 1,
+                sequence: 2,
                 rule_pack: &pack,
                 previous_rule_pack_hash: None,
                 required_regions: &required_regions,
                 rollout_stage: RulePackRolloutStage::General,
                 eligible_regions: &required_regions,
                 eligible_workers: &BTreeSet::new(),
-                issued_at_unix_ms: now - 500,
+                issued_at_unix_ms: now - 400,
                 expires_at_unix_ms: evidence_expires_at - 1_000,
                 trust: trust.clone(),
-                promotions: &[promotion],
+                promotions: &[general_promotion],
             },
         )
         .unwrap();
     let validated = RulePackMetadataVerifier::new()
-        .validate_at(&metadata, &trust, now)
+        .validate_at(&general_metadata, &trust, now)
         .unwrap();
     let managed = ManagedRule::activate(
         &validated,
@@ -3659,49 +4120,17 @@ fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {
         now,
     )
     .unwrap();
-    (managed, candidate, pack)
+    ManagedRuleFixture {
+        managed_rule: managed,
+        candidate,
+        trust,
+        canary_metadata,
+        general_metadata,
+    }
 }
 
-async fn install_managed_rule_fixtures(
-    pool: &PgPool,
-    candidate: &CompiledSiteRule,
-    pack: &CompiledRulePack,
-) {
+async fn install_managed_rule_fixtures(pool: &PgPool, rule_version_id: Uuid) {
     let now = current_unix_ms();
-    sqlx::query(
-        "INSERT INTO sites (id, display_name, state, created_at, updated_at) \
-         VALUES ('managed-test', 'Managed Test', 'promoted', \
-                 clock_timestamp(), clock_timestamp())",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO rule_packs (\
-            id, version, pack_hash, state, created_at, published_at, expires_at\
-         ) VALUES (\
-            $1, 'managed-job-test-v1', $2, 'active', clock_timestamp(), \
-            clock_timestamp(), to_timestamp($3::double precision / 1000.0)\
-         )",
-    )
-    .bind(Uuid::parse_str(MANAGED_RULE_PACK_ID).unwrap())
-    .bind(hex::decode(&pack.content_hash).unwrap())
-    .bind(now + 10 * 60 * 1_000)
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO rule_versions (\
-            id, rule_pack_id, site_id, rule_hash, compiled_rule, enabled, created_at\
-         ) VALUES ($1, $2, 'managed-test', $3, $4::jsonb, true, clock_timestamp())",
-    )
-    .bind(Uuid::parse_str(MANAGED_RULE_VERSION_ID).unwrap())
-    .bind(Uuid::parse_str(MANAGED_RULE_PACK_ID).unwrap())
-    .bind(hex::decode(&candidate.rule_hash).unwrap())
-    .bind(serde_json::to_string(&candidate.source).unwrap())
-    .execute(pool)
-    .await
-    .unwrap();
     sqlx::query(
         "INSERT INTO rule_health_records (\
             id, rule_version_id, region_class, state, evidence_id, \
@@ -3713,7 +4142,7 @@ async fn install_managed_rule_fixtures(
          )",
     )
     .bind(Uuid::new_v4())
-    .bind(Uuid::parse_str(MANAGED_RULE_VERSION_ID).unwrap())
+    .bind(rule_version_id)
     .bind(Uuid::new_v4())
     .bind(now + 10 * 60 * 1_000)
     .bind(now - 1_000)
@@ -3804,7 +4233,10 @@ async fn install_worker_role(pool: &PgPool) {
             last_error_code, lease_owner, lease_started_at, lease_expires_at
         ) ON notification_deliveries TO socialname_migration_test_worker;
         GRANT EXECUTE ON FUNCTION
-            socialname_worker_resolve_rule(text, bytea, bytea, text),
+            socialname_worker_resolve_rule(
+                text, bytea, bytea, text, bytea, bigint, bytea, bigint
+            ),
+            socialname_worker_rule_version_available(uuid, text),
             socialname_worker_lock_next_target(uuid, text),
             socialname_worker_lock_due_watch(uuid, text),
             socialname_worker_lock_next_watch_target(uuid, text),
