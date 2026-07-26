@@ -18,8 +18,9 @@ use axum::{
 };
 use sha2::{Digest, Sha256};
 use socialname_canary::{
-    PromotionBuildRequest, PromotionBuilder, PromotionSigningKey, PromotionTrustPolicy,
-    PromotionVerifier,
+    PromotionBuildRequest, PromotionBuilder, PromotionSigningKey, RULE_PACK_TRUST_V1,
+    RulePackMetadataBuildRequest, RulePackMetadataBuilder, RulePackMetadataSigningKey,
+    RulePackMetadataVerifier, RulePackRolloutStage, RulePackTrustV1,
 };
 use socialname_domain::{
     EvidenceClass as DomainEvidenceClass, InconclusiveReason, RuleHealth, RuleHealthKey,
@@ -3602,7 +3603,7 @@ fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {
     };
     let required_regions = BTreeSet::from(["jp".to_owned()]);
     let key = PromotionSigningKey::from_seed("managed-job-test", [9; 32]).unwrap();
-    let envelope = PromotionBuilder::new()
+    let promotion = PromotionBuilder::new()
         .build(
             &key,
             PromotionBuildRequest {
@@ -3617,27 +3618,47 @@ fn managed_rule_fixture() -> (ManagedRule, CompiledSiteRule, CompiledRulePack) {
             },
         )
         .unwrap();
-    let validated = PromotionVerifier::new()
-        .validate_at(
-            &envelope,
-            &PromotionTrustPolicy {
-                trusted_keys: BTreeMap::from([(
-                    key.key_id().to_owned(),
-                    key.verifying_key_bytes(),
-                )]),
-                expected_site_id: candidate.source.id.clone(),
-                expected_rule_hash: candidate.rule_hash.clone(),
-                expected_rule_pack_hash: pack.content_hash.clone(),
-                expected_previous_rule_pack_hash: None,
-                expected_manifest_hash: MANAGED_MANIFEST_HASH.to_owned(),
-                expected_engine_hash: MANAGED_ENGINE_HASH.to_owned(),
-                required_regions,
-                minimum_sequence_exclusive: 0,
+    let metadata_key = RulePackMetadataSigningKey::from_seed("managed-job-test", [9; 32]).unwrap();
+    let trust = RulePackTrustV1 {
+        schema: RULE_PACK_TRUST_V1.to_owned(),
+        generation: 1,
+        threshold: 1,
+        keys: BTreeMap::from([(
+            metadata_key.key_id().to_owned(),
+            metadata_key.verifying_key_hex(),
+        )]),
+        expires_at_unix_ms: evidence_expires_at + 10 * 60 * 1_000,
+    };
+    let metadata = RulePackMetadataBuilder::new()
+        .build(
+            &[metadata_key],
+            RulePackMetadataBuildRequest {
+                sequence: 1,
+                rule_pack: &pack,
+                previous_rule_pack_hash: None,
+                required_regions: &required_regions,
+                rollout_stage: RulePackRolloutStage::General,
+                eligible_regions: &required_regions,
+                eligible_workers: &BTreeSet::new(),
+                issued_at_unix_ms: now - 500,
+                expires_at_unix_ms: evidence_expires_at - 1_000,
+                trust: trust.clone(),
+                promotions: &[promotion],
             },
-            now,
         )
         .unwrap();
-    let managed = ManagedRule::activate(&validated, &pack, "jp", now).unwrap();
+    let validated = RulePackMetadataVerifier::new()
+        .validate_at(&metadata, &trust, now)
+        .unwrap();
+    let managed = ManagedRule::activate(
+        &validated,
+        &pack,
+        "managed-test",
+        "jp",
+        "managed-test-worker",
+        now,
+    )
+    .unwrap();
     (managed, candidate, pack)
 }
 

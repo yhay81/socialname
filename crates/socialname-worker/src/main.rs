@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
     fs::File,
     future::Future,
     io::{self, Read},
@@ -12,7 +11,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use socialname_canary::{PromotionTrustPolicy, PromotionVerifier};
+use socialname_canary::{RulePackMetadataVerifier, RulePackRolloutStage, RulePackTrustV1};
 use socialname_engine::SearchResult;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_worker::{
@@ -23,8 +22,8 @@ use socialname_worker::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const MAX_PROMOTION_BYTES: usize = 256 * 1_024;
-const MAX_KEY_FILE_BYTES: usize = 1_024;
+const MAX_RULE_PACK_METADATA_BYTES: usize = 2 * 1_024 * 1_024;
+const MAX_RULE_PACK_TRUST_BYTES: usize = 64 * 1_024;
 const MAX_INPUT_BYTES: usize = 1_024;
 
 #[derive(Debug, Parser)]
@@ -54,28 +53,21 @@ struct ActivationArgs {
     #[arg(long)]
     rules_dir: PathBuf,
     #[arg(long)]
-    promotion: PathBuf,
+    metadata: PathBuf,
+    /// File containing the current public rule-pack trust generation.
     #[arg(long)]
-    manifest_hash: String,
+    current_trust_file: PathBuf,
     #[arg(long)]
-    engine_hash: String,
-    #[arg(long = "required-region", required = true)]
-    required_regions: Vec<String>,
-    #[arg(long)]
-    previous_rule_pack_hash: Option<String>,
-    #[arg(long, default_value_t = 0)]
-    minimum_sequence_exclusive: u64,
-    #[arg(long)]
-    key_id: String,
-    /// File containing one trusted 32-byte Ed25519 public key as 64 hexadecimal characters.
-    #[arg(long)]
-    verifying_key_file: PathBuf,
+    minimum_metadata_sequence_exclusive: u64,
 }
 
 #[derive(Debug, Args)]
 struct ProbeArgs {
     #[command(flatten)]
     activation: ActivationArgs,
+    /// Closed deployment identity used by signed canary-stage selection.
+    #[arg(long)]
+    worker_id: String,
     /// Acknowledge that this command sends one bounded request plan to a third party.
     #[arg(long)]
     allow_live: bool,
@@ -124,6 +116,9 @@ struct ProbeInput {
 #[derive(Serialize)]
 struct ProbeOutput<'a> {
     schema: &'static str,
+    metadata_id: &'a str,
+    metadata_sequence: u64,
+    rollout_stage: RulePackRolloutStage,
     promotion_id: &'a str,
     region_class: &'a str,
     result: &'a SearchResult,
@@ -200,8 +195,9 @@ async fn probe(args: ProbeArgs) -> Result<()> {
     if !args.allow_live {
         bail!("live managed probing requires --allow-live");
     }
+    validate_worker_id(&args.worker_id)?;
     let input = read_probe_input()?;
-    let managed_rule = activate(args.activation)?;
+    let managed_rule = activate(args.activation, &args.worker_id)?;
     let cancellation = shutdown_token();
     let result = managed_rule
         .execute(&input.username, now_unix_ms()?, &cancellation)
@@ -210,6 +206,9 @@ async fn probe(args: ProbeArgs) -> Result<()> {
         "{}",
         serde_json::to_string(&ProbeOutput {
             schema: "socialname.dev/managed-probe-result/v1",
+            metadata_id: managed_rule.metadata_id(),
+            metadata_sequence: managed_rule.metadata_sequence(),
+            rollout_stage: managed_rule.rollout_stage(),
             promotion_id: managed_rule.promotion_id(),
             region_class: managed_rule.region_class(),
             result: &result,
@@ -228,7 +227,10 @@ async fn process_one(args: ProcessOneArgs) -> Result<()> {
         args.expansion_limit,
     )?;
     validate_worker_id(&args.worker_id)?;
-    let managed_rule = activate(args.activation)?;
+    let managed_rule = activate(args.activation, &args.worker_id)?;
+    if !managed_rule.permits_customer_work() {
+        bail!("managed customer work requires a signed general or rollback rollout stage");
+    }
     let store = JobStore::connect_from_env().await?;
     let outcome = process_one_with_store(
         &store,
@@ -336,7 +338,7 @@ async fn process_one_with_store(
     })
 }
 
-fn activate(args: ActivationArgs) -> Result<ManagedRule> {
+fn activate(args: ActivationArgs, worker_id: &str) -> Result<ManagedRule> {
     let compiler = RuleCompiler::new();
     let rules = compiler
         .load_directory(&args.rules_dir)
@@ -348,28 +350,35 @@ fn activate(args: ActivationArgs) -> Result<ManagedRule> {
     let rule_pack = compiler
         .compile_pack(&rules)
         .map_err(|_| anyhow::anyhow!("rule pack failed canonical compilation"))?;
-    let verifying_key = load_verifying_key(&args.verifying_key_file)?;
-    let promotion = read_bounded_file(&args.promotion, MAX_PROMOTION_BYTES, "promotion artifact")?;
+    let trust = load_rule_pack_trust(&args.current_trust_file)?;
+    let metadata = read_bounded_file(
+        &args.metadata,
+        MAX_RULE_PACK_METADATA_BYTES,
+        "rule-pack metadata",
+    )?;
     let verified_at_unix_ms = now_unix_ms()?;
-    let validated = PromotionVerifier::new()
-        .validate_json_at(
-            &promotion,
-            &PromotionTrustPolicy {
-                trusted_keys: BTreeMap::from([(args.key_id, verifying_key)]),
-                expected_site_id: args.site,
-                expected_rule_hash: candidate.rule_hash.clone(),
-                expected_rule_pack_hash: rule_pack.content_hash.clone(),
-                expected_previous_rule_pack_hash: args.previous_rule_pack_hash,
-                expected_manifest_hash: args.manifest_hash,
-                expected_engine_hash: args.engine_hash,
-                required_regions: args.required_regions.into_iter().collect::<BTreeSet<_>>(),
-                minimum_sequence_exclusive: args.minimum_sequence_exclusive,
-            },
-            verified_at_unix_ms,
-        )
-        .map_err(|_| anyhow::anyhow!("promotion failed the configured trust policy"))?;
-    ManagedRule::activate(&validated, &rule_pack, args.region, verified_at_unix_ms)
-        .map_err(Into::into)
+    let validated = RulePackMetadataVerifier::new()
+        .validate_json_at(&metadata, &trust, verified_at_unix_ms)
+        .map_err(|_| anyhow::anyhow!("rule-pack metadata failed the configured trust policy"))?;
+    if validated.metadata().sequence <= args.minimum_metadata_sequence_exclusive {
+        bail!("rule-pack metadata sequence is not above the configured high-water mark");
+    }
+    if validated.metadata().rule_pack_hash != rule_pack.content_hash
+        || validated
+            .promotion(&args.site)
+            .is_none_or(|promotion| promotion.promotion().rule_hash != candidate.rule_hash)
+    {
+        bail!("rule-pack metadata does not match the configured site and pack");
+    }
+    ManagedRule::activate(
+        &validated,
+        &rule_pack,
+        &args.site,
+        args.region,
+        worker_id,
+        verified_at_unix_ms,
+    )
+    .map_err(Into::into)
 }
 
 fn shutdown_token() -> CancellationToken {
@@ -535,19 +544,13 @@ fn parse_probe_input(bytes: &[u8]) -> Result<ProbeInput> {
     Ok(input)
 }
 
-fn load_verifying_key(path: &Path) -> Result<[u8; 32]> {
-    let bytes = read_bounded_file(path, MAX_KEY_FILE_BYTES, "verifying-key file")?;
-    parse_verifying_key(&bytes)
+fn load_rule_pack_trust(path: &Path) -> Result<RulePackTrustV1> {
+    let bytes = read_bounded_file(path, MAX_RULE_PACK_TRUST_BYTES, "rule-pack trust file")?;
+    parse_rule_pack_trust(&bytes)
 }
 
-fn parse_verifying_key(bytes: &[u8]) -> Result<[u8; 32]> {
-    let encoded =
-        std::str::from_utf8(bytes).context("verifying-key file must contain UTF-8 hexadecimal")?;
-    let decoded =
-        hex::decode(encoded.trim()).context("verifying-key file must contain hexadecimal")?;
-    decoded
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("verifying-key file must contain exactly 32 bytes"))
+fn parse_rule_pack_trust(bytes: &[u8]) -> Result<RulePackTrustV1> {
+    serde_json::from_slice(bytes).map_err(|_| anyhow::anyhow!("rule-pack trust file is malformed"))
 }
 
 fn read_bounded_file(path: &Path, limit: usize, label: &str) -> Result<Vec<u8>> {
@@ -594,22 +597,27 @@ mod tests {
     }
 
     #[test]
-    fn verifying_key_contract_is_exact_and_redacted() {
-        assert_eq!(
-            parse_verifying_key(b"07")
-                .unwrap_err()
-                .root_cause()
-                .to_string(),
-            "verifying-key file must contain exactly 32 bytes"
-        );
-        let key = parse_verifying_key(
-            b"0707070707070707070707070707070707070707070707070707070707070707",
-        )
+    fn trust_file_contract_is_closed_and_redacted() {
+        let source = serde_json::to_vec(&serde_json::json!({
+            "schema": "socialname.dev/rule-pack-trust/v1",
+            "generation": 1,
+            "threshold": 1,
+            "keys": {
+                "release-key": "07".repeat(32),
+            },
+            "expires_at_unix_ms": 9_999_999,
+        }))
         .unwrap();
-        assert_eq!(key, [7; 32]);
+        let trust = parse_rule_pack_trust(&source).unwrap();
+        assert_eq!(trust.generation, 1);
+        assert_eq!(trust.keys.len(), 1);
 
-        let invalid = "private-key-material-is-not-hex";
-        let error = parse_verifying_key(invalid.as_bytes()).unwrap_err();
+        let mut unknown: serde_json::Value = serde_json::from_slice(&source).unwrap();
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(parse_rule_pack_trust(&serde_json::to_vec(&unknown).unwrap()).is_err());
+
+        let invalid = "private-key-material-must-not-appear";
+        let error = parse_rule_pack_trust(invalid.as_bytes()).unwrap_err();
         assert!(!error.to_string().contains(invalid));
         assert!(!format!("{error:?}").contains(invalid));
     }

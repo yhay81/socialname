@@ -4,7 +4,7 @@ mod delivery;
 mod derivation;
 mod job;
 
-use socialname_canary::ValidatedPromotion;
+use socialname_canary::{RulePackRolloutStage, ValidatedRulePackMetadata};
 use socialname_engine::{SearchEngine, SearchResult};
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use tokio_util::sync::CancellationToken;
@@ -22,9 +22,14 @@ pub use job::{
 
 #[derive(Clone, Debug)]
 pub struct ManagedRule {
+    metadata_id: String,
+    metadata_sequence: u64,
+    rollout_stage: RulePackRolloutStage,
     promotion_id: String,
+    promotion_sequence: u64,
     rule_pack_hash: String,
     region_class: String,
+    metadata_expires_at_unix_ms: i64,
     promotion_expires_at_unix_ms: i64,
     evidence_expires_at_unix_ms: i64,
     candidate: CompiledSiteRule,
@@ -33,16 +38,39 @@ pub struct ManagedRule {
 
 impl ManagedRule {
     pub fn activate(
-        validated: &ValidatedPromotion,
+        validated: &ValidatedRulePackMetadata,
         rule_pack: &CompiledRulePack,
+        site_id: &str,
         region_class: impl Into<String>,
+        worker_id: &str,
         activated_at_unix_ms: i64,
     ) -> Result<Self, WorkerError> {
         let region_class = region_class.into();
         if !valid_label(&region_class) {
             return Err(WorkerError::InvalidRegion);
         }
-        let promotion = validated.promotion();
+        if !valid_label(site_id) || !valid_label(worker_id) {
+            return Err(WorkerError::InvalidWorkerIdentity);
+        }
+        let metadata = validated.metadata();
+        if metadata.issued_at_unix_ms > activated_at_unix_ms
+            || metadata.expires_at_unix_ms <= activated_at_unix_ms
+        {
+            return Err(WorkerError::ExpiredMetadata);
+        }
+        if !metadata.required_regions.contains(&region_class) {
+            return Err(WorkerError::RegionNotAccepted);
+        }
+        if !validated.permits_worker(&region_class, worker_id) {
+            return Err(WorkerError::WorkerNotEligible);
+        }
+        validated
+            .validate_pack(rule_pack)
+            .map_err(|_| WorkerError::RulePackMismatch)?;
+        let validated_promotion = validated
+            .promotion(site_id)
+            .ok_or(WorkerError::RulePackMismatch)?;
+        let promotion = validated_promotion.promotion();
         if promotion.issued_at_unix_ms > activated_at_unix_ms
             || promotion.expires_at_unix_ms <= activated_at_unix_ms
         {
@@ -84,9 +112,14 @@ impl ManagedRule {
         }
 
         Ok(Self {
-            promotion_id: validated.envelope().promotion_id.clone(),
+            metadata_id: validated.envelope().metadata_id.clone(),
+            metadata_sequence: metadata.sequence,
+            rollout_stage: metadata.rollout_stage,
+            promotion_id: validated_promotion.envelope().promotion_id.clone(),
+            promotion_sequence: promotion.sequence,
             rule_pack_hash: promotion.rule_pack_hash.clone(),
             region_class,
+            metadata_expires_at_unix_ms: metadata.expires_at_unix_ms,
             promotion_expires_at_unix_ms: promotion.expires_at_unix_ms,
             evidence_expires_at_unix_ms: evidence.evidence_expires_at_unix_ms,
             candidate,
@@ -95,8 +128,36 @@ impl ManagedRule {
     }
 
     #[must_use]
+    pub fn metadata_id(&self) -> &str {
+        &self.metadata_id
+    }
+
+    #[must_use]
+    pub const fn metadata_sequence(&self) -> u64 {
+        self.metadata_sequence
+    }
+
+    #[must_use]
+    pub const fn rollout_stage(&self) -> RulePackRolloutStage {
+        self.rollout_stage
+    }
+
+    #[must_use]
+    pub const fn permits_customer_work(&self) -> bool {
+        matches!(
+            self.rollout_stage,
+            RulePackRolloutStage::General | RulePackRolloutStage::Rollback
+        )
+    }
+
+    #[must_use]
     pub fn promotion_id(&self) -> &str {
         &self.promotion_id
+    }
+
+    #[must_use]
+    pub const fn promotion_sequence(&self) -> u64 {
+        self.promotion_sequence
     }
 
     #[must_use]
@@ -139,6 +200,9 @@ impl ManagedRule {
         executed_at_unix_ms: i64,
         cancellation: &CancellationToken,
     ) -> Result<SearchResult, WorkerError> {
+        if self.metadata_expires_at_unix_ms <= executed_at_unix_ms {
+            return Err(WorkerError::ExpiredMetadata);
+        }
         if self.promotion_expires_at_unix_ms <= executed_at_unix_ms {
             return Err(WorkerError::ExpiredPromotion);
         }
@@ -165,8 +229,14 @@ fn valid_label(value: &str) -> bool {
 pub enum WorkerError {
     #[error("managed worker region is invalid")]
     InvalidRegion,
+    #[error("managed worker identity is invalid")]
+    InvalidWorkerIdentity,
     #[error("signed rule is not accepted in this region")]
     RegionNotAccepted,
+    #[error("managed worker is outside the signed rollout stage")]
+    WorkerNotEligible,
+    #[error("signed rule-pack metadata is expired")]
+    ExpiredMetadata,
     #[error("signed rule promotion is expired")]
     ExpiredPromotion,
     #[error("signed rule evidence is expired")]
@@ -184,8 +254,9 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use socialname_canary::{
-        PromotionBuildRequest, PromotionBuilder, PromotionSigningKey, PromotionTrustPolicy,
-        PromotionVerifier,
+        PromotionBuildRequest, PromotionBuilder, PromotionSigningKey, RULE_PACK_TRUST_V1,
+        RulePackMetadataBuildRequest, RulePackMetadataBuilder, RulePackMetadataSigningKey,
+        RulePackMetadataVerifier, RulePackTrustV1,
     };
     use socialname_domain::{RuleHealth, RuleHealthKey, RuleHealthRecord, SiteId, Verdict};
 
@@ -230,17 +301,18 @@ mod tests {
             consecutive_operational_failures: 0,
             last_manifest_hash: Some(MANIFEST_HASH.to_owned()),
             last_engine_hash: Some(ENGINE_HASH.to_owned()),
-            last_evidence_expires_at_unix_ms: Some(EXPIRES_AT + 1_000),
+            last_evidence_expires_at_unix_ms: Some(EXPIRES_AT + 2_000),
             last_evidence_ids: vec!["3".repeat(64), "4".repeat(64)],
         }
     }
 
-    fn validated_promotion(
+    fn validated_metadata(
         candidate: &CompiledSiteRule,
         pack: &CompiledRulePack,
-    ) -> ValidatedPromotion {
+        rollout_stage: RulePackRolloutStage,
+    ) -> ValidatedRulePackMetadata {
         let key = PromotionSigningKey::from_seed("worker-test-key", [7; 32]).unwrap();
-        let envelope = PromotionBuilder::new()
+        let promotion = PromotionBuilder::new()
             .build(
                 &key,
                 PromotionBuildRequest {
@@ -251,29 +323,48 @@ mod tests {
                     health_records: &[health(candidate)],
                     required_regions: &regions(),
                     issued_at_unix_ms: ISSUED_AT,
-                    expires_at_unix_ms: EXPIRES_AT,
+                    expires_at_unix_ms: EXPIRES_AT + 1_000,
                 },
             )
             .unwrap();
-        PromotionVerifier::new()
-            .validate_at(
-                &envelope,
-                &PromotionTrustPolicy {
-                    trusted_keys: BTreeMap::from([(
-                        key.key_id().to_owned(),
-                        key.verifying_key_bytes(),
-                    )]),
-                    expected_site_id: "github".to_owned(),
-                    expected_rule_hash: candidate.rule_hash.clone(),
-                    expected_rule_pack_hash: pack.content_hash.clone(),
-                    expected_previous_rule_pack_hash: None,
-                    expected_manifest_hash: MANIFEST_HASH.to_owned(),
-                    expected_engine_hash: ENGINE_HASH.to_owned(),
-                    required_regions: regions(),
-                    minimum_sequence_exclusive: 0,
+        let metadata_key =
+            RulePackMetadataSigningKey::from_seed("worker-test-key", [7; 32]).unwrap();
+        let trust = RulePackTrustV1 {
+            schema: RULE_PACK_TRUST_V1.to_owned(),
+            generation: 1,
+            threshold: 1,
+            keys: BTreeMap::from([(
+                metadata_key.key_id().to_owned(),
+                metadata_key.verifying_key_hex(),
+            )]),
+            expires_at_unix_ms: EXPIRES_AT + 100_000,
+        };
+        let eligible_regions = regions();
+        let eligible_workers = if rollout_stage == RulePackRolloutStage::Canary {
+            BTreeSet::from(["worker-a".to_owned()])
+        } else {
+            BTreeSet::new()
+        };
+        let envelope = RulePackMetadataBuilder::new()
+            .build(
+                &[metadata_key],
+                RulePackMetadataBuildRequest {
+                    sequence: 1,
+                    rule_pack: pack,
+                    previous_rule_pack_hash: None,
+                    required_regions: &regions(),
+                    rollout_stage,
+                    eligible_regions: &eligible_regions,
+                    eligible_workers: &eligible_workers,
+                    issued_at_unix_ms: ISSUED_AT,
+                    expires_at_unix_ms: EXPIRES_AT,
+                    trust: trust.clone(),
+                    promotions: &[promotion],
                 },
-                ISSUED_AT + 1,
             )
+            .unwrap();
+        RulePackMetadataVerifier::new()
+            .validate_at(&envelope, &trust, ISSUED_AT + 1)
             .unwrap()
     }
 
@@ -281,11 +372,20 @@ mod tests {
     async fn only_a_validated_fresh_regional_rule_can_execute() {
         let candidate = candidate();
         let pack = pack(&candidate);
-        let validated = validated_promotion(&candidate, &pack);
-        let managed = ManagedRule::activate(&validated, &pack, "region-a", ISSUED_AT + 2).unwrap();
+        let validated = validated_metadata(&candidate, &pack, RulePackRolloutStage::General);
+        let managed = ManagedRule::activate(
+            &validated,
+            &pack,
+            "github",
+            "region-a",
+            "worker-a",
+            ISSUED_AT + 2,
+        )
+        .unwrap();
         assert_eq!(managed.site_id(), "github");
         assert_eq!(managed.region_class(), "region-a");
-        assert_eq!(managed.promotion_id(), validated.envelope().promotion_id);
+        assert_eq!(managed.metadata_id(), validated.envelope().metadata_id);
+        assert!(managed.permits_customer_work());
 
         let result = managed
             .execute(
@@ -299,16 +399,48 @@ mod tests {
         assert!(result.probes.is_empty());
 
         assert_eq!(
-            ManagedRule::activate(&validated, &pack, "region-b", ISSUED_AT + 2).unwrap_err(),
+            ManagedRule::activate(
+                &validated,
+                &pack,
+                "github",
+                "region-b",
+                "worker-a",
+                ISSUED_AT + 2,
+            )
+            .unwrap_err(),
             WorkerError::RegionNotAccepted
         );
         assert_eq!(
-            ManagedRule::activate(&validated, &pack, "Region-A", ISSUED_AT + 2).unwrap_err(),
+            ManagedRule::activate(
+                &validated,
+                &pack,
+                "github",
+                "Region-A",
+                "worker-a",
+                ISSUED_AT + 2,
+            )
+            .unwrap_err(),
             WorkerError::InvalidRegion
         );
         assert_eq!(
-            ManagedRule::activate(&validated, &pack, "region-a", EXPIRES_AT).unwrap_err(),
-            WorkerError::ExpiredPromotion
+            ManagedRule::activate(
+                &validated, &pack, "github", "region-a", "worker-a", EXPIRES_AT,
+            )
+            .unwrap_err(),
+            WorkerError::ExpiredMetadata
+        );
+        let canary = validated_metadata(&candidate, &pack, RulePackRolloutStage::Canary);
+        assert_eq!(
+            ManagedRule::activate(
+                &canary,
+                &pack,
+                "github",
+                "region-a",
+                "worker-b",
+                ISSUED_AT + 2,
+            )
+            .unwrap_err(),
+            WorkerError::WorkerNotEligible
         );
     }
 
@@ -316,8 +448,16 @@ mod tests {
     async fn cancellation_and_expiry_stop_before_network_execution() {
         let candidate = candidate();
         let pack = pack(&candidate);
-        let validated = validated_promotion(&candidate, &pack);
-        let managed = ManagedRule::activate(&validated, &pack, "region-a", ISSUED_AT + 2).unwrap();
+        let validated = validated_metadata(&candidate, &pack, RulePackRolloutStage::General);
+        let managed = ManagedRule::activate(
+            &validated,
+            &pack,
+            "github",
+            "region-a",
+            "worker-a",
+            ISSUED_AT + 2,
+        )
+        .unwrap();
         let cancellation = CancellationToken::new();
         cancellation.cancel();
         assert_eq!(
@@ -332,7 +472,7 @@ mod tests {
                 .execute("valid-target", EXPIRES_AT, &CancellationToken::new())
                 .await
                 .unwrap_err(),
-            WorkerError::ExpiredPromotion
+            WorkerError::ExpiredMetadata
         );
     }
 
@@ -340,16 +480,26 @@ mod tests {
     fn activation_recompiles_pack_bytes_and_errors_do_not_echo_targets() {
         let candidate = candidate();
         let mut pack = pack(&candidate);
-        let validated = validated_promotion(&candidate, &pack);
+        let validated = validated_metadata(&candidate, &pack, RulePackRolloutStage::General);
         pack.rules[0].metadata.notes = "tampered after verification".to_owned();
         assert_eq!(
-            ManagedRule::activate(&validated, &pack, "region-a", ISSUED_AT + 2).unwrap_err(),
+            ManagedRule::activate(
+                &validated,
+                &pack,
+                "github",
+                "region-a",
+                "worker-a",
+                ISSUED_AT + 2,
+            )
+            .unwrap_err(),
             WorkerError::RulePackMismatch
         );
 
         let private_target = "private-target-that-must-not-appear";
         for error in [
             WorkerError::RegionNotAccepted,
+            WorkerError::WorkerNotEligible,
+            WorkerError::ExpiredMetadata,
             WorkerError::ExpiredPromotion,
             WorkerError::RulePackMismatch,
             WorkerError::Cancelled,
