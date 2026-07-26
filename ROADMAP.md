@@ -1269,6 +1269,11 @@ boundary is in
 Email delivery remains the next vertical slice, so the combined roadmap item
 stays open.
 
+Quality run
+[`30212644031`](https://github.com/yhay81/socialname/actions/runs/30212644031)
+passed Rust core with PostgreSQL 18 migrations/tests, Windows/macOS desktop,
+monitoring console, and managed-worker OCI for commit `0a4f24a`.
+
 Acceptance gate:
 
 - Multi-region disagreement is represented, not overwritten.
