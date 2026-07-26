@@ -1,11 +1,11 @@
 # Lineage-backed deletion workflows
 
-This boundary implements the repository-completable contributor-deletion and
-verified target-person request slice. It deliberately stops after current
-PostgreSQL support withdrawal, assertion recomputation, and primary deletion.
-Analytics rebuild completion, deletion receipts, restore-ledger replay,
-backup-expiry proof, daily drills, and production scheduling remain the next
-ordered roadmap item.
+This boundary implements contributor and verified target-person deletion
+through current primary and derived PostgreSQL state, target-free receipts,
+authenticated restore-ledger replay, and backup-expiry verification. External
+identity/control review, backup-provider inventory production evidence, and
+elapsed production SLA evidence remain operator gates rather than claims made
+by repository tests.
 
 ## Guarantees and deadlines
 
@@ -17,8 +17,8 @@ accepted deadlines:
 | Hide | 5 minutes | Completed in the creation transaction |
 | Withdraw support | 1 hour | Performed by the deletion worker |
 | Delete primary data | 24 hours | Performed atomically with support withdrawal and recomputation |
-| Rebuild derived stores | 7 days | Task is durable but not completed by this slice |
-| Expire backups | 35 days | Task is durable but not completed by this slice |
+| Rebuild derived stores | 7 days | PostgreSQL assertions/projections are recomputed and the derived task completes atomically with primary deletion |
+| Expire backups | 35 days | Completion requires deadline passage plus an explicit bounded backup-inventory attestation |
 
 Creation writes immutable lineage tombstones before returning. Product reads
 exclude matched observations, Evidence Capsules, search events, assertions,
@@ -30,6 +30,10 @@ opaque `deleted-target-<uuid>` markers.
 The public request resource exposes only IDs, scope, state, deadlines, matched
 counts, and completion timestamps. It never returns a contributor selector,
 username, verification reference, HMAC, or tenant-global target list.
+`GET /v1/deletion-requests/{id}/receipt` returns fixed `primary`, `derived`,
+and `backup` entries, their deadlines and completion times, and the remaining
+backup-expiry interval. A final `completed` response requires the append-only
+database receipt; a schedule alone is always reported as `pending`.
 
 ## Contributor API
 
@@ -177,7 +181,7 @@ sets transaction-local tenant RLS and atomically:
    Evidence Capsules and retention receipts, search events, observations, and
    selected lineage;
 7. replaces watch-run observation references with deletion tombstones;
-8. marks primary tasks complete and the request `rebuilding`; and
+8. marks primary and derived tasks complete and the request `rebuilding`; and
 9. appends a target-free audit event.
 
 The deletion transaction is all-or-nothing. A stale lease cannot mutate data,
@@ -186,11 +190,88 @@ search-target, request, task, match, suppression, and audit rows remain as
 payload-free or target-redacted operational receipts; they preserve replay,
 deadline, and withdrawal lineage without retaining the deleted identifier.
 
+## Backup expiry and final receipt
+
+The backup task cannot be completed by the normal worker. After the 35-day
+deadline, an authorized schema-owner operator compares the provider inventory
+with the recorded primary completion time and supplies only opaque evidence
+references:
+
+```powershell
+$env:SOCIALNAME_DATABASE_URL = "postgres://SCHEMA_OWNER:...@HOST/DATABASE"
+$env:SOCIALNAME_BACKUP_EXPIRY_VERIFIED = "true"
+@'
+{
+  "schema": "socialname.dev/backup-expiry-verification/v1",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "deletion_request_id": "00000000-0000-0000-0000-000000000002",
+  "verification_reference": "opaque-case-reference",
+  "inventory_evidence_reference": "opaque-provider-inventory-reference",
+  "oldest_restorable_at_unix_ms": null
+}
+'@ | cargo run --locked -p socialname-server -- verify-backup-expiry
+```
+
+`null` explicitly attests that no restorable generation remains. Otherwise
+`oldest_restorable_at_unix_ms` must be strictly newer than primary completion.
+The command rejects execution before the database deadline, before both
+primary and derived completion, or while inventory can still restore deleted
+primary data. It stores SHA-256 reference digests and inventory bounds, never
+credentials, snapshot names, selectors, or provider payloads. In the same
+transaction it completes the backup task, creates the append-only
+`deletion_receipts` row, and moves the request from `rebuilding` to
+`completed`. Exact input replay returns the stored completion; different
+evidence for the same request conflicts.
+
+This is a software enforcement point, not proof that a production provider
+inventory is complete. Operators must retain the external inventory evidence
+under the applicable compliance process.
+
+## Restore ledger and serve quarantine
+
+Backups must carry a separately protected, target-free restore ledger. Export
+uses the same persistent suppression HMAC key and includes only tenant IDs,
+purpose labels, HMAC tokens, expiry times, a key fingerprint, and an
+authenticated envelope:
+
+```powershell
+$env:SOCIALNAME_DATABASE_URL = "postgres://SCHEMA_OWNER:...@HOST/DATABASE"
+$env:SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX = "<64 lowercase hex characters>"
+cargo run --locked -p socialname-server -- export-restore-ledger `
+  > deletion-restore-ledger.json
+```
+
+After a database restore, the service remains quarantined while an operator
+replays the artifact:
+
+```powershell
+$env:SOCIALNAME_RESTORE_LEDGER_REPLAY = "true"
+Get-Content -Raw deletion-restore-ledger.json |
+  cargo run --locked -p socialname-server -- replay-restore-ledger
+```
+
+Replay verifies the envelope MAC and key fingerprint, imports active
+suppression tokens, recomputes token matches locally without a raw selector,
+withdraws restored contributor grants, materializes deletion lineage, and
+redacts/cancels target-bearing work in one transaction. Matching shared target
+observations and contributor observations become hidden immediately and get
+new primary/derived/backup tasks. Private target observations remain outside
+the shared-pool replay. Replaying the exact artifact is idempotent; a different
+artifact under the same ledger ID conflicts.
+
+Set `SOCIALNAME_EXPECTED_RESTORE_LEDGER_ID` on a restored runtime before
+starting it. `/health/ready` returns `503 not_ready` until that exact ledger
+run has committed. Normal live databases omit this variable. Detecting that a
+restore occurred and supplying the correct external ledger ID are deployment
+orchestrator responsibilities.
+
 ## Least privilege and failure behavior
 
-Migration `0012_lineage_backed_deletion.sql` adds the match tombstone table,
-ordered state/deadline/progress constraints, target-redaction coordinator, and
-cross-tenant deletion claim coordinator. `PUBLIC` execution is revoked.
+Migration `0012_lineage_backed_deletion.sql` adds the match tombstone and
+worker boundary. Migration `0013_deletion_receipts_and_restore.sql` adds
+backup-verification evidence, restore-run/link ledgers, receipt completion
+triggers, and the exact restore-readiness predicate. `PUBLIC` execution is
+revoked.
 
 The application role can create and inspect only tenant-local contributor
 requests and call the exact redaction function. The worker remains
@@ -202,9 +283,9 @@ shared-pool request across tenants; it is not part of the HTTP runtime.
 
 Database/configuration errors do not convert to `not_found`, an account
 verdict, or a false completion receipt. A failed primary transaction retains
-its durable request/tasks and lease-expiry retry path. Analytics and backup
-tasks remain pending, so the public state remains `rebuilding` and this slice
-does not claim the 7-day or 35-day external gates.
+its durable request/tasks and lease-expiry retry path. Backup remains pending,
+and the public state remains `rebuilding`, until the explicit external
+inventory gate succeeds.
 
 ## Verification
 
@@ -217,15 +298,21 @@ worker credentials and proves:
 - exact contributor replay, grant withdrawal, and future-consent suppression;
 - fail-closed key-fingerprint mismatch behavior;
 - support removal, remaining-support recomputation, sole-support withdrawal,
-  primary purge, and idempotent worker replay;
+  primary purge, derived-task completion, and idempotent worker replay;
 - target-group replay before and after physical purge;
 - shared target deletion while an identical private observation remains;
 - future-target suppression before network execution, target/work-hash
   redaction, zero observation writes, a redacted `blocked` event, and a
   terminal search; and
+- pending and completed receipt relations, remaining backup time, premature
+  inventory rejection, and exact verification replay;
+- authenticated target-free restore export/replay, restored-row hiding,
+  exact replay, and readiness quarantine; and
 - restricted runtime privileges and forced-RLS isolation.
 
 No test claims external identity verification, legal disposition of private
-tenant data, production scheduling, analytics rebuild, recipient
-notification, deletion-receipt completion, restore-ledger replay, or encrypted
-backup expiry.
+tenant data, production schedule execution, provider-inventory completeness,
+recipient notification, or elapsed 5-minute/1-hour/24-hour/7-day/35-day
+production SLA evidence. The scheduled GitHub workflow runs the deterministic
+PostgreSQL 18 delete-through and restore drill daily; its first and subsequent
+hosted executions remain external CI evidence.

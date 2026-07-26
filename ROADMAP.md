@@ -862,7 +862,7 @@ Status: **Current; external deployment evidence pending**
       schedule.
 - [x] Implement lineage-backed contributor deletion and target-person request
       workflows.
-- [ ] Add daily delete-through tests, deletion receipts, restore-ledger replay,
+- [x] Add daily delete-through tests, deletion receipts, restore-ledger replay,
       and backup-expiry verification.
 - [ ] Add notification acknowledgement, email delivery, operational dashboards,
       and SLO reporting.
@@ -1163,19 +1163,65 @@ job creates no observation and terminates its search with a redacted `blocked`
 event. Active legacy/different suppression-key fingerprints fail closed rather
 than silently disabling prior erasure.
 
-The real PostgreSQL 18 gate reapplies all 12 migrations and inventories 45
-product tables and 35 forced-RLS policies. It proves immediate physical-row
+The real PostgreSQL 18 gate reapplies the migrations and inventories the
+current schema. It proves immediate physical-row
 hiding, exact deadlines/replay, scope isolation, support-by-support
 recomputation, primary purge, shared/private target separation, future
 reingestion suppression, key-mismatch refusal, least privilege, and
-idempotency. Analytics completion, completed deletion receipts, daily
-delete-through tests, restore-ledger replay, production scheduling, and
-backup-expiry proof remain the next ordered item. The complete boundary is in
+idempotency. The complete boundary is in
 [`docs/deletion-workflows.md`](docs/deletion-workflows.md).
 Quality run
 [`30209676004`](https://github.com/yhay81/socialname/actions/runs/30209676004)
 passed Rust core with PostgreSQL 18 migrations/tests, Windows/macOS desktop,
 monitoring console, and managed-worker OCI for commit `073e7e1`.
+
+Delete-through, receipt, restore, and backup-expiry software evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes protocol: 42 unit + 11 contract; server: 36 library + 2 binary
+# + 1 real PostgreSQL 18 integration; worker: 20 library + 5 binary
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# all passed
+```
+
+Migration `0013` brings the schema to 48 product tables and 36 forced-RLS
+policies. Primary deletion now completes the current PostgreSQL derived
+projection task in the same transaction. The `data:delete` receipt endpoint
+returns exactly primary/derived/backup state, deadlines, completion times, and
+remaining backup expiry; it cannot report final completion without an
+append-only database receipt.
+
+The backup operator rejects execution before the 35-day database deadline,
+before primary/derived completion, or while the bounded inventory can still
+restore data from at or before primary completion. It stores only opaque
+evidence digests and creates the backup task completion, receipt, and request
+completion atomically with exact replay.
+
+The restore operator exports an HMAC-authenticated, target-free ledger and
+replays suppression, contributor withdrawal, lineage hiding, and job/delivery
+redaction locally before commit. A restored runtime configured with the exact
+expected ledger ID remains `not_ready` until replay succeeds. Different keys,
+tampering, missing tenants, excessive input, and same-ID/different-artifact
+replay fail closed.
+
+`.github/workflows/deletion-drill.yml` schedules the deterministic PostgreSQL
+18 delete-through and restore drill every day and allows an explicit manual
+run. Local PostgreSQL 18 proves completed receipts, premature-inventory
+refusal, exact backup replay, target-free artifact shape, restored-row hiding,
+exact restore replay, and readiness quarantine. Hosted schedule execution
+history, production backup-provider inventory completeness, and elapsed
+5-minute/1-hour/24-hour/7-day/35-day production SLA evidence remain external
+gates and are not claimed by the repository.
 
 Acceptance gate:
 
@@ -1372,3 +1418,12 @@ Choose these only when their trigger is measured:
   and explicit private-target routing under PostgreSQL 18 RLS. Kept completed
   receipts, analytics/restore/backup proof, and daily delete-through drills in
   the next ordered item.
+- **2026-07-26:** Added fixed-shape deletion receipts, atomic
+  primary/derived completion, deadline- and inventory-gated backup completion,
+  HMAC-authenticated target-free restore-ledger export/replay, and
+  restore-aware readiness quarantine. Added a daily PostgreSQL 18
+  delete-through workflow and deterministic coverage for premature refusal,
+  exact replay, restored-row hiding, and final receipts. Kept hosted schedule
+  history, provider inventory completeness, and elapsed production SLA proof
+  external, and selected notification acknowledgement, email delivery,
+  dashboards, and SLO reporting next.

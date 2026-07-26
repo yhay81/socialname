@@ -311,9 +311,10 @@ Initial PostgreSQL tables:
 | `notification_deliveries` | Delivery attempts and deduplication |
 | `audit_events` | Security and administrative audit |
 | `data_lineage_edges` | Withdrawal and recomputation lineage |
-| `deletion_requests`, `deletion_tasks`, `deletion_receipts` | Deadline-bound erasure workflow |
+| `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `deletion_backup_verifications` | Deadline-bound erasure workflow and backup evidence |
 | `deletion_resource_matches` | Immutable hide/support/purge lineage tombstones |
 | `suppression_tokens` | HMAC-only reingestion suppression with key identity |
+| `deletion_restore_runs`, `deletion_restore_request_links` | Target-free replay proof and restore quarantine |
 
 The large tables should use time-based partitioning only after observed volume
 justifies it. PostgreSQL remains the source of truth for the first production
@@ -428,6 +429,7 @@ An optional research excerpt has its own shorter projection deadline. See
 ```http
 POST /v1/deletion-requests/contributor
 GET  /v1/deletion-requests/{deletion_request_id}
+GET  /v1/deletion-requests/{deletion_request_id}/receipt
 ```
 
 An owner-authorized `data:delete` request uses an owned consent grant to select
@@ -440,7 +442,10 @@ Externally verified target-person cases use a bounded stdin schema-owner
 command rather than a self-asserted HTTP route. They affect exact matching
 shared observations across tenants, retain private tenant records for explicit
 controller routing, and leave HMAC-only future-reingestion suppression.
-Analytics/backup completion and restore-ledger proof remain separate. See
+Primary and derived completion share one deletion transaction. Backup
+completion requires a deadline-bound inventory attestation, while an
+HMAC-authenticated target-free ledger reapplies suppression and hiding before a
+restored runtime becomes ready. See
 [Lineage-backed deletion workflows](deletion-workflows.md).
 
 ### Observation synchronization

@@ -26,6 +26,7 @@ The serving binary reads six environment variables:
 | `SOCIALNAME_SERVER_MAXIMUM_IN_FLIGHT` | `128` | 1 to 1024 requests |
 | `SOCIALNAME_SERVER_DATABASE_URL` | none | A PostgreSQL URL for a non-owner runtime role |
 | `SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX` | none | Exactly 64 lowercase hexadecimal characters |
+| `SOCIALNAME_EXPECTED_RESTORE_LEDGER_ID` | none | Optional canonical UUID that keeps a restored runtime unready until exact ledger replay |
 
 The default is loopback-only. Binding a non-loopback address requires an
 explicit value; it does not imply that TLS, authentication, abuse controls, or
@@ -97,10 +98,13 @@ POST /v1/consent-grants/{consent_grant_id}/withdrawals
 GET /v1/observations/{observation_id}/evidence-capsule
 POST /v1/deletion-requests/contributor
 GET /v1/deletion-requests/{deletion_request_id}
+GET /v1/deletion-requests/{deletion_request_id}/receipt
 ```
 
 The two health endpoints return a small `socialname.dev/api/v1` JSON document
-with service name, crate version, and health status. Liveness is
+with service name, crate version, and health status. When
+`SOCIALNAME_EXPECTED_RESTORE_LEDGER_ID` is set, readiness additionally requires
+that exact authenticated restore-ledger replay to have committed. Liveness is
 dependency-free. Readiness probes PostgreSQL with a deadline shorter than the
 outer request deadline and returns HTTP 503 `not_ready` when storage is
 unavailable.
@@ -149,11 +153,12 @@ are uniformly `not_found`. A research excerpt is projected only before its
 independent database deadline. See
 [Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md).
 
-Contributor deletion creation and owner-only status reads require
+Contributor deletion creation and owner-only status/receipt reads require
 `data:delete`. Creation is replay-safe, immediately withdraws all matching
 subject/purpose grants, materializes lineage-backed hide tombstones, cancels
-and redacts active work, and leaves primary/analytics/backup tasks with exact
-deadlines. The cross-tenant target-person path is deliberately an
+and redacts active work, and creates primary/derived/backup tasks with exact
+deadlines. The public receipt keeps pending backup time distinct from verified
+completion. The cross-tenant target-person path is deliberately an
 externally-verified stdin operator command, not a public HTTP route. See
 [Lineage-backed deletion workflows](deletion-workflows.md).
 

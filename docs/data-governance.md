@@ -229,9 +229,10 @@ matching grants are withdrawn, lineage tombstones are materialized, read paths
 exclude matched resources, and active target-bearing work and deliveries are
 cancelled/redacted. A fenced non-owner worker removes support, recomputes from
 remaining eligible observations, purges current PostgreSQL primary
-dependencies, and leaves the request in `rebuilding`. Analytics completion,
-receipts, restore-ledger replay, backup expiry, production scheduling, and
-elapsed SLA evidence remain the next ordered item.
+dependencies, and completes the derived-projection task. The request remains
+in `rebuilding` until a deadline-bound backup inventory verification creates
+the append-only receipt. An authenticated target-free ledger reapplies
+suppression and hiding before a restored runtime becomes ready.
 
 ### Target-person request
 
@@ -313,6 +314,9 @@ Deletion is tested like availability:
 
 The current PostgreSQL 18 gate covers immediate hiding, exact replay, scope
 isolation, support-by-support recomputation, sole-support withdrawal, primary
-purge, future reingestion suppression, shared/private target separation,
-fail-closed key mismatch, and idempotent fenced processing. Daily drills,
-completed receipts, restore replay, and backup-expiry proof remain unclaimed.
+purge, derived completion, future reingestion suppression, shared/private
+target separation, fail-closed key mismatch, completed receipt relations,
+premature backup refusal, authenticated restore replay, readiness quarantine,
+and idempotent fenced processing. A scheduled repository workflow runs this
+deterministic drill daily. Production schedule history, external
+provider-inventory completeness, and elapsed SLA evidence remain unclaimed.

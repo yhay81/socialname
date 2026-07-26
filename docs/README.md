@@ -214,9 +214,11 @@ roadmap milestone is **Trust, governance, and multi-region operation**. Its
 regional deployment/operator boundary, regional assertion behavior, and
 signed rule-pack distribution, purpose-specific consent lifecycle, bounded
 Evidence Capsule retention, and lineage-backed contributor/target deletion are
-repository-complete while real deployment remains external. The next software
-slice adds daily delete-through tests, completed receipts, restore-ledger
-replay, and backup-expiry verification.
+repository-complete. Deterministic daily delete-through scheduling, completed
+receipts, restore-ledger replay, and backup-expiry verification are also
+implemented; hosted schedule history and provider inventory evidence remain
+external. The next ordered software slice is notification acknowledgement,
+email delivery, operational dashboards, and SLO reporting.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

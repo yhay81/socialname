@@ -58,7 +58,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 45 product tables:
+The migrations create 48 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -69,7 +69,7 @@ The migrations create 45 product tables:
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts` |
-| Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `deletion_resource_matches`, `suppression_tokens` |
+| Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `deletion_resource_matches`, `deletion_backup_verifications`, `deletion_restore_runs`, `deletion_restore_request_links`, `suppression_tokens` |
 
 Time partitioning is intentionally absent. PostgreSQL remains the source of
 truth, and partitioning is admitted only after observed volume justifies its
@@ -268,10 +268,13 @@ without retaining selectors. A nonsecret fingerprint binds tokens to the
 persistent secret; any active legacy or mismatched key identity fails closed.
 Private target observations remain outside a shared-pool request.
 
-Per-store analytics and backup tasks remain durable and pending after primary
-completion, with the request in `rebuilding`. Completed deletion receipts,
-restore-ledger replay, production scheduling, analytics rebuild, and
-backup-expiry evidence remain the next ordered slice. See
+Primary and derived-projection tasks complete together after recomputation;
+the backup task remains durable and pending with the request in `rebuilding`.
+`deletion_backup_verifications` admits completion only after the deadline and
+after inventory no longer reaches primary completion. The transaction creates
+an append-only receipt and completes the request. `deletion_restore_runs` and
+`deletion_restore_request_links` record authenticated, target-free replay;
+runtime readiness can be pinned to an exact replay ID. See
 [Lineage-backed deletion workflows](deletion-workflows.md).
 
 ## Verification
@@ -283,7 +286,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 45 tables and 35
+It applies the embedded migrations twice, inventories all 48 tables and 36
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant

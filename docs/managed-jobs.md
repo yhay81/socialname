@@ -235,8 +235,9 @@ use fixed classes and likewise do not reflect target or credential material.
 
 `process-deletion` is a separate target-free, one-request operator unit. It
 claims a fenced deletion request, withdraws selected support, recomputes from
-remaining observations, purges current PostgreSQL primary dependencies, and
-leaves analytics and backup tasks pending:
+remaining observations, purges current PostgreSQL primary dependencies,
+completes the derived-projection task in the same transaction, and leaves only
+the externally verified backup task pending:
 
 ```console
 $env:SOCIALNAME_WORKER_DATABASE_URL = "postgres://WORKER:SECRET@HOST:5432/DB"

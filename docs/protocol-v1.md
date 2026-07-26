@@ -134,8 +134,11 @@ times.
 
 Validation rejects deadline reversal, impossible state/progress combinations,
 and counts above one million. Unknown fields are rejected so a selector cannot
-accidentally enter a receipt. HTTP ownership, HMAC suppression, verified
-target-person intake, physical deletion, and pending external gates are
+accidentally enter a receipt. `DeletionReceiptResource` contains exactly one
+primary, derived, and backup entry, relates completion times to state, and
+derives remaining backup time from the evaluation timestamp. HTTP ownership,
+HMAC suppression, verified target-person intake, physical deletion, and
+external evidence gates are
 specified in [Lineage-backed deletion workflows](deletion-workflows.md).
 
 ## Ordered search events

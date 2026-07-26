@@ -97,7 +97,7 @@ observation summary and its assertion/transition support are not falsely
 claimed deleted by retention alone. The separate implemented lineage workflow
 hides, withdraws, recomputes, and physically deletes selected
 contributor/target primary material; analytics, restore, receipts, and backup
-proof remain its next gate. See
+verification are handled by its subsequent completed deletion workflow. See
 [Lineage-backed deletion workflows](deletion-workflows.md).
 
 Production scheduling, alerting on overdue retention work, jurisdictional
