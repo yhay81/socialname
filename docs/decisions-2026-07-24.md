@@ -51,6 +51,14 @@ so status does not diverge across design records.
   predecessor, and retains the complete prior validated pack for explicit
   rollback without lowering the anti-replay high-water mark. Trust policy maps
   key IDs to public keys so rotation can overlap deliberately.
+- Rule-pack distribution is a second domain-separated threshold-Ed25519
+  envelope over the exact pack, predecessor, required regions, rollout stage,
+  candidate trust generation, and every site promotion. Metadata and per-site
+  promotion sequences are durable monotonic high-water marks. Candidate trust
+  stays staged through canary/regional evaluation and becomes current only on
+  general activation or signed rollback. Rotation advances one generation and
+  must satisfy both current and candidate thresholds; rollback restores only
+  the retained exact release and never lowers either replay floor.
 - The local cache is a SocialName-identified SQLite database with embedded
   forward migrations. It refuses foreign application IDs, newer successful
   migration versions, and integrity failures instead of treating them as an
@@ -178,6 +186,7 @@ so status does not diverge across design records.
 - [Execution roadmap](../ROADMAP.md)
 - [Regional rule health](rule-health-v1.md)
 - [Signed rule promotion](rule-promotion-v1.md)
+- [Signed rule-pack distribution](rule-pack-distribution-v1.md)
 - [Local cache](local-cache.md)
 - [Public protocol v1](protocol-v1.md)
 - [Modular-monolith server shell](server.md)
@@ -212,8 +221,9 @@ so status does not diverge across design records.
     cancellation, append-only ordered event persistence, and bounded resumable
     SSE without enabling managed probe execution.
 12. **Done:** Add a separate `socialname-worker` whose execution capability can
-    only be constructed from a verified regional rule promotion and an exactly
-    recompiled pack. Managed transport disables proxies, revalidates every DNS
+    only be constructed from threshold-validated pack metadata, its verified
+    regional site promotion, and an exactly recompiled pack. Managed transport
+    disables proxies, revalidates every DNS
     answer at connection/redirect time, rejects any special/private/mixed
     answer set, and independently bounds parsed headers, compressed bytes,
     decompressed bytes, and inspected text. The only operator probe reads its
@@ -244,11 +254,17 @@ so status does not diverge across design records.
     immutable support and two-layer lineage, preserve per-region truth behind
     a global conflict, and prioritize already-budgeted managed verification for
     conflicts and high-value account candidates.
+19. **Done:** Compose site promotions into threshold-signed rule-pack
+    metadata; enforce expiry and canary/regional/general worker selection;
+    persist trust, active/staged/LKG state, and replay floors in PostgreSQL;
+    bind managed jobs to exact metadata and promotion identities; and prove
+    overlap rotation, old-key removal, and signed rollback.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
 deployment evidence remains pending, with affected capabilities disabled. The
-Milestone 3's deployment/operator artifact and regional assertion behavior are
-repository-complete, while actual multi-region deployment remains an external
-gate. The next executable work is signed rule-pack expiry, staged rollout,
-rollback protection, and key-rotation metadata.
+Milestone 3's deployment/operator artifact, regional assertion behavior, and
+signed rule-pack distribution are repository-complete, while actual
+multi-region deployment remains an external gate. The next executable work is
+versioned purpose-specific consent grants for private history, shared
+observation, and shared research.

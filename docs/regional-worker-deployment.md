@@ -18,8 +18,8 @@ final image's application payload:
 - contains only the release binary, the CA bundle, and `rules/sites`;
 - runs as numeric UID/GID `10001:10001`;
 - has no runtime package-install step;
-- contains no database URL, signing key, promotion, canary manifest, or
-  delivery key;
+- contains no database URL, signing key, signed metadata, public trust root,
+  canary manifest, or delivery key;
 - declares `SIGTERM` as its stop signal; and
 - runs `--help` by default, so starting the image without an explicit command
   cannot mutate PostgreSQL or contact a third party.
@@ -35,7 +35,7 @@ docker image inspect socialname-worker
 
 The quality workflow performs the same build, verifies the numeric user and
 entry point, and proves under `--network none` that `process-one` without
-`--allow-live` fails before reading its promotion, key, or database
+`--allow-live` fails before reading its metadata, trust root, or database
 configuration. It does not log in to a registry or publish the image.
 
 ## One-shot workload model
@@ -49,16 +49,17 @@ failed configuration.
 Deploy a separate workload for each accepted site/region tuple. The deployment
 must identify the image by its built manifest digest, not by a mutable tag.
 The exact embedded `/opt/socialname/rules/sites` pack is recompiled and matched
-against the signed promotion before any job can execute.
+against threshold-signed rule-pack metadata and its embedded site promotion
+before any job can execute.
 
 The probe workload receives only:
 
 - `SOCIALNAME_WORKER_DATABASE_URL`, injected at runtime for the documented
   non-owner, `NOBYPASSRLS` worker role;
-- one read-only promotion JSON artifact;
-- one read-only trusted Ed25519 public-key file;
-- the expected manifest and engine hashes, predecessor, sequence floor, site,
-  region, and required-region set as explicit non-secret arguments; and
+- one read-only rule-pack metadata JSON artifact;
+- one read-only current public `rule-pack-trust/v1` file;
+- the durable worker metadata sequence floor, site, and region as explicit
+  non-secret arguments; and
 - a closed lowercase worker ID that contains no target or tenant data.
 
 Do not mount the endpoint-encryption or webhook-signing keys into this
@@ -77,14 +78,9 @@ docker run --rm --read-only `
   --site <site-id> `
   --region <worker-region> `
   --rules-dir /opt/socialname/rules/sites `
-  --promotion /run/socialname/promotion.json `
-  --manifest-hash <sha256> `
-  --engine-hash <sha256> `
-  --required-region <policy-region> `
-  --previous-rule-pack-hash <active-pack-sha256> `
-  --minimum-sequence-exclusive <highest-seen-sequence> `
-  --key-id <trusted-key-id> `
-  --verifying-key-file /run/socialname/verifying-key.hex `
+  --metadata /run/socialname/rule-pack-metadata.json `
+  --current-trust-file /run/socialname/current-trust.json `
+  --minimum-metadata-sequence-exclusive <highest-seen-metadata-sequence> `
   --worker-id <closed-lowercase-label> `
   --lease-seconds 60 `
   --maximum-attempts 3 `
@@ -92,9 +88,11 @@ docker run --rm --read-only `
   --allow-live
 ```
 
-First activation omits `--previous-rule-pack-hash`. The example deliberately
-passes only the environment-variable name; the value must come from the
-platform secret store, never the image, manifest, command line, or repository.
+The example deliberately passes only the environment-variable name; the value
+must come from the platform secret store, never the image, manifest, command
+line, or repository. `process-one` accepts only an unexpired `general` or
+`rollback` artifact; selected `canary` and `regional` artifacts are limited to
+the separate diagnostic `probe` path.
 The production egress policy must allow only the managed PostgreSQL endpoint
 and the signed rule's hosts. The engine's HTTPS, host, resolver, redirect, and
 byte checks remain mandatory defense in depth.
@@ -109,10 +107,11 @@ database cleanup can normally finish.
 
 `process-one` writes one target-free JSON status object on success. Its normal
 logs and metrics may include only status, counts, opaque job ID, attempt, rule
-hash, promotion ID, region, timings, and fixed error classes. Never include a
-username, normalized target, tenant-provided URL, database URL, key material,
-or promotion bytes. The direct `probe` result intentionally contains a public
-target and is therefore a diagnostic artifact, not ordinary service output.
+hash, metadata ID and sequence, promotion ID, rollout stage, region, timings,
+and fixed error classes. Never include a username, normalized target,
+tenant-provided URL, database URL, key material, or signed artifact bytes. The
+direct `probe` result intentionally contains a public target and is therefore
+a diagnostic artifact, not ordinary service output.
 
 ## External evidence required to close the roadmap item
 
@@ -129,15 +128,19 @@ until all of the following evidence exists:
 4. Egress controls permit only PostgreSQL plus signed rule hosts, and a DNS,
    redirect, size, timeout, and cancellation exercise records the expected
    operational outcomes without target data in logs.
-5. A production-trusted promotion for the exact image rule pack, engine,
-   manifest, predecessor, sequence, and region set activates; missing,
-   expired, replayed, or cross-region artifacts remain rejected.
+5. Production-trusted rule-pack metadata for the exact image rule pack,
+   predecessor, rollout stage, region set, and embedded site promotions
+   activates; missing, expired, replayed, cross-region, or below-threshold
+   artifacts remain rejected.
 6. A bounded canary report and a one-shot worker result are retained with
-   region, source revision, image digest, rule/pack hash, promotion ID, and
-   timestamps.
+   region, source revision, image digest, rule/pack hash, metadata and
+   promotion IDs, trust generation, and timestamps.
 7. `SIGTERM` during an in-flight controlled request produces no observation or
    false account transition, and the expired lease is reclaimed once.
-8. The production retention, acceptable-use, abuse, incident-response, secret
+8. A controlled overlap rotates the production trust generation without
+   making the active pack unavailable, and a signed rollback restores the
+   retained pack without lowering either replay floor.
+9. The production retention, acceptable-use, abuse, incident-response, secret
    rotation, and rollback owners have approved the deployment.
 
 These are external observations. Repository tests and a local container build

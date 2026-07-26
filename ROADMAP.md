@@ -464,7 +464,7 @@ derives a trustworthy transition, and delivers one auditable notification.
       notification endpoints, deliveries, consent, lineage, and deletion tasks.
 - [x] Add authenticated private workspaces and hashed, scoped API keys.
 - [x] Implement idempotent search creation and SSE partial-result streaming.
-- [x] Add `socialname-worker` with signed-rule-only execution and managed-probe
+- [x] Add `socialname-worker` with signed-artifact-only execution and managed-probe
       SSRF/DNS-rebinding defenses.
 - [x] Implement transactional PostgreSQL job claims, leases, retries, and
       idempotent observation ingestion.
@@ -547,7 +547,7 @@ npm run check
 npm run build
 ```
 
-The eight embedded SQLx migrations create 37 bounded product tables and 32
+The nine embedded SQLx migrations create 42 bounded product tables and 32
 tenant-isolation policies with forced RLS. Composite tenant foreign keys,
 immutable observation and support history, closed observation outcomes,
 transition-specific confirmation bases, exact confirmed-delivery checks,
@@ -558,7 +558,7 @@ database URL, uses one connection with connection/migration deadlines, and
 returns fixed errors without reflecting credentials.
 
 The CI core job runs both the operator command and an integration test against
-`postgres:18-alpine`. The test reapplies all eight migrations, inventories all
+`postgres:18-alpine`. The test reapplies all nine migrations, inventories all
 tables and forced-RLS policies, uses a real non-owner `NOBYPASSRLS` role to
 prove tenant isolation, rejects cross-tenant references and observation
 mutation, suppresses shared-only absence delivery, accepts an independently
@@ -681,10 +681,12 @@ npm run check
 npm run build
 ```
 
-Migrations `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
-`0006_assertion_recomputation.sql`, plus `JobStore`, bind the exact signed
-site/rule/pack/region to promoted, active, fresh-healthy registry state. A
-non-owner NOBYPASSRLS worker uses six narrow coordinator functions, then
+Migrations `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`,
+`0006_assertion_recomputation.sql`, and `0009_rule_pack_distribution.sql`,
+plus `JobStore`, bind the exact signed
+metadata/promotion/site/rule/pack/region to promoted, active, fresh-healthy
+registry state. A non-owner NOBYPASSRLS worker uses seven narrow managed-probe
+coordinator functions, then
 returns to transaction-local tenant RLS. Expansion normalizes through that
 rule, keeps invalid targets outside absence, and coalesces only equal tenant,
 target, rule, region, consent grant, and visibility scopes.
@@ -852,7 +854,7 @@ Status: **Current; external deployment evidence pending**
 - [ ] Deploy managed canaries and workers in the required regions.
 - [x] Add region-aware assertions, conflict escalation, and managed
       confirmation of high-value transitions.
-- [ ] Implement signed rule-pack metadata, expiry, staged rollout, rollback
+- [x] Implement signed rule-pack metadata, expiry, staged rollout, rollback
       protection, and key rotation.
 - [ ] Implement versioned purpose-specific consent grants for private history,
       shared observation, and shared research.
@@ -892,8 +894,9 @@ Debian inputs; compiles the locked release worker; carries the exact site-rule
 pack; runs as `10001:10001`; declares `SIGTERM`; and defaults to `--help`.
 Hardened `--network none` smoke tests proved the binary and embedded rules are
 readable as that UID and that `process-one` without `--allow-live` exits before
-promotion, key, or database access. Linux `SIGTERM` now cancels the same token
-as Ctrl-C during managed execution, leaving a fenced lease to expire safely.
+metadata, trust-root, or database access. Linux `SIGTERM` now cancels the same
+token as Ctrl-C during managed execution, leaving a fenced lease to expire
+safely.
 CI builds and smoke-tests the image but has no registry login or push path.
 Quality run
 [`30193340211`](https://github.com/yhay81/socialname/actions/runs/30193340211)
@@ -901,9 +904,9 @@ passed Rust core, Windows/macOS desktop, monitoring console, and the new
 managed-worker OCI job for commit `e2bc7fd`.
 
 The deployment item remains unchecked: no registry artifact, approved regional
-vantage, managed database credential, production-trusted promotion, egress
-policy, or live cancellation observation exists. The exact evidence needed to
-close it is recorded in
+vantage, managed database credential, production-trusted rule-pack metadata,
+egress policy, or live cancellation observation exists. The exact evidence
+needed to close it is recorded in
 [`docs/regional-worker-deployment.md`](docs/regional-worker-deployment.md).
 Repository work can therefore continue independently with region-aware
 assertion behavior without claiming a regional service.
@@ -954,6 +957,61 @@ and
 [`30194494587`](https://github.com/yhay81/socialname/actions/runs/30194494587)
 passed Rust core, Windows/macOS desktop, monitoring console, and managed-worker
 OCI jobs for commits `ddd73b1` and `0761ca3`.
+
+Signed rule-pack distribution software evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes canary: 49; server: 26 library + 2 binary;
+# worker: 16 library + 5 binary + 3 deployment-contract tests
+# With disposable PostgreSQL 18 administrator/application/worker URLs:
+# 1 PostgreSQL 18 integration test passed
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# all passed
+```
+
+`socialname.dev/rule-pack-metadata/v1` now threshold-signs one exact pack,
+predecessor, required regions, rollout stage, candidate public trust, and all
+embedded site promotions with at-most-24-hour validity. The pure serializable
+registry enforces global and per-site sequence floors, canary/regional
+monotonic widening, general activation, retained last-known-good state, and
+signed exact-predecessor rollback. Trust rotation advances exactly one
+generation and requires both current and candidate thresholds; a candidate
+root stays staged until general activation or rollback so active workers
+remain restartable during evaluation.
+
+The CLI prints public trust IDs and signs or independently verifies metadata
+against exact local pack bytes. Migration `0009` stores public trust history,
+signed metadata, site bindings, active/staged/LKG state, and both replay
+floors. The transactional `apply-rule-pack` operator requires an out-of-band
+initial trust pin, cross-checks redundant persisted state, and enables only
+active unexpired general/rollback versions. Managed workers bind site, rule,
+pack, region, metadata ID/sequence, and promotion ID/sequence, then
+continuously recheck current registry authority and health.
+
+The real PostgreSQL 18 gate applies canary and general metadata, rejects a
+persisted replay, stages an overlapping trust generation without displacing
+the active root, activates a replacement pack, removes the old key through a
+second dual-threshold transition, signs rollback to the retained pack, rejects
+the stale worker binding, and accepts the rollback binding. Synthetic keys are
+test-only. Production key custody, threshold ceremony, artifact distribution,
+regional observation, and rollback exercise remain external deployment
+evidence and do not make any representative rule promoted.
+Quality run
+[`30198577351`](https://github.com/yhay81/socialname/actions/runs/30198577351)
+passed Rust core, Windows/macOS desktop, monitoring console, and the corrected
+managed-worker OCI metadata/trust smoke for commit `6efb5ef`.
 
 Acceptance gate:
 
@@ -1125,3 +1183,9 @@ Choose these only when their trigger is measured:
   priorities for conflict and pending account transitions. Kept the real
   multi-region worker/canary claim behind its external deployment evidence
   gate and selected signed rollout/key-rotation metadata next.
+- **2026-07-26:** Added threshold-signed rule-pack metadata with embedded site
+  promotions, expiry and staged worker selection, durable global/per-site
+  replay floors, PostgreSQL active/staged/LKG state, exact managed-worker
+  binding, dual-threshold trust rotation, and signed retained-pack rollback.
+  Kept production keys, artifacts, deployment, and rollback observation
+  external, and selected versioned purpose-specific consent grants next.

@@ -18,7 +18,10 @@ webhook leases, append-only attempt history, bounded retry/dead-letter state,
 and a narrow cross-tenant claim coordinator. Migration
 `0008_regional_assertion_escalation.sql` adds immutable regional assertion and
 support projections plus a generated probe-priority reason for conflict and
-account-confirmation work.
+account-confirmation work. Migration `0009_rule_pack_distribution.sql` adds
+durable signed trust roots, staged/active metadata, embedded promotion
+bindings, global and per-site anti-replay state, exact worker metadata
+resolution, and continuous version availability checks.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -47,12 +50,12 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 37 product tables:
+The migrations create 42 product tables:
 
 | Boundary | Tables |
 | --- | --- |
 | Tenant and credentials | `tenants`, `memberships`, `api_keys`, `api_key_credentials`, `clients` |
-| Site and rules | `sites`, `rule_packs`, `rule_versions`, `rule_health_records` |
+| Site and rules | `sites`, `rule_packs`, `rule_versions`, `rule_health_records`, `rule_pack_trust_roots`, `rule_pack_metadata`, `rule_pack_promotions`, `rule_pack_registry`, `rule_site_promotion_high_water` |
 | Consent | `consent_grants`, `consent_events` |
 | Interactive work | `searches`, `search_targets`, `search_events` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
@@ -111,13 +114,14 @@ for the complete request and operator contract.
 The worker is also a non-owner `NOSUPERUSER NOBYPASSRLS` role, but it must
 select the next tenant before it can set transaction-local RLS. Migrations
 `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
-`0007_webhook_delivery.sql` therefore provide seven fixed-search-path
-`SECURITY DEFINER` functions. They can resolve an exact
-eligible signed rule, lock one eligible search target, lock one due watch, lock
-one eligible watch-run target, claim one job with an incremented attempt fence,
-lock the consent attached to an exact current lease, or claim one due webhook
-with an incremented attempt fence. They return only opaque IDs, an attempt
-number, or a boolean.
+`0007_webhook_delivery.sql` and `0009_rule_pack_distribution.sql` therefore
+provide eight fixed-search-path `SECURITY DEFINER` functions. They can resolve
+an exact eligible signed rule including metadata and promotion identity,
+recheck that one rule version is still active, lock one eligible search
+target, lock one due watch, lock one eligible watch-run target, claim one job
+with an incremented attempt fence, lock the consent attached to an exact
+current lease, or claim one due webhook with an incremented attempt fence.
+They return only opaque IDs, an attempt number, or a boolean.
 
 `PUBLIC` execution is revoked. Deployment grants only these functions plus the
 column-limited ordinary table access exercised by the integration fixture. The
@@ -126,7 +130,7 @@ worker has no access to `api_key_credentials`, no table ownership or
 Target/consumer/observation/event/lineage work occurs only after the selected
 tenant is set locally on the transaction.
 
-Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the seven coordinator
+Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the eight coordinator
 functions must be owned by a dedicated `NOLOGIN BYPASSRLS` role or an
 equivalently privileged migration owner. The integration test asserts that
 owner capability separately from the worker's NOBYPASSRLS status. The
@@ -145,6 +149,19 @@ withdrawal unambiguously later. See
 
 - API credentials store a bounded public prefix plus a 32-byte secret digest
   separately from tenant-RLS metadata, never the presented key.
+- Signed rule-pack tables store only public trust roots, bounded signed
+  envelopes, exact content identities, rollout state, and replay high-water
+  marks. They contain no private signing seed or target data, and all `PUBLIC`
+  privileges are revoked.
+- A candidate trust root remains `staged` while canary/regional metadata is
+  evaluated. Only general activation or signed rollback changes the one active
+  root. Global metadata sequence and every site's promotion sequence advance
+  monotonically and are cross-checked against the serialized registry before
+  each operator transaction.
+- Rule versions are enabled only for the active unexpired `general` or
+  `rollback` metadata. Worker resolution additionally binds metadata and
+  promotion IDs and sequences, required region, fresh regional health, and the
+  exact rule and pack hashes.
 - Notification destinations store ciphertext, a destination hash, and an
   encryption-key identifier. No plaintext destination column exists.
 - Search sync outside `never` requires an explicit consent grant. Consent
@@ -221,7 +238,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 37 tables and 32
+It applies the embedded migrations twice, inventories all 42 tables and 32
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
@@ -238,7 +255,12 @@ withdrawal, regional rule degradation, logical webhook enqueue, timeout/retry,
 same-ID success, permanent 4xx, lease reclamation, stale fencing, final
 dead-letter state, attempt audit, lineage, and bounded watch/transition page
 reads with scope, tenant, cursor, account/measurement, and secret-exclusion
-checks. Tests skip only when
+checks. The same real-database test also pins initial rule trust, applies
+canary then general metadata, rejects persistent replay, stages an overlapping
+key generation without replacing the active root, activates a second pack,
+removes the old key through dual-threshold rollback metadata, restores the
+retained version, and proves stale versus current worker binding. Tests skip
+only when
 `SOCIALNAME_TEST_DATABASE_URL` is
 absent; the CI job always supplies it. The administrator, application, and
 worker test URLs must identify the same disposable test database with their
@@ -251,4 +273,6 @@ credential. Startup requires a database connection, readiness is
 PostgreSQL-aware, and every private workspace/search/watch operation authenticates
 and sets a transaction-local tenant before product access. The schema-owner
 `SOCIALNAME_DATABASE_URL` remains limited to migration and explicit
-workspace/key operator commands.
+workspace/key/rule-pack operator commands. The rule-pack command and its
+initial out-of-band trust pin are specified in
+[Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).

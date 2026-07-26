@@ -2,7 +2,7 @@
 
 `socialname-server` is the operable Axum/Tower process boundary for the managed
 SocialName product. It embeds forward-only PostgreSQL migrations, provides
-explicit workspace/API-key operator commands, exposes authenticated private
+explicit workspace/API-key and signed rule-pack operator commands, exposes authenticated private
 workspace/search/watch resources, bounded monitoring pages, and ordered SSE
 replay. Notification endpoint administration and other product routes remain
 closed until their ordered roadmap slices add authorization, storage use,
@@ -59,6 +59,9 @@ PostgreSQL 18 integration gate are documented in
 Workspace bootstrap, one-time API-key issuance, revocation, runtime role
 grants, token handling, and the protected route are documented in
 [Authenticated private workspaces and API keys](authenticated-workspaces.md).
+Initial trust pinning and transactional `apply-rule-pack` operation are
+documented in
+[Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).
 
 ## Current HTTP surface
 
@@ -186,6 +189,8 @@ forced RLS, non-owner authentication, workspace/search/watch isolation, key
 expiry/revocation/scope, consent, exact/conflicting idempotency, ordered SSE
 replay, watch revision/cancellation, bounded stream capacity, readiness,
 operator lifecycle, evidence/event immutability, notification safety, and
-deletion lineage. It also proves monitoring read scope, tenant/cursor
+deletion lineage. It also proves persisted rule-pack replay protection,
+staged/general trust rotation, exact worker binding, signed rollback,
+monitoring read scope, tenant/cursor
 isolation, account-versus-measurement timelines, delivery retry/dead-letter
 state, and the absence of delivery secrets from public pages.

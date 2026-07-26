@@ -8,6 +8,12 @@ cannot turn a rejected report into acceptance. It signs a narrowly scoped
 statement that one exact rule in one exact rule pack satisfied the required
 regional policy before the evidence expired.
 
+For managed distribution, one promotion per included site is embedded in
+[`socialname.dev/rule-pack-metadata/v1`](rule-pack-distribution-v1.md). A site
+promotion proves regional acceptance; the enclosing pack metadata owns
+release-wide rollout, expiry, worker eligibility, durable replay protection,
+trust generation, and rollback.
+
 The artifact binds:
 
 - a monotonically increasing promotion sequence;
@@ -58,10 +64,13 @@ SHA-256 identity of those exact signing bytes. The verifier then:
   region set, and sequence floor;
 - rejects future, expired, over-24-hour, or evidence-outliving artifacts.
 
-The trust map can contain overlapping old and new public keys during an
-operator-controlled rotation. A key not present in the map is untrusted even
-when its signature is mathematically valid. Private seeds are not serialized
-by the library or accepted directly as command-line values.
+The standalone verification policy can contain overlapping old and new public
+keys. In managed distribution, those keys come from the enclosing candidate
+`rule-pack-trust/v1` root; the metadata itself must satisfy the current and
+candidate thresholds before that trust generation can advance. A key not
+present in the applicable map is untrusted even when its signature is
+mathematically valid. Private seeds are not serialized by the library or
+accepted directly as command-line values.
 
 The cryptographic API is provided by
 [`ed25519-dalek`](https://docs.rs/ed25519-dalek/latest/ed25519_dalek/), using
@@ -84,6 +93,12 @@ and discards the failed candidate. It does not lower the sequence high-water
 mark, so the rollback path cannot make an older signed update replayable.
 Expiry prevents accepting stale update metadata; it does not erase an already
 validated retained pack needed for local recovery.
+
+This site-scoped registry remains a deterministic domain primitive. The
+durable managed authority is `RulePackRolloutRegistry` plus PostgreSQL
+migration `0009`; its signed rollback advances the global metadata and
+per-site promotion high-water marks instead of calling an unsigned local
+restore path. See [Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).
 
 ## Operator commands
 
@@ -108,6 +123,9 @@ cargo run --locked -p socialname-cli -- canaries verify-promotion --artifact pro
 
 The build command self-verifies before emitting JSON. The verify command
 recompiles the local pack and prints the exact hash eligible for activation.
+For managed use, pass all resulting site promotion artifacts to `rules
+sign-metadata`; a promotion file alone cannot authorize a worker or database
+rule version.
 Actual production key custody, signing ceremony, deployment, and rollback
 exercise remain external evidence gates.
 
@@ -118,6 +136,11 @@ payload and report tampering, expiry, unknown fields, incomplete regions,
 non-healthy evidence, stale evidence, wrong pack bytes, previous-pack
 mismatch, replay rejection, regional classification drift, two-pass recovery,
 last-known-good retention, and rollback.
+
+Pack-level tests additionally prove embedded promotion binding, global and
+per-site replay protection, staged worker selection, dual-threshold rotation,
+and signed rollback. Those gates are recorded in
+[Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).
 
 The repository contains no private signing key, production promotion artifact,
 or production canary evidence. All representative rules remain

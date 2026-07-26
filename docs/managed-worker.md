@@ -10,27 +10,32 @@ observations and events. See
 ## Signed-rule activation
 
 The worker library exposes `ManagedRule::activate`, not a raw-rule execution
-method. Activation requires an opaque `ValidatedPromotion` produced by the
-strict Ed25519 promotion verifier plus the exact local `CompiledRulePack`.
-Activation then:
+method. Activation requires an opaque `ValidatedRulePackMetadata` produced by
+the strict threshold verifier plus the exact local `CompiledRulePack`, site,
+region, and worker ID. Activation then:
 
-1. checks the worker's closed region label;
-2. requires that exact region in the signed acceptance map;
-3. rejects future or expired promotion metadata and expired regional evidence;
-4. recompiles every source in the pack;
-5. recomputes the canonical pack hash;
-6. selects the candidate named by the signed site ID; and
-7. requires the recomputed rule and pack hashes to equal the promotion.
+1. checks the closed region and worker labels;
+2. requires that worker to be selected by the metadata rollout stage;
+3. selects the site's embedded validated promotion;
+4. rejects future or expired pack metadata, promotion, and regional evidence;
+5. recompiles every source in the pack;
+6. recomputes the canonical pack hash; and
+7. requires the metadata, promotion, candidate rule, and pack identities to
+   match exactly.
 
-The `ManagedRule` fields are private. Its execution method rechecks promotion
-and regional-evidence expiry immediately before probing, and a pre-cancelled
-token wins before any network future is polled. A rule source, site choice, or
-API scope by itself therefore cannot create managed network authority.
+The `ManagedRule` fields are private. Its execution method rechecks pack
+metadata, promotion, and regional-evidence expiry immediately before probing,
+and a pre-cancelled token wins before any network future is polled. A rule
+source, site choice, API scope, or standalone site promotion therefore cannot
+create managed network authority.
 
-Promotion trust policy still pins the expected key ID/public key, site, rule,
-pack, predecessor, manifest, engine, region set, and minimum sequence. The
-repository contains no production verifying policy, private signing key,
-promotion artifact, or accepted live-rule evidence.
+The metadata trust policy pins the current public trust root, exact candidate
+generation, threshold signatures, global sequence floor, pack, predecessor,
+rollout eligibility, and every embedded site promotion. The complete
+distribution and rotation contract is in
+[Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md). The
+repository contains no production trust root, private signing key, metadata
+artifact, promotion artifact, or accepted live-rule evidence.
 
 ## Managed transport
 
@@ -96,20 +101,17 @@ cargo run --locked -p socialname-worker -- probe \
   --site <site-id> \
   --region <worker-region> \
   --rules-dir <exact-pack-directory> \
-  --promotion <promotion.json> \
-  --manifest-hash <sha256> \
-  --engine-hash <sha256> \
-  --required-region <policy-region> \
-  --previous-rule-pack-hash <active-pack-sha256> \
-  --minimum-sequence-exclusive <highest-seen-sequence> \
-  --key-id <trusted-key-id> \
-  --verifying-key-file <public-key-hex-file> \
+  --metadata <rule-pack-metadata.json> \
+  --current-trust-file <current-trust.json> \
+  --minimum-metadata-sequence-exclusive <highest-seen-sequence> \
+  --worker-id <closed-lowercase-label> \
   --allow-live
 ```
 
-First activation omits `--previous-rule-pack-hash`. The username is not a
-command argument or environment variable. The command reads at most 1 KiB of
-closed JSON from standard input:
+Canary and regional metadata work only for explicitly eligible workers;
+general and rollback metadata select every required region. The username is
+not a command argument or environment variable. The command reads at most
+1 KiB of closed JSON from standard input:
 
 ```json
 {"username":"explicit-public-target"}
@@ -122,10 +124,11 @@ request future. Errors are fixed classes that do not echo the target or key
 material.
 
 Successful standard output is one explicit
-`socialname.dev/managed-probe-result/v1` JSON object containing promotion ID,
-region, and the minimized `SearchResult`. This operator output intentionally
-contains the normalized public target; it must not be redirected into ordinary
-service logs or metrics.
+`socialname.dev/managed-probe-result/v1` JSON object containing metadata ID,
+metadata sequence, rollout stage, promotion ID, region, and the minimized
+`SearchResult`. This operator output intentionally contains the normalized
+public target; it must not be redirected into ordinary service logs or
+metrics.
 
 ## Deterministic evidence and database connection
 
@@ -134,16 +137,18 @@ metadata addresses, empty/mixed/oversized DNS answers, second-resolution
 rebinding, raw unselected header limits, declared body limits, all supported
 decoders, decompression bombs, and inspected-body separation.
 
-Worker tests build and verify a synthetic Ed25519 promotion, activate only its
-accepted region, recompile pack bytes, reject tampering and expiry, prove
-pre-network cancellation, keep error formatting target-free, and validate the
-closed stdin/public-key contracts. No test bypasses the managed resolver to
-claim a live site result.
+Worker tests build and verify synthetic threshold-signed pack metadata with an
+embedded Ed25519 promotion, activate only a stage-selected worker, recompile
+pack bytes, reject tampering and expiry, prove pre-network cancellation, keep
+error formatting target-free, and validate the closed stdin/public-trust
+contracts. No test bypasses the managed resolver to claim a live site result.
 
 The `process-one` command adds the database connection without adding a
-raw-rule path. It binds the same `ManagedRule` to the exact promoted registry
-row, expands a bounded batch, claims at most one fenced lease, monitors
-authorization during the request, and records a target-free operator status.
+raw-rule path. It accepts only `general` or `rollback`, binds the same
+`ManagedRule` to the exact metadata ID/sequence and promotion ID/sequence in
+the active registry row, expands a bounded batch, claims at most one fenced
+lease, monitors authorization during the request, and records a target-free
+operator status.
 The job identity, forced-RLS role, coalescing, retries, consent lock, atomic
 ingestion, and remaining rule-acceptance gate are specified in
 [Managed probe jobs and observation ingestion](managed-jobs.md).

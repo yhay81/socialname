@@ -3,8 +3,9 @@
 This boundary connects accepted managed searches and scheduled private watches
 to `socialname-worker` without giving the API process network authority or
 giving the worker unrestricted cross-tenant database access. Migrations
-`0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
-`0006_assertion_recomputation.sql`, plus `JobStore`, implement the complete
+`0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`,
+`0006_assertion_recomputation.sql`, and
+`0009_rule_pack_distribution.sql`, plus `JobStore`, implement the complete
 consumer-to-interpretation path:
 
 1. select eligible accepted work;
@@ -28,7 +29,9 @@ Expansion requires all of the following at the instant the target is locked:
 - `private` or `shared` sync and the matching active account-consent purpose;
 - the requested region;
 - a promoted site;
-- the exact enabled rule version inside an active, published, unexpired pack;
+- the exact enabled rule version inside the active, published, unexpired pack;
+- active, unexpired `general` or `rollback` pack metadata whose ID, sequence,
+  embedded promotion ID, and promotion sequence match the worker binding;
 - the latest record for that rule and region to be healthy and unexpired.
 
 Only `ManagedRule::normalize_username` can populate
@@ -60,11 +63,15 @@ access, table delete privilege, observation update privilege, or unrestricted
 cross-tenant read.
 
 Forced RLS means the worker cannot discover the tenant before it has selected
-work. Six fixed-search-path `SECURITY DEFINER` functions provide only the
+work. Seven fixed-search-path `SECURITY DEFINER` functions provide only the
 minimum coordinator operations:
 
 - `socialname_worker_resolve_rule` returns the exact currently eligible rule
-  version ID;
+  version ID only when site/rule/pack/region plus metadata and promotion
+  identities all match the active registry;
+- `socialname_worker_rule_version_available` continuously rechecks an exact
+  active version, metadata stage and expiry, promotion expiry, site state, and
+  regional health;
 - `socialname_worker_lock_next_target` returns one eligible tenant/target ID
   while locking it with `SKIP LOCKED`;
 - `socialname_worker_lock_due_watch` returns one due eligible tenant/watch ID;
@@ -76,7 +83,7 @@ minimum coordinator operations:
   attached to an exact current job/attempt/owner lease.
 
 `PUBLIC` execution is revoked. Because tenant tables use `FORCE ROW LEVEL
-SECURITY`, these six functions must be owned by a dedicated `NOLOGIN`
+SECURITY`, these seven functions must be owned by a dedicated `NOLOGIN`
 coordinator role with `BYPASSRLS` (or an equivalently privileged migration
 owner). An ordinary table owner cannot cross forced RLS. That privileged role
 owns only the reviewed coordinator boundary and is never a server or worker
@@ -86,7 +93,7 @@ observation, event, state, and lineage access proceeds under ordinary forced
 RLS.
 
 A deployment worker role needs schema usage, the column-limited table grants
-exercised by `postgres_migrations.rs`, and execute only on those six
+exercised by `postgres_migrations.rs`, and execute only on those seven
 functions. Treat that integration fixture as the executable grant manifest;
 do not grant ownership or `BYPASSRLS` to make deployment easier.
 
@@ -118,7 +125,8 @@ the worker rechecks:
 - the exact live lease;
 - active purpose-specific consent;
 - at least one live search or watch-run consumer;
-- the exact promoted rule/pack and latest fresh healthy regional record.
+- the exact active general/rollback rule-pack metadata, rule version, and
+  latest fresh healthy regional record.
 
 Shutdown, search cancellation, a stale watch revision, pause/delete, endpoint
 deactivation, consent withdrawal, or rule quarantine drops the network future.
@@ -182,14 +190,9 @@ cargo run --locked -p socialname-worker -- process-one \
   --site <site-id> \
   --region <worker-region> \
   --rules-dir <exact-pack-directory> \
-  --promotion <promotion.json> \
-  --manifest-hash <sha256> \
-  --engine-hash <sha256> \
-  --required-region <policy-region> \
-  --previous-rule-pack-hash <active-pack-sha256> \
-  --minimum-sequence-exclusive <highest-seen-sequence> \
-  --key-id <trusted-key-id> \
-  --verifying-key-file <public-key-hex-file> \
+  --metadata <rule-pack-metadata.json> \
+  --current-trust-file <current-trust.json> \
+  --minimum-metadata-sequence-exclusive <worker-high-water> \
   --worker-id <closed-lowercase-label> \
   --lease-seconds 60 \
   --maximum-attempts 3 \
@@ -197,11 +200,11 @@ cargo run --locked -p socialname-worker -- process-one \
   --allow-live
 ```
 
-First promotion omits `--previous-rule-pack-hash`. `--allow-live` is checked
-before rule files or the database are touched. Expansion is bounded to 1
-through 128 targets, and one invocation sends at most one bounded external
-request. Ctrl-C drops that request and leaves the fenced lease to expire
-safely.
+The command rejects `canary` and `regional` metadata for customer work.
+`--allow-live` is checked before rule/trust files or the database are touched.
+Expansion is bounded to 1 through 128 targets, and one invocation sends at
+most one bounded external request. Ctrl-C drops that request and leaves the
+fenced lease to expire safely.
 
 Standard output is one target-free
 `socialname.dev/managed-job-process/v1` object. It contains status, planned
@@ -217,7 +220,8 @@ cancellation. The PostgreSQL 18 integration test uses real non-owner API and
 worker roles and proves:
 
 - forced-RLS isolation and no worker credential-table access;
-- exact rule/pack/region eligibility;
+- exact metadata/promotion/rule/pack/region eligibility and continuous
+  invalidation after rollout or rollback;
 - search/watch coalescing and consent isolation;
 - due-run atomicity, freshness reuse, and conservative byte reservation;
 - claims, expiry reclamation, and stale-fence rejection;
@@ -230,7 +234,10 @@ worker roles and proves:
 - multi-consumer fan-out and lineage;
 - invalid-target separation;
 - search cancellation, watch revision cancellation, consent withdrawal, and
-  rule degradation before commit.
+  rule degradation before commit;
+- persistent global and per-site replay rejection, staged trust retention,
+  general trust activation, old-key removal, and signed rollback to the exact
+  retained rule version.
 
 No test claims external deployment, production signing, live-site correctness,
 or multi-region evidence.

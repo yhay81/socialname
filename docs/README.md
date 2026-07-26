@@ -78,6 +78,9 @@ The first vertical slice is implemented in the repository:
   fenced claims, bounded retries, continuous authorization cancellation, and
   atomic observation/assertion/transition/event/lineage ingestion under a
   non-owner forced-RLS database role;
+- threshold-signed rule-pack metadata with embedded regional site promotions,
+  staged worker selection, 24-hour expiry, durable global and per-site replay
+  floors, safe overlapping key rotation, and signed retained-pack rollback;
 - freshness-aware revisioned watch scheduling plus confirmed-transition
   webhook enqueue, endpoint-bound destination encryption, stable signed
   payloads, bounded retry/dead-letter handling, append-only attempt history,
@@ -117,6 +120,9 @@ access. Live canaries are intentionally a separate acceptance gate.
   health, quarantine, recovery, replay rejection, and notification separation.
 - [Signed Rule Promotion v1](rule-promotion-v1.md) — accepted regional evidence,
   Ed25519 trust policy, activation replay protection, and retained rollback.
+- [Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md) —
+  threshold trust, staged rollout, durable replay protection, key rotation,
+  PostgreSQL activation, and exact worker binding.
 - [Canary workflow operations](canary-workflows.md) — disabled-by-default
   manual and scheduled managed-vantage templates with fixed budgets.
 - [Local cache](local-cache.md) — embedded SQLite persistence, eligibility,
@@ -135,7 +141,7 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Private search API and ordered event stream](search-api.md) — consented
   idempotent creation, polling/cancellation, append-only events, and bounded
   resumable SSE with worker-created result and terminal events.
-- [Signed managed worker boundary](managed-worker.md) — signed-rule-only
+- [Signed managed worker boundary](managed-worker.md) — signed-metadata-only
   activation, DNS-rebinding/SSRF defenses, byte budgets, and one-shot
   operation.
 - [Managed probe jobs and observation ingestion](managed-jobs.md) — exact work
@@ -188,9 +194,11 @@ These terms have distinct meanings and should not be used interchangeably:
 The **First paid monitoring loop** software gate is complete. Managed
 observation, assertion recomputation, meaningful transitions, signed webhook
 delivery, and the minimal API-backed console form the tested loop. The current
-roadmap milestone is **Trust, governance, and multi-region operation**; its
-first repository-completable work defines a disabled-by-default regional
-deployment/operator boundary while real deployment remains external.
+roadmap milestone is **Trust, governance, and multi-region operation**. Its
+regional deployment/operator boundary, regional assertion behavior, and
+signed rule-pack distribution are repository-complete while real deployment
+remains external. The next software slice is versioned purpose-specific
+consent grants for private history, shared observation, and shared research.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

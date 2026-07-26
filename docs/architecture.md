@@ -285,6 +285,11 @@ Initial PostgreSQL tables:
 | `rule_packs` | Published pack metadata, hashes, and rollout state |
 | `rule_versions` | Per-site compiled rule revisions |
 | `rule_health_records` | Region-specific health and quarantine history |
+| `rule_pack_trust_roots` | Staged, active, and retired public threshold trust |
+| `rule_pack_metadata` | Bounded signed release envelopes and rollout stages |
+| `rule_pack_promotions` | Exact site/promotion bindings inside each release |
+| `rule_pack_registry` | Durable active/staged/LKG state and global replay floor |
+| `rule_site_promotion_high_water` | Durable per-site promotion replay floors |
 | `consent_grants`, `consent_events` | Purpose-specific consent and immutable history |
 | `searches` | User/API search requests, policy, and idempotency digest |
 | `search_targets` | Stable requested target order and later site-specific normalization |
@@ -481,10 +486,20 @@ domain and engine; the engine does not depend on those applications.
 
 - Human-authored strict YAML.
 - Typed compilation to canonical JSON.
-- zstd-compressed packs.
-- Content hashes and signed update metadata.
-- TUF-style expiry, rollback protection, and key rotation.
+- Canonical content hashes plus domain-separated threshold-Ed25519 update
+  metadata containing exact regional site promotions.
+- At-most-24-hour expiry, canary/regional/general selection, persistent global
+  and per-site rollback protection, retained last-known-good state, and
+  dual-threshold key rotation.
+- Candidate trust remains staged until general activation or signed rollback,
+  so evaluating a new root cannot strand the current active pack.
+- zstd remains an optional future transport encoding; it cannot change the
+  canonical content identity or verification order.
 - An embedded last-known-good pack for offline service operation.
+
+The implemented artifact, state machine, operator command, PostgreSQL
+registry, and worker binding are specified in
+[Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).
 
 ### Web and operations
 

@@ -52,13 +52,16 @@ person.
 - Ed25519 regional rule promotions with exact pack/predecessor/evidence
   binding, expiry, sequence replay protection, last-known-good retention, and
   rollback.
+- Threshold-signed rule-pack metadata with exact embedded site promotions,
+  canary/regional/general rollout, 24-hour expiry, durable replay floors,
+  staged trust rotation, and signed retained-pack rollback.
 - Assertion v1 trust thresholds for managed and opt-in shared observations.
 - A user-owned SQLite cache with freshness/source policy, pruning, export,
   migration, quarantine, and deletion.
 - An Axum/PostgreSQL server with private workspaces, hashed scoped API keys,
   consent-bound idempotent searches, polling/cancellation, and ordered
   resumable SSE under forced tenant RLS.
-- A signed-rule-only managed worker with per-connection DNS validation,
+- A signed-metadata-only managed worker with per-connection DNS validation,
   DNS-rebinding/SSRF rejection, independent response byte limits,
   cancellation, and a live-acknowledged stdin-only one-shot probe.
 - Consent/visibility-isolated managed job expansion, `SKIP LOCKED` claims,
@@ -74,9 +77,9 @@ person.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The next repository-completable slice defines the regional deployment and
-operator boundary for Milestone 3 managed canaries and workers. Real regional
-deployment remains an external evidence gate.
+The next repository-completable slice adds versioned purpose-specific consent
+grants for private history, shared observation, and shared research. Real
+regional deployment remains an external evidence gate.
 
 ## Build and verify
 
@@ -129,7 +132,7 @@ not claimed by the repository build.
 All representative rules remain `discovery` until the external managed
 multi-region live-canary gate passes. Local probing requires the deliberate
 `--allow-disabled` override; the managed worker has no equivalent bypass and
-requires a valid signed promotion.
+requires valid threshold-signed pack metadata containing the site promotion.
 
 ## Workspace
 
@@ -161,6 +164,8 @@ Start with the [ultimate goal](docs/ultimate-goal.md), the
 [execution roadmap](ROADMAP.md), the [design index](docs/README.md), the
 [accepted decisions](docs/decisions-2026-07-24.md), and the
 [Site Rule v1 validation record](docs/site-rule-v1-validation.md).
+The managed update trust and rollout contract is in
+[Signed Rule-Pack Distribution v1](docs/rule-pack-distribution-v1.md).
 The desktop boundary and platform policy are recorded in
 [Desktop application](docs/desktop-application.md). The web monitoring
 boundary is recorded in [Minimal monitoring console](docs/monitoring-console.md).
