@@ -1322,6 +1322,11 @@ evidence gate are documented in
 [`docs/email-delivery.md`](docs/email-delivery.md). Production email remains
 disabled until that external evidence exists.
 
+Quality run
+[`30213884143`](https://github.com/yhay81/socialname/actions/runs/30213884143)
+passed Rust core with PostgreSQL 18 migrations/tests, Windows/macOS desktop,
+monitoring console, and managed-worker OCI for commit `80c5ff0`.
+
 Acceptance gate:
 
 - Multi-region disagreement is represented, not overwritten.
