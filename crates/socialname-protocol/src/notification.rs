@@ -118,6 +118,43 @@ pub enum NotificationDeliveryState {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct WebhookNotification {
+    pub schema: ProtocolVersion,
+    pub delivery_id: NotificationDeliveryId,
+    pub transition: Transition,
+}
+
+impl WebhookNotification {
+    pub fn for_confirmed_transition(
+        delivery_id: NotificationDeliveryId,
+        transition: Transition,
+    ) -> Result<Self, ValidationErrors> {
+        let notification = Self {
+            schema: ProtocolVersion::ApiV1,
+            delivery_id,
+            transition,
+        };
+        notification.validate()?;
+        Ok(notification)
+    }
+}
+
+impl Validate for WebhookNotification {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        self.transition.validate()?;
+        if self.transition.confirmation.permits_delivery() {
+            Ok(())
+        } else {
+            Err(ValidationErrors::new(
+                "transition.confirmation",
+                ValidationCode::InvalidRelation,
+            ))
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NotificationDelivery {
     pub schema: ProtocolVersion,
     pub delivery_id: NotificationDeliveryId,
@@ -360,5 +397,32 @@ mod tests {
         delivery.attempt_count = 1;
         delivery.delivered_at_unix_ms = Some(3_000);
         assert!(delivery.validate().is_ok());
+    }
+
+    #[test]
+    fn webhook_payload_is_stable_and_requires_a_confirmed_transition() {
+        let confirmed = transition(TransitionConfirmation::Confirmed {
+            basis: ConfirmationBasis::ManagedE4,
+        });
+        let payload = WebhookNotification::for_confirmed_transition(
+            NotificationDeliveryId::new("delivery_01").unwrap(),
+            confirmed,
+        )
+        .unwrap();
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["schema"], "socialname.dev/api/v1");
+        assert_eq!(json["delivery_id"], "delivery_01");
+        assert_eq!(json["transition"]["change"]["class"], "account_state");
+
+        let pending = transition(TransitionConfirmation::Pending {
+            reason: crate::PendingConfirmationReason::ManagedVerificationRequired,
+        });
+        assert!(
+            WebhookNotification::for_confirmed_transition(
+                NotificationDeliveryId::new("delivery_02").unwrap(),
+                pending,
+            )
+            .is_err()
+        );
     }
 }

@@ -1,7 +1,10 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     env,
+    future::Future,
     net::SocketAddr,
+    pin::Pin,
+    sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -34,8 +37,9 @@ use socialname_protocol::{
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{ServerConfig, build_router, migrate_database};
 use socialname_worker::{
+    DeliveryError, DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets, DeliveryStore,
     ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule,
-    WatchPlanOutcome,
+    WatchPlanOutcome, WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
 };
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -88,7 +92,8 @@ async fn reset_test_state(pool: &PgPool) {
             watch_targets, watch_notification_endpoints, watch_runs,
             watch_run_targets, probe_jobs, probe_job_consumers, observations,
             assertions, assertion_support, transitions, transition_basis,
-            notification_endpoints, notification_deliveries, audit_events,
+            notification_endpoints, notification_deliveries,
+            notification_delivery_attempts, audit_events,
             data_lineage_edges, deletion_requests, deletion_tasks,
             deletion_receipts, suppression_tokens
         CASCADE;
@@ -139,7 +144,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('watch_runs'), ('watch_run_targets'), ('probe_jobs'), ('probe_job_consumers'),
                 ('observations'), ('assertions'), ('assertion_support'), ('transitions'),
                 ('transition_basis'), ('notification_endpoints'),
-                ('notification_deliveries'), ('audit_events'), ('data_lineage_edges'),
+                ('notification_deliveries'), ('notification_delivery_attempts'),
+                ('audit_events'), ('data_lineage_edges'),
                 ('deletion_requests'), ('deletion_tasks'), ('deletion_receipts'),
                 ('suppression_tokens')
         )
@@ -151,7 +157,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 34);
+    assert_eq!(required_tables, 35);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -160,7 +166,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 29);
+    assert_eq!(tenant_policies, 30);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -170,7 +176,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 29);
+    assert_eq!(forced_rls_tables, 30);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -396,11 +402,31 @@ async fn install_fixtures(pool: &PgPool) {
         VALUES (
             '00000000-0000-0000-0000-000000000071',
             '00000000-0000-0000-0000-000000000001',
-            'email', decode(repeat('71', 32), 'hex'), decode(repeat('72', 32), 'hex'),
-            'test-key-v1', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z'
+            'webhook', decode(repeat('71', 32), 'hex'), decode(repeat('72', 32), 'hex'),
+            'endpoint-key-1', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z'
         );
         "#,
     ))
+    .await
+    .unwrap();
+
+    let tenant_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let endpoint_id = Uuid::parse_str("00000000-0000-0000-0000-000000000071").unwrap();
+    let destination = "https://hooks.example.test/socialname";
+    let ciphertext = delivery_secrets()
+        .seal_destination(tenant_id, endpoint_id, destination)
+        .unwrap();
+    let destination_hash = Sha256::digest(destination.as_bytes()).to_vec();
+    sqlx::query(
+        "UPDATE notification_endpoints \
+         SET destination_ciphertext = $3, destination_hash = $4 \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(endpoint_id)
+    .bind(ciphertext)
+    .bind(destination_hash)
+    .execute(pool)
     .await
     .unwrap();
 }
@@ -778,6 +804,32 @@ async fn assert_transition_and_delivery_safety(pool: &PgPool) {
         "#,
     )
     .execute(pool)
+    .await
+    .unwrap();
+    pool.execute(sqlx::raw_sql(
+        r#"
+        INSERT INTO data_lineage_edges (
+            id, tenant_id, parent_kind, parent_id, child_kind, child_id,
+            purpose, created_at
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000093',
+            '00000000-0000-0000-0000-000000000001',
+            'transition', '00000000-0000-0000-0000-000000000082',
+            'notification_delivery', '00000000-0000-0000-0000-000000000092',
+            'confirmed_webhook', '2026-01-01T00:04:00Z'
+        );
+        INSERT INTO audit_events (
+            id, tenant_id, action, resource_kind, resource_id,
+            occurred_at, details
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000094',
+            '00000000-0000-0000-0000-000000000001',
+            'notification.delivery.queued', 'notification_delivery',
+            '00000000-0000-0000-0000-000000000092',
+            '2026-01-01T00:04:00Z', '{"channel":"webhook"}'
+        );
+        "#,
+    ))
     .await
     .unwrap();
 }
@@ -1595,7 +1647,8 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
              'socialname_worker_lock_due_watch', \
              'socialname_worker_lock_next_watch_target', \
              'socialname_worker_claim_job', \
-             'socialname_worker_lock_claim_consent'\
+             'socialname_worker_lock_claim_consent', \
+             'socialname_worker_claim_webhook_delivery'\
          )",
     )
     .fetch_one(administrator_pool)
@@ -2698,7 +2751,296 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             .unwrap();
     assert_eq!(degraded_observations, 0);
 
+    assert_webhook_delivery_boundary(administrator_pool, worker_pool.clone()).await;
     application_pool.close().await;
+    store.close().await;
+}
+
+fn delivery_secrets() -> DeliverySecrets {
+    DeliverySecrets::new("endpoint-key-1", [7; 32], "signing-key-1", [9; 32]).unwrap()
+}
+
+struct CapturedWebhookRequest {
+    destination_matches: bool,
+    delivery_id: String,
+    signature: String,
+    signing_key_id: String,
+    attempt_count: u32,
+    body: Vec<u8>,
+}
+
+struct ScriptedWebhookTransport {
+    results: Mutex<VecDeque<Result<u16, WebhookSendError>>>,
+    requests: Mutex<Vec<CapturedWebhookRequest>>,
+}
+
+impl ScriptedWebhookTransport {
+    fn new(results: impl IntoIterator<Item = Result<u16, WebhookSendError>>) -> Self {
+        Self {
+            results: Mutex::new(results.into_iter().collect()),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn requests(&self) -> std::sync::MutexGuard<'_, Vec<CapturedWebhookRequest>> {
+        self.requests.lock().unwrap()
+    }
+}
+
+impl WebhookTransport for ScriptedWebhookTransport {
+    fn send<'a>(
+        &'a self,
+        request: &'a WebhookRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<u16, WebhookSendError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.requests.lock().unwrap().push(CapturedWebhookRequest {
+                destination_matches: request.destination()
+                    == "https://hooks.example.test/socialname",
+                delivery_id: request.delivery_id().to_owned(),
+                signature: request.signature().to_owned(),
+                signing_key_id: request.signing_key_id().to_owned(),
+                attempt_count: request.attempt_count(),
+                body: request.body().to_vec(),
+            });
+            self.results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("scripted webhook result")
+        })
+    }
+}
+
+async fn assert_webhook_delivery_boundary(administrator_pool: &PgPool, worker_pool: PgPool) {
+    let initial_delivery_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM notification_deliveries")
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert!(initial_delivery_count >= 4);
+    let unique_logical_keys: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT encode(logical_notification_key, 'hex')) \
+         FROM notification_deliveries",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(unique_logical_keys, initial_delivery_count);
+
+    let store = DeliveryStore::new(worker_pool);
+    let secrets = delivery_secrets();
+    let retry_then_success =
+        ScriptedWebhookTransport::new([Err(WebhookSendError::Timeout), Ok(204)]);
+    let now = current_unix_ms();
+    let first = process_one_delivery(
+        &store,
+        &secrets,
+        &retry_then_success,
+        DeliveryProcessConfig {
+            worker_id: "webhook-worker",
+            lease: Duration::from_secs(10),
+            maximum_attempts: 3,
+            timestamp_unix_ms: now,
+            cancellation: &tokio_util::sync::CancellationToken::new(),
+        },
+    )
+    .await
+    .unwrap();
+    let (delivery_id, first_attempt) = match first {
+        DeliveryProcessOutcome::RetryScheduled {
+            delivery_id,
+            attempt_count,
+        } => (delivery_id, attempt_count),
+        other => panic!("expected retry scheduling, got {other:?}"),
+    };
+    assert_eq!(first_attempt, 1);
+    sqlx::query(
+        "UPDATE notification_deliveries \
+         SET next_attempt_at = clock_timestamp() - interval '1 second' \
+         WHERE id = $1",
+    )
+    .bind(delivery_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let second = process_one_delivery(
+        &store,
+        &secrets,
+        &retry_then_success,
+        DeliveryProcessConfig {
+            worker_id: "webhook-worker",
+            lease: Duration::from_secs(10),
+            maximum_attempts: 3,
+            timestamp_unix_ms: now + 1,
+            cancellation: &tokio_util::sync::CancellationToken::new(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        second,
+        DeliveryProcessOutcome::Delivered {
+            delivery_id,
+            attempt_count: 2,
+        }
+    );
+    {
+        let requests = retry_then_success.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|request| request.destination_matches));
+        assert_eq!(requests[0].delivery_id, requests[1].delivery_id);
+        assert_eq!(requests[0].body, requests[1].body);
+        assert_eq!(requests[0].attempt_count, 1);
+        assert_eq!(requests[1].attempt_count, 2);
+        assert_eq!(requests[0].signing_key_id, "signing-key-1");
+        assert!(requests[0].signature.starts_with("v1="));
+        assert_ne!(requests[0].signature, requests[1].signature);
+        let payload: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(payload["schema"], "socialname.dev/api/v1");
+        assert_eq!(payload["transition"]["confirmation"]["status"], "confirmed");
+    }
+
+    let permanent = ScriptedWebhookTransport::new([Ok(400)]);
+    let permanently_failed = process_one_delivery(
+        &store,
+        &secrets,
+        &permanent,
+        DeliveryProcessConfig {
+            worker_id: "webhook-worker",
+            lease: Duration::from_secs(10),
+            maximum_attempts: 3,
+            timestamp_unix_ms: now + 2,
+            cancellation: &tokio_util::sync::CancellationToken::new(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        permanently_failed,
+        DeliveryProcessOutcome::PermanentlyFailed {
+            attempt_count: 1,
+            ..
+        }
+    ));
+
+    let stale_claim = store
+        .claim("stale-worker", Duration::from_secs(5), 3)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "UPDATE notification_deliveries \
+         SET lease_started_at = '2019-01-01T00:00:00Z', \
+             lease_expires_at = '2020-01-01T00:00:00Z' \
+         WHERE id = $1",
+    )
+    .bind(stale_claim.delivery_id())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let reclaimed = store
+        .claim("reclaim-worker", Duration::from_secs(5), 3)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reclaimed.delivery_id(), stale_claim.delivery_id());
+    assert_eq!(reclaimed.attempt_count(), stale_claim.attempt_count() + 1);
+    assert_eq!(
+        store.record_send_result(&stale_claim, Ok(204), 3).await,
+        Err(DeliveryError::StaleLease)
+    );
+    assert!(matches!(
+        store
+            .record_send_result(&reclaimed, Ok(204), 3)
+            .await
+            .unwrap(),
+        DeliveryProcessOutcome::Delivered { .. }
+    ));
+
+    let exhausted = store
+        .claim("crash-worker", Duration::from_secs(5), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "UPDATE notification_deliveries \
+         SET lease_started_at = '2019-01-01T00:00:00Z', \
+             lease_expires_at = '2020-01-01T00:00:00Z' \
+         WHERE id = $1",
+    )
+    .bind(exhausted.delivery_id())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    assert!(
+        store
+            .claim("reclaim-worker", Duration::from_secs(5), 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let exhausted_state: (String, Option<String>) = sqlx::query_as(
+        "SELECT state, last_error_code \
+         FROM notification_deliveries WHERE id = $1",
+    )
+    .bind(exhausted.delivery_id())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        exhausted_state,
+        (
+            "permanently_failed".to_owned(),
+            Some("lease_expired".to_owned())
+        )
+    );
+
+    let final_delivery_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM notification_deliveries")
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(final_delivery_count, initial_delivery_count);
+    let untraced_deliveries: i64 = sqlx::query_scalar(
+        "SELECT count(*) \
+         FROM notification_deliveries AS delivery \
+         WHERE NOT EXISTS (\
+             SELECT 1 FROM data_lineage_edges AS lineage \
+             WHERE lineage.tenant_id = delivery.tenant_id \
+               AND lineage.parent_kind = 'transition' \
+               AND lineage.parent_id = delivery.transition_id \
+               AND lineage.child_kind = 'notification_delivery' \
+               AND lineage.child_id = delivery.id\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(untraced_deliveries, 0);
+    let attempt_events: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM notification_delivery_attempts")
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    let attempt_lineage: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM data_lineage_edges \
+         WHERE child_kind = 'notification_delivery_attempt' \
+           AND purpose = 'webhook_attempt'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(attempt_lineage, attempt_events);
+    let leaked_audit_details: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events \
+         WHERE details::text LIKE '%hooks.example%' \
+            OR details::text LIKE '%private-search-target%'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(leaked_audit_details, 0);
+
     store.close().await;
 }
 
@@ -2866,15 +3208,18 @@ async fn install_worker_role(pool: &PgPool) {
         GRANT USAGE ON SCHEMA public TO socialname_migration_test_worker;
         GRANT SELECT ON
             consent_grants, searches, search_targets, search_events, probe_jobs,
-            probe_job_consumers, data_lineage_edges, watches, watch_targets,
+            probe_job_consumers, data_lineage_edges, audit_events,
+            rule_versions, watches, watch_targets,
             watch_notification_endpoints, notification_endpoints, watch_runs,
             watch_run_targets, observations, assertions, assertion_support,
-            transitions, transition_basis
+            transitions, transition_basis, notification_deliveries,
+            notification_delivery_attempts
             TO socialname_migration_test_worker;
         GRANT INSERT ON
             search_events, probe_jobs, probe_job_consumers, observations,
             assertions, assertion_support, transitions, transition_basis,
-            data_lineage_edges, watch_runs, watch_run_targets
+            notification_deliveries, notification_delivery_attempts,
+            audit_events, data_lineage_edges, watch_runs, watch_run_targets
             TO socialname_migration_test_worker;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
             TO socialname_migration_test_worker;
@@ -2902,13 +3247,18 @@ async fn install_worker_role(pool: &PgPool) {
             state, attempt_count, available_at, lease_owner, lease_expires_at,
             last_error_code, updated_at, completed_at
         ) ON probe_jobs TO socialname_migration_test_worker;
+        GRANT UPDATE (
+            state, attempt_count, next_attempt_at, delivered_at,
+            last_error_code, lease_owner, lease_started_at, lease_expires_at
+        ) ON notification_deliveries TO socialname_migration_test_worker;
         GRANT EXECUTE ON FUNCTION
             socialname_worker_resolve_rule(text, bytea, bytea, text),
             socialname_worker_lock_next_target(uuid, text),
             socialname_worker_lock_due_watch(uuid, text),
             socialname_worker_lock_next_watch_target(uuid, text),
             socialname_worker_claim_job(uuid, text, text, integer),
-            socialname_worker_lock_claim_consent(uuid, integer, text)
+            socialname_worker_lock_claim_consent(uuid, integer, text),
+            socialname_worker_claim_webhook_delivery(text, integer, integer)
             TO socialname_migration_test_worker;
         "#,
     ))

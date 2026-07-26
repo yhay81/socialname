@@ -54,30 +54,7 @@ impl JobStore {
     }
 
     pub async fn connect_from_env() -> Result<Self, JobError> {
-        let database_url =
-            env::var(WORKER_DATABASE_URL_ENV).map_err(|_| JobError::DatabaseConfiguration)?;
-        if database_url.is_empty() {
-            return Err(JobError::DatabaseConfiguration);
-        }
-        let pool = tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            PgPoolOptions::new()
-                .max_connections(MAXIMUM_CONNECTIONS)
-                .acquire_timeout(ACQUIRE_TIMEOUT)
-                .after_connect(|connection, _metadata| {
-                    Box::pin(async move {
-                        for statement in SESSION_LIMITS {
-                            sqlx::query(statement).execute(&mut *connection).await?;
-                        }
-                        Ok(())
-                    })
-                })
-                .connect(&database_url),
-        )
-        .await
-        .map_err(|_| JobError::DatabaseUnavailable)?
-        .map_err(|_| JobError::DatabaseUnavailable)?;
-        Ok(Self::new(pool))
+        Ok(Self::new(connect_worker_pool_from_env().await?))
     }
 
     pub async fn close(&self) {
@@ -1743,7 +1720,33 @@ enum ClaimState {
     Final,
 }
 
-async fn set_tenant(
+pub(crate) async fn connect_worker_pool_from_env() -> Result<PgPool, JobError> {
+    let database_url =
+        env::var(WORKER_DATABASE_URL_ENV).map_err(|_| JobError::DatabaseConfiguration)?;
+    if database_url.is_empty() {
+        return Err(JobError::DatabaseConfiguration);
+    }
+    tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        PgPoolOptions::new()
+            .max_connections(MAXIMUM_CONNECTIONS)
+            .acquire_timeout(ACQUIRE_TIMEOUT)
+            .after_connect(|connection, _metadata| {
+                Box::pin(async move {
+                    for statement in SESSION_LIMITS {
+                        sqlx::query(statement).execute(&mut *connection).await?;
+                    }
+                    Ok(())
+                })
+            })
+            .connect(&database_url),
+    )
+    .await
+    .map_err(|_| JobError::DatabaseUnavailable)?
+    .map_err(|_| JobError::DatabaseUnavailable)
+}
+
+pub(crate) async fn set_tenant(
     transaction: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
 ) -> Result<(), JobError> {
@@ -1755,7 +1758,9 @@ async fn set_tenant(
     Ok(())
 }
 
-async fn database_now_ms(transaction: &mut Transaction<'_, Postgres>) -> Result<i64, JobError> {
+pub(crate) async fn database_now_ms(
+    transaction: &mut Transaction<'_, Postgres>,
+) -> Result<i64, JobError> {
     sqlx::query_scalar("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
         .fetch_one(&mut **transaction)
         .await

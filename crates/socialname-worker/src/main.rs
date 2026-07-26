@@ -15,8 +15,9 @@ use socialname_canary::{PromotionTrustPolicy, PromotionVerifier};
 use socialname_engine::SearchResult;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_worker::{
-    ExpandOutcome, JobDisposition, JobExecutionError, JobStore, ManagedRule, WatchPlanOutcome,
-    WorkerError,
+    DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, ExpandOutcome,
+    JobDisposition, JobExecutionError, JobStore, ManagedRule, ManagedWebhookTransport,
+    WatchPlanOutcome, WorkerError, process_one_delivery,
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -39,6 +40,8 @@ enum Command {
     Probe(ProbeArgs),
     /// Schedule due watches, expand pending consumers, and execute at most one managed job.
     ProcessOne(ProcessOneArgs),
+    /// Claim and attempt at most one queued signed webhook delivery.
+    DeliverOne(DeliverOneArgs),
 }
 
 #[derive(Debug, Args)]
@@ -95,6 +98,22 @@ struct ProcessOneArgs {
     allow_live: bool,
 }
 
+#[derive(Debug, Args)]
+struct DeliverOneArgs {
+    /// Closed lowercase label recorded on the fenced delivery attempt.
+    #[arg(long)]
+    worker_id: String,
+    #[arg(long, default_value_t = 15)]
+    lease_seconds: u64,
+    #[arg(long, default_value_t = 5)]
+    maximum_attempts: u32,
+    #[arg(long, default_value_t = 10)]
+    request_timeout_seconds: u64,
+    /// Acknowledge database mutation and at most one bounded webhook request.
+    #[arg(long)]
+    allow_live: bool,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProbeInput {
@@ -119,6 +138,14 @@ struct ProcessOneOutput {
     attempt_count: Option<u32>,
 }
 
+#[derive(Serialize)]
+struct DeliverOneOutput {
+    schema: &'static str,
+    status: &'static str,
+    delivery_id: Option<Uuid>,
+    attempt_count: Option<u32>,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -131,7 +158,41 @@ async fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Probe(args) => probe(args).await,
         Command::ProcessOne(args) => process_one(args).await,
+        Command::DeliverOne(args) => deliver_one(args).await,
     }
+}
+
+async fn deliver_one(args: DeliverOneArgs) -> Result<()> {
+    if !args.allow_live {
+        bail!("webhook delivery requires --allow-live");
+    }
+    validate_delivery_limits(
+        args.lease_seconds,
+        args.maximum_attempts,
+        args.request_timeout_seconds,
+    )?;
+    validate_worker_id(&args.worker_id)?;
+    let secrets = DeliverySecrets::from_env()?;
+    let transport =
+        ManagedWebhookTransport::new(Duration::from_secs(args.request_timeout_seconds))?;
+    let store = DeliveryStore::connect_from_env().await?;
+    let outcome = process_one_delivery(
+        &store,
+        &secrets,
+        &transport,
+        DeliveryProcessConfig {
+            worker_id: &args.worker_id,
+            lease: Duration::from_secs(args.lease_seconds),
+            maximum_attempts: args.maximum_attempts,
+            timestamp_unix_ms: now_unix_ms()?,
+            cancellation: &shutdown_token(),
+        },
+    )
+    .await;
+    store.close().await;
+    let output = deliver_one_output(outcome?);
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
 }
 
 async fn probe(args: ProbeArgs) -> Result<()> {
@@ -338,6 +399,23 @@ fn validate_process_limits(
     Ok(())
 }
 
+fn validate_delivery_limits(
+    lease_seconds: u64,
+    maximum_attempts: u32,
+    request_timeout_seconds: u64,
+) -> Result<()> {
+    if !(1..=30).contains(&lease_seconds) {
+        bail!("delivery lease seconds must be between 1 and 30");
+    }
+    if !(1..=10).contains(&maximum_attempts) {
+        bail!("maximum attempts must be between 1 and 10");
+    }
+    if !(1..=30).contains(&request_timeout_seconds) || request_timeout_seconds >= lease_seconds {
+        bail!("request timeout must be positive and shorter than the delivery lease");
+    }
+    Ok(())
+}
+
 fn validate_worker_id(worker_id: &str) -> Result<()> {
     let mut characters = worker_id.chars();
     if !matches!(characters.next(), Some('a'..='z' | '0'..='9'))
@@ -356,6 +434,53 @@ const fn disposition_name(disposition: JobDisposition) -> &'static str {
         JobDisposition::Failed => "failed",
         JobDisposition::Cancelled => "cancelled",
         JobDisposition::AlreadyFinal => "already_final",
+    }
+}
+
+const fn deliver_one_output(outcome: DeliveryProcessOutcome) -> DeliverOneOutput {
+    match outcome {
+        DeliveryProcessOutcome::Idle => DeliverOneOutput {
+            schema: "socialname.dev/webhook-delivery-process/v1",
+            status: "idle",
+            delivery_id: None,
+            attempt_count: None,
+        },
+        DeliveryProcessOutcome::Delivered {
+            delivery_id,
+            attempt_count,
+        } => DeliverOneOutput {
+            schema: "socialname.dev/webhook-delivery-process/v1",
+            status: "delivered",
+            delivery_id: Some(delivery_id),
+            attempt_count: Some(attempt_count),
+        },
+        DeliveryProcessOutcome::RetryScheduled {
+            delivery_id,
+            attempt_count,
+        } => DeliverOneOutput {
+            schema: "socialname.dev/webhook-delivery-process/v1",
+            status: "retry_scheduled",
+            delivery_id: Some(delivery_id),
+            attempt_count: Some(attempt_count),
+        },
+        DeliveryProcessOutcome::PermanentlyFailed {
+            delivery_id,
+            attempt_count,
+        } => DeliverOneOutput {
+            schema: "socialname.dev/webhook-delivery-process/v1",
+            status: "permanently_failed",
+            delivery_id: Some(delivery_id),
+            attempt_count: Some(attempt_count),
+        },
+        DeliveryProcessOutcome::Cancelled {
+            delivery_id,
+            attempt_count,
+        } => DeliverOneOutput {
+            schema: "socialname.dev/webhook-delivery-process/v1",
+            status: "cancelled",
+            delivery_id: Some(delivery_id),
+            attempt_count: Some(attempt_count),
+        },
     }
 }
 
@@ -473,6 +598,9 @@ mod tests {
         assert!(validate_worker_id("").is_err());
         assert!(validate_worker_id("Worker").is_err());
         assert!(validate_worker_id("worker_private").is_err());
+        assert!(validate_delivery_limits(15, 5, 10).is_ok());
+        assert!(validate_delivery_limits(10, 5, 10).is_err());
+        assert!(validate_delivery_limits(31, 5, 10).is_err());
     }
 
     #[test]
@@ -492,5 +620,18 @@ mod tests {
         );
         assert!(!output.contains("username"));
         assert!(!output.contains("result"));
+
+        let delivery = serde_json::to_string(&deliver_one_output(
+            DeliveryProcessOutcome::RetryScheduled {
+                delivery_id: Uuid::nil(),
+                attempt_count: 1,
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            delivery,
+            "{\"schema\":\"socialname.dev/webhook-delivery-process/v1\",\"status\":\"retry_scheduled\",\"delivery_id\":\"00000000-0000-0000-0000-000000000000\",\"attempt_count\":1}"
+        );
+        assert!(!delivery.contains("destination"));
     }
 }

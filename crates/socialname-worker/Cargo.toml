@@ -10,8 +10,10 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chacha20poly1305.workspace = true
 clap.workspace = true
 hex.workspace = true
+hmac.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 socialname-canary = { path = "../socialname-canary" }
@@ -25,6 +27,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

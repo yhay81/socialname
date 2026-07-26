@@ -1,11 +1,11 @@
 use socialname_protocol::{
-    API_V1_SCHEMA, AccountState, ConsentGrantId, EventId, NotificationChannel,
+    API_V1_SCHEMA, AccountState, ConfirmationBasis, ConsentGrantId, EventId, NotificationChannel,
     NotificationDelivery, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
     ObservationId, OperationalFailure, OperationalFailureKind, ProtocolVersion, RegionClass,
     ResultSource, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
     SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy, Target,
     TargetSelection, Transition, TransitionChange, TransitionConfirmation, TransitionId, Username,
-    Validate, WatchId,
+    Validate, WatchId, WebhookNotification,
 };
 
 fn target() -> Target {
@@ -137,6 +137,57 @@ fn search_event_keeps_operational_failure_outside_verdicts() {
     assert_eq!(json["data"]["failure"]["kind"], "timeout");
     assert!(json["data"]["failure"].get("verdict").is_none());
     assert!(json["data"]["failure"].get("uncertainty_reason").is_none());
+}
+
+#[test]
+fn webhook_notification_has_one_exact_v1_wire_shape() {
+    let transition = Transition {
+        schema: ProtocolVersion::ApiV1,
+        transition_id: TransitionId::new("transition_01").unwrap(),
+        watch_id: WatchId::new("watch_01").unwrap(),
+        target: target(),
+        change: TransitionChange::AccountState {
+            from: AccountState::NotFound,
+            to: AccountState::Found,
+        },
+        confirmation: TransitionConfirmation::Confirmed {
+            basis: ConfirmationBasis::ManagedE4,
+        },
+        supporting_observation_ids: vec![ObservationId::new("observation_01").unwrap()],
+        detected_at_unix_ms: 2_000,
+    };
+    let notification = WebhookNotification::for_confirmed_transition(
+        NotificationDeliveryId::new("delivery_01").unwrap(),
+        transition,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(notification).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "delivery_id": "delivery_01",
+            "transition": {
+                "schema": API_V1_SCHEMA,
+                "transition_id": "transition_01",
+                "watch_id": "watch_01",
+                "target": {
+                    "username": "alice-private-target",
+                    "site_id": "github"
+                },
+                "change": {
+                    "class": "account_state",
+                    "from": "not_found",
+                    "to": "found"
+                },
+                "confirmation": {
+                    "status": "confirmed",
+                    "basis": "managed_e4"
+                },
+                "supporting_observation_ids": ["observation_01"],
+                "detected_at_unix_ms": 2_000
+            }
+        })
+    );
 }
 
 #[test]

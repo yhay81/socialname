@@ -22,7 +22,7 @@ pub use error::{ApiError, ApiErrorCode, ApiErrorResponse, FieldViolation};
 pub use notification::{
     NotificationChannel, NotificationDelivery, NotificationDeliveryState, NotificationDestination,
     NotificationEndpointCreateRequest, NotificationEndpointResource, NotificationEndpointState,
-    NotificationKind,
+    NotificationKind, WebhookNotification,
 };
 pub use schema::api_v1_schemas;
 pub use search::{

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod delivery;
 mod derivation;
 mod job;
 
@@ -8,6 +9,12 @@ use socialname_engine::{SearchEngine, SearchResult};
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use tokio_util::sync::CancellationToken;
 
+pub use delivery::{
+    DeliveryClaim, DeliveryError, DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets,
+    DeliveryStore, ENDPOINT_ENCRYPTION_KEY_HEX_ENV, ENDPOINT_ENCRYPTION_KEY_ID_ENV,
+    ManagedWebhookTransport, WEBHOOK_SIGNING_KEY_HEX_ENV, WEBHOOK_SIGNING_KEY_ID_ENV,
+    WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
+};
 pub use job::{
     ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError, JobStore, RuleBinding,
     WORKER_DATABASE_URL_ENV, WatchPlanOutcome,

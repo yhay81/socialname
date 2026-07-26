@@ -13,6 +13,7 @@ use socialname_protocol::{
 use sqlx::{FromRow, Postgres, Transaction};
 use uuid::Uuid;
 
+use crate::delivery::enqueue_confirmed_transition;
 use crate::job::JobError;
 
 const ASSERTION_DERIVATION_VERSION: &str = "assertion/v1";
@@ -593,7 +594,7 @@ pub(crate) async fn apply_watch_interpretation(
     )
     .await?;
 
-    if matches!(confirmation, AccountConfirmation::Confirmed(_)) {
+    if let AccountConfirmation::Confirmed(confirmation_basis) = confirmation {
         let affected = sqlx::query(
             "UPDATE watch_targets \
              SET account_state = $3, account_assertion_id = $4, \
@@ -614,6 +615,14 @@ pub(crate) async fn apply_watch_interpretation(
         if affected != 1 {
             return Err(JobError::StorageInvariant);
         }
+        enqueue_confirmed_transition(
+            transaction,
+            key.tenant_id,
+            key.watch_target_id,
+            transition_id,
+            confirmation_basis,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -733,6 +742,14 @@ async fn record_measurement_transition(
         )
         .await?;
     }
+    enqueue_confirmed_transition(
+        transaction,
+        tenant_id,
+        watch_target_id,
+        transition_id,
+        "measurement_health_evidence",
+    )
+    .await?;
     Ok(())
 }
 
