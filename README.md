@@ -3,8 +3,8 @@
 SocialName is being rebuilt as a Rust-based public-identifier observability
 platform. The current implementation provides private local clients, one
 shared probe/classification engine, strict rule and trust artifacts, a local
-cache, authenticated managed search persistence, and the first signed worker
-security boundary.
+cache, authenticated managed search persistence, and a signed worker connected
+through fenced PostgreSQL jobs and atomic observation ingestion.
 
 > Turn public-identifier presence and change into fast, continuous,
 > evidence-backed, privacy-respecting, actionable knowledge.
@@ -60,14 +60,16 @@ person.
 - A signed-rule-only managed worker with per-connection DNS validation,
   DNS-rebinding/SSRF rejection, independent response byte limits,
   cancellation, and a live-acknowledged stdin-only one-shot probe.
+- Consent/visibility-isolated managed job expansion, `SKIP LOCKED` claims,
+  attempt fencing, bounded retry, continuous authorization checks, and
+  idempotent observation/event/lineage ingestion under forced tenant RLS.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The next implementation slice connects accepted searches to the worker through
-transactional PostgreSQL job expansion, claims, leases, retries, and
-idempotent observation/result ingestion.
+The next implementation slice adds freshness-aware watch scheduling and
+equivalent-work coalescing before recomputing current assertions.
 
 ## Build and verify
 

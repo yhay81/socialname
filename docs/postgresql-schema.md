@@ -6,8 +6,10 @@ Milestone 2 monitoring loop. Migration `0002_api_key_authentication.sql` adds
 the restricted credential lookup needed by the authenticated private-workspace
 slice. Migration `0003_search_event_stream.sql` separates requested from
 site-normalized usernames and adds append-only ordered search events.
-Database-backed job claims and worker invocation, assertion recomputation, and
-delivery workers remain closed for their own vertical slices.
+Migration `0004_managed_probe_jobs.sql` adds consent/visibility-scoped active
+work, fenced claims, narrow worker coordinator functions, and the final
+consent-lock boundary used by atomic observation/event ingestion. Assertion
+recomputation and delivery workers remain closed for their own vertical slices.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -95,6 +97,37 @@ and scopes are then rechecked in an ordinary transaction under forced tenant
 RLS. See [Authenticated private workspaces and API keys](authenticated-workspaces.md)
 for the complete request and operator contract.
 
+## Managed worker coordinator boundary
+
+The worker is also a non-owner `NOSUPERUSER NOBYPASSRLS` role, but it must
+select the next tenant before it can set transaction-local RLS. Migration
+`0004_managed_probe_jobs.sql` therefore adds four fixed-search-path
+`SECURITY DEFINER` functions. They can resolve an exact eligible signed rule,
+lock one eligible target, claim one job with an incremented attempt fence, and
+lock the consent attached to an exact current lease. They return only opaque
+IDs, an attempt number, or a boolean.
+
+`PUBLIC` execution is revoked. Deployment grants only these functions plus the
+column-limited ordinary table access exercised by the integration fixture. The
+worker has no access to `api_key_credentials`, no table ownership or
+`BYPASSRLS`, no observation/event update, and no product-table delete.
+Target/consumer/observation/event/lineage work occurs only after the selected
+tenant is set locally on the transaction.
+
+Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the four coordinator
+functions must be owned by a dedicated `NOLOGIN BYPASSRLS` role or an
+equivalently privileged migration owner. The integration test asserts that
+owner capability separately from the worker's NOBYPASSRLS status. The
+privileged owner is not a runtime login and must not own broader application
+code paths.
+
+The consent-lock function requires the exact `(job ID, attempt, lease owner)`
+and a current lease before taking `FOR KEY SHARE` on its matching active
+purpose-specific consent. A withdrawal that commits first blocks ingestion; an
+ingestion transaction holding the lock commits first and makes the subsequent
+withdrawal unambiguously later. See
+[Managed probe jobs and observation ingestion](managed-jobs.md).
+
 ## Trust and privacy constraints
 
 - API credentials store a bounded public prefix plus a 32-byte secret digest
@@ -108,8 +141,14 @@ for the complete request and operator contract.
   relational/JSON identity check, and a 128 KiB payload ceiling. The API
   requires a finished event before returning terminal state.
 - Search targets preserve `requested_username`; nullable
-  `normalized_username` is reserved for the next database job slice to populate
-  through the signed worker's explicit per-site identity policy.
+  `normalized_username` can be populated only by the job worker through the
+  exact signed rule's explicit per-site identity policy. Invalid values become
+  operational `invalid_target`, never absence.
+- Active jobs carry consent grant and private/shared visibility. Their partial
+  uniqueness includes tenant, normalized target, site, rule version, region,
+  grant, and visibility; consumers cannot cross-coalesce purpose boundaries.
+- Attempt count is a lease-fencing token. Stale or expired attempts cannot
+  write observations, events, or final state.
 - Operational probe failure remains job state. `observations` contain only a
   definitive `found`/`not_found` result or bounded uncertainty, and observation
   rows reject updates.
@@ -158,11 +197,15 @@ unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
 foreign keys, immutable observations, transition confirmation bases,
 shared-only notification suppression, valid confirmed delivery, ordered
-deletion deadlines, receipts, and lineage. Tests skip only when
-`SOCIALNAME_TEST_DATABASE_URL` is absent; the CI job always supplies it. The
-value must identify a disposable test database: the integration test truncates
-product tables and resets its runtime-role grants before installing fixtures so
-the same database can be verified repeatedly.
+deletion deadlines, receipts, lineage, and a second real NOBYPASSRLS worker
+role covering job coalescing, fencing, retry, atomic observation/event
+ingestion, invalid targets, cancellation, consent withdrawal, and regional
+rule degradation. Tests skip only when `SOCIALNAME_TEST_DATABASE_URL` is
+absent; the CI job always supplies it. The administrator, application, and
+worker test URLs must identify the same disposable test database with their
+intended roles: the integration test truncates product tables and resets
+runtime-role grants before installing fixtures so the database can be verified
+repeatedly.
 
 The HTTP process uses the separate `SOCIALNAME_SERVER_DATABASE_URL` runtime
 credential. Startup requires a database connection, readiness is

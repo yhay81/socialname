@@ -1,10 +1,10 @@
 # Private search API and ordered event stream
 
-The first managed search slice accepts a consented private search, persists its
-exact request and target set, exposes polling, and replays ordered partial
-results through Server-Sent Events (SSE). It deliberately does not execute a
-probe. Signed-rule worker execution, job claims, retries, and observation
-ingestion remain closed for their ordered roadmap slices.
+The managed search boundary accepts a consented private or shared search,
+persists its exact request and target set, exposes polling, and replays ordered
+partial results through Server-Sent Events (SSE). Eligible searches can now be
+expanded into fenced PostgreSQL jobs and completed by the signed-rule worker.
+Discovery-only or region-unhealthy rules remain safely unexecutable.
 
 ## HTTP surface and scopes
 
@@ -112,9 +112,9 @@ Migration `0003_search_event_stream.sql` adds tenant-RLS table
   serialized `SearchEvent`;
 - an update-rejecting append-only trigger.
 
-The API inserts only `started` and cancellation `finished` events. Later
-workers must validate the protocol object before atomically appending result
-and terminal events with their target/search state changes.
+The API inserts `started` and cancellation `finished` events. `JobStore`
+validates every worker-created protocol object and atomically appends result
+and terminal events with observation, job, target, search, and lineage changes.
 
 ## SSE wire and resumption
 
@@ -182,11 +182,15 @@ read-only/write scope separation, required consent purpose, unknown sites,
 target-free errors, two-tenant isolation, digest-only idempotency storage,
 polling, three ordered partial/terminal events, `Last-Event-ID` resumption,
 append-only rejection, idempotent cancellation, terminal-event uniqueness,
-least-privilege columns, and bounded SSE connection recovery.
+least-privilege columns, bounded SSE connection recovery, job coalescing,
+claim/reclaim fencing, retry exhaustion, observation/event idempotency,
+multi-search fan-out, lineage, invalid-target handling, and cancellation,
+consent-withdrawal, and rule-health races.
 
-The signed-rule-only worker and its managed-probe SSRF/DNS-rebinding boundary
-are implemented separately. The remaining next gate is transactional job
-expansion, claim/lease/retry, and idempotent observation/result ingestion that
-connects an accepted search to that worker. Until then, a newly accepted search
-remains accepted unless explicitly cancelled or test/operator evidence is
-appended; the API itself initiates no network request.
+The API process still initiates no network request and cannot normalize a
+target. A separate signed worker performs those operations only for an exact
+promoted, active, fresh healthy rule/pack/region binding. The next ordered gate
+is freshness-aware watch scheduling and equivalent-work coalescing; external
+live acceptance remains required before representative discovery rules can
+execute. See
+[Managed probe jobs and observation ingestion](managed-jobs.md).

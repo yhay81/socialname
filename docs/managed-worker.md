@@ -2,9 +2,10 @@
 
 `socialname-worker` is the first managed-execution boundary. It proves that a
 reviewed, signed rule can be executed with stricter network controls than the
-local engine. It does not yet claim PostgreSQL jobs, ingest observations, or
-advance accepted API searches. Those behaviors remain the next ordered
-roadmap slice.
+local engine. The database-job slice now uses this same boundary to expand and
+claim accepted searches, execute at most one fenced job, and atomically ingest
+observations and events. See
+[Managed probe jobs and observation ingestion](managed-jobs.md).
 
 ## Signed-rule activation
 
@@ -86,9 +87,9 @@ is `response_too_large`, an operational transport outcome, and cannot become
 decompressed prefix reach the classifier; cookies, authorization data, full
 headers, and complete response bodies are not returned by the worker result.
 
-## One-shot operator entry point
+## Direct one-shot operator entry point
 
-The current binary deliberately exposes one command:
+The direct diagnostic command remains:
 
 ```console
 cargo run --locked -p socialname-worker -- probe \
@@ -126,7 +127,7 @@ region, and the minimized `SearchResult`. This operator output intentionally
 contains the normalized public target; it must not be redirected into ordinary
 service logs or metrics.
 
-## Deterministic evidence and remaining gate
+## Deterministic evidence and database connection
 
 Engine tests cover public-unicast acceptance, IPv4/IPv6 special ranges,
 metadata addresses, empty/mixed/oversized DNS answers, second-resolution
@@ -139,8 +140,10 @@ pre-network cancellation, keep error formatting target-free, and validate the
 closed stdin/public-key contracts. No test bypasses the managed resolver to
 claim a live site result.
 
-The next slice must transactionally expand accepted search targets into
-coalesced `probe_jobs`, claim them with leases and retries, invoke this
-`ManagedRule`, and atomically ingest one observation/result event. Until then,
-API searches remain `accepted` or can be cancelled; the worker does not poll
-the database.
+The `process-one` command adds the database connection without adding a
+raw-rule path. It binds the same `ManagedRule` to the exact promoted registry
+row, expands a bounded batch, claims at most one fenced lease, monitors
+authorization during the request, and records a target-free operator status.
+The job identity, forced-RLS role, coalescing, retries, consent lock, atomic
+ingestion, and remaining rule-acceptance gate are specified in
+[Managed probe jobs and observation ingestion](managed-jobs.md).

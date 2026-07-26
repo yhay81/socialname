@@ -355,6 +355,14 @@ simple clients. `DELETE` is idempotent cancellation and writes one terminal
 event; erasure is a separate governed workflow. See
 [Private search API and ordered event stream](search-api.md).
 
+The signed worker now expands eligible pending targets under a narrow
+cross-tenant coordinator function, then performs all tenant data work under
+transaction-local forced RLS. Exact consent, visibility, normalized target,
+site, rule version, and region define one active work scope. Fenced leases make
+expired attempts unable to commit, and one transaction writes the immutable
+observation, all consumer events, terminal search state, and lineage. See
+[Managed probe jobs and observation ingestion](managed-jobs.md).
+
 ### Observation synchronization
 
 ```http
@@ -516,9 +524,11 @@ The first managed worker boundary now guarantees:
 
 It also disables ambient proxies and independently caps raw response headers,
 wire-compressed bytes, decompressed bytes, and matcher-inspected bytes. The
-exact signed activation, resolver, address, one-shot operator, and remaining
-database-job boundaries are documented in
-[Signed managed worker boundary](managed-worker.md).
+exact signed activation, resolver, address, and direct one-shot operator are
+documented in [Signed managed worker boundary](managed-worker.md). Job
+eligibility, forced-RLS coordination, coalescing, consent locking, retries, and
+atomic ingestion are documented in
+[Managed probe jobs and observation ingestion](managed-jobs.md).
 
 ### Sensitive evidence
 

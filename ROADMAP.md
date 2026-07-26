@@ -64,9 +64,8 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: transactionally expand accepted targets into coalesced
-`probe_jobs`, then add claims, leases, retries, and idempotent
-observation/result ingestion through the signed managed worker.
+Next executable item: implement freshness-aware watch scheduling and
+equivalent-work coalescing, then recompute `assertion/v1`.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -465,7 +464,7 @@ derives a trustworthy transition, and delivers one auditable notification.
 - [x] Implement idempotent search creation and SSE partial-result streaming.
 - [x] Add `socialname-worker` with signed-rule-only execution and managed-probe
       SSRF/DNS-rebinding defenses.
-- [ ] Implement transactional PostgreSQL job claims, leases, retries, and
+- [x] Implement transactional PostgreSQL job claims, leases, retries, and
       idempotent observation ingestion.
 - [ ] Implement freshness-aware watch scheduling and equivalent-work
       coalescing.
@@ -623,16 +622,16 @@ bounds batch, polling, lifetime, keep-alive, and connection count. The
 PostgreSQL 18 test proves exact/conflicting replay, scope and consent denial,
 target-free errors, two-tenant isolation, digest-only storage, ordered partial
 and terminal replay, resume, append-only rejection, cancellation uniqueness,
-column-limited privileges, and connection-cap recovery. This API slice performs
-no probe; accepted searches remain quarantined until the database job/ingestion
-gate connects them to the signed worker.
+column-limited privileges, and connection-cap recovery. The API process itself
+still performs no probe; eligible accepted searches are connected through the
+separate signed worker and discovery-only rules remain quarantined.
 
 Signed-managed-worker evidence:
 
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-engine -p socialname-worker --all-targets
-# engine: 10; worker: 3 library + 2 binary tests
+# engine: 10; worker: 6 library + 4 binary tests
 cargo clippy --locked -p socialname-engine -p socialname-worker --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-worker -- --help
 # probe without --allow-live exits before reading files or stdin
@@ -657,10 +656,47 @@ names and values, streamed compressed bytes, decoded bytes, and inspected text
 have independent rule bounds; size/decode/DNS failures remain operational and
 cannot become absence.
 
-This slice deliberately does not poll PostgreSQL or mutate accepted searches.
-The next item must connect those searches through transactional job
-claim/lease/retry and idempotent observation/result ingestion without adding a
-raw-rule execution path.
+Managed-job evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes 23 server library, 2 server binary, 1 PostgreSQL integration,
+# 6 worker library, and 4 worker binary tests
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+```
+
+Migration `0004_managed_probe_jobs.sql` and `JobStore` now bind the exact signed
+site/rule/pack/region to promoted, active, fresh-healthy registry state. A
+non-owner NOBYPASSRLS worker uses four narrow coordinator functions, then
+returns to transaction-local tenant RLS. Expansion normalizes through that
+rule, keeps invalid targets outside absence, and coalesces only equal tenant,
+target, rule, region, consent grant, and visibility scopes.
+
+Claims increment an attempt fence; expired leases can be reclaimed while stale
+attempts cannot commit. Operational failures use bounded exponential retry.
+Execution continuously rechecks live consumers, purpose-specific consent, and
+rule health, and final ingestion locks consent. One transaction writes at most
+one immutable observation, per-consumer result events, target/search terminal
+state, and lineage; replay is `already_final`. The PostgreSQL 18 test proves
+coalescing and purpose isolation, claim/reclaim, stale fencing, retry
+exhaustion, multi-search fan-out, cancellation, consent withdrawal, rule
+degradation, invalid targets, and least-privilege RLS.
+
+`socialname-worker process-one` is the bounded operable entry point: it expands
+at most 128 targets, claims and executes at most one job, requires
+`--allow-live` before file/database access, and emits a target-free status
+object. Representative rules still cannot execute because their external
+promotion evidence is absent. The next item is freshness-aware watch
+scheduling and equivalent-work coalescing.
 
 Software acceptance gate:
 
@@ -834,3 +870,8 @@ Choose these only when their trigger is measured:
   independent response byte budgets, cancellation, and a live-acknowledged
   stdin-only operator probe; left database claims and ingestion to the next
   ordered slice.
+- **2026-07-26:** Added consent/visibility-isolated managed job expansion,
+  fenced leases and reclamation, bounded retry, continuous authorization
+  cancellation, and idempotent atomic observation/event/lineage ingestion
+  through the signed worker under a non-owner forced-RLS role; kept all
+  discovery-only rules behind their external promotion gate.

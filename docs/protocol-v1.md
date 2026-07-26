@@ -122,14 +122,16 @@ The result variants deliberately remain separate:
 - `uncertain_result` carries a classification uncertainty such as conflicting
   evidence or a changed site;
 - `operational_failure` carries retryable transport, access, rule, or capacity
-  failure and has no verdict or uncertainty field;
+  failure, plus nonretryable `invalid_target` when the exact signed site's
+  username policy rejects the request. It has no verdict or uncertainty field;
 - `assertion_updated` carries the replaceable current interpretation plus its
   support and conflicts;
 - `finished` records a terminal state and self-consistent totals.
 
-An operational failure therefore cannot deserialize as `not_found`, and a
-conflict cannot be collapsed into a definitive observation. Cached and shared
-results retain their actual source and freshness rather than appearing live.
+An invalid target or any other operational failure therefore cannot
+deserialize as `not_found`, and a conflict cannot be collapsed into a
+definitive observation. Cached and shared results retain their actual source
+and freshness rather than appearing live.
 
 ## Watches
 

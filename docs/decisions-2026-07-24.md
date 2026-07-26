@@ -122,8 +122,16 @@ so status does not diverge across design records.
   original search; changed content conflicts. Search events are append-only
   tenant-RLS records with an explicit per-search sequence and target relation.
   SSE uses event UUIDs for bounded `Last-Event-ID` replay and rechecks
-  authorization while connected. The API creates/cancels work but cannot probe
-  until the database job/ingestion gate connects it to the signed worker.
+  authorization while connected. The API creates/cancels work but has no
+  network authority; a separate signed worker can now expand, claim, execute,
+  and atomically ingest only an exact promoted, region-healthy rule binding.
+- Active managed work coalesces only across equal tenant, normalized target,
+  site, rule version, region, consent grant, and visibility. Attempt count is a
+  fencing token. A non-owner NOBYPASSRLS worker receives only four narrow
+  coordinator functions; tenant rows remain behind transaction-local forced
+  RLS. Final ingestion rechecks rule health and locks purpose-specific consent
+  before atomically writing one immutable observation, per-search events,
+  terminal state, and lineage.
 
 ## Detailed records
 
@@ -143,6 +151,7 @@ so status does not diverge across design records.
 - [PostgreSQL schema and migrations](postgresql-schema.md)
 - [Authenticated private workspaces and API keys](authenticated-workspaces.md)
 - [Private search API and ordered event stream](search-api.md)
+- [Managed probe jobs and observation ingestion](managed-jobs.md)
 
 ## Implementation baseline
 
@@ -173,9 +182,14 @@ so status does not diverge across design records.
     answer set, and independently bounds parsed headers, compressed bytes,
     decompressed bytes, and inspected text. The only operator probe reads its
     target from bounded stdin JSON and requires explicit live acknowledgement.
+13. **Done:** Connect eligible accepted searches to that worker through
+    consent/visibility-isolated job expansion, fenced claims and lease
+    reclamation, bounded retries, continuous cancellation/authorization
+    monitoring, and idempotent atomic observation/event/lineage ingestion under
+    a non-owner forced-RLS worker role.
 
 Milestone 1's repository-completable software gate is done. Its external live
 rule evidence remains pending and all affected rules stay disabled. The next
 work is the first paid monitoring loop in Milestone 2, continuing with
-transactional job claims, leases, retries, and idempotent observation ingestion
-that connect accepted searches to the signed managed worker.
+freshness-aware watch scheduling and equivalent-work coalescing before current
+assertion derivation.

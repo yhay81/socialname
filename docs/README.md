@@ -4,7 +4,7 @@ This directory records the investigation and design decisions for rebuilding
 SocialName. The current Python package is treated as a legacy reference, not as
 the implementation foundation for v2.
 
-The design was last reviewed on 2026-07-25.
+The design was last reviewed on 2026-07-26.
 
 ## Authority and execution
 
@@ -74,6 +74,10 @@ The first vertical slice is implemented in the repository:
   transactional workspace/API-key operator lifecycle, digest-only bearer
   authentication, forced tenant RLS, consented idempotent private searches,
   polling/cancellation, and bounded resumable PostgreSQL-backed SSE;
+- a signed managed worker with consent/visibility-isolated job expansion,
+  fenced claims, bounded retries, continuous authorization cancellation, and
+  atomic observation/event/lineage ingestion under a non-owner forced-RLS
+  database role;
 - a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache and
   cached-first sources, immutable observation persistence, source-preserving
   refresh streaming, freshness display, cancellation, and explicit
@@ -123,10 +127,13 @@ access. Live canaries are intentionally a separate acceptance gate.
   database-aware readiness, and the first protected route.
 - [Private search API and ordered event stream](search-api.md) — consented
   idempotent creation, polling/cancellation, append-only events, and bounded
-  resumable SSE without premature worker execution.
+  resumable SSE with worker-created result and terminal events.
 - [Signed managed worker boundary](managed-worker.md) — signed-rule-only
   activation, DNS-rebinding/SSRF defenses, byte budgets, and one-shot
   operation.
+- [Managed probe jobs and observation ingestion](managed-jobs.md) — exact work
+  identity, narrow forced-RLS coordination, fencing, retries, consent locks,
+  atomic fan-out, and the bounded one-job operator.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
@@ -159,13 +166,12 @@ These terms have distinct meanings and should not be used interchangeably:
 
 ## Current execution focus
 
-The current milestone is **Trustworthy local product**. The canonical task
+The current milestone is **First paid monitoring loop**. The canonical task
 breakdown and acceptance evidence live in [`ROADMAP.md`](../ROADMAP.md):
 
-1. Stream eligible cached observations before an explicitly labelled local
-   refresh.
-2. Complete the remaining deterministic cancellation and cross-layer cache
-   policy tests.
+1. Add freshness-aware watch scheduling and equivalent-work coalescing.
+2. Recompute current assertions from immutable managed observations.
 
-Infrastructure, pricing, scale, and community-network choices remain deferred
-until their roadmap trigger is measured.
+Representative live rules remain discovery-only until external regional
+evidence exists. Infrastructure, pricing, scale, and community-network choices
+remain deferred until their roadmap trigger is measured.
