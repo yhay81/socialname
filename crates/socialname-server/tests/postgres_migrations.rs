@@ -93,7 +93,8 @@ async fn reset_test_state(pool: &PgPool) {
             consent_events, searches, search_targets, search_events, watches,
             watch_targets, watch_notification_endpoints, watch_runs,
             watch_run_targets, probe_jobs, probe_job_consumers, observations,
-            assertions, assertion_support, transitions, transition_basis,
+            assertions, assertion_support, regional_assertions,
+            regional_assertion_support, transitions, transition_basis,
             notification_endpoints, notification_deliveries,
             notification_delivery_attempts, audit_events,
             data_lineage_edges, deletion_requests, deletion_tasks,
@@ -144,7 +145,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('search_events'),
                 ('watches'), ('watch_targets'), ('watch_notification_endpoints'),
                 ('watch_runs'), ('watch_run_targets'), ('probe_jobs'), ('probe_job_consumers'),
-                ('observations'), ('assertions'), ('assertion_support'), ('transitions'),
+                ('observations'), ('assertions'), ('assertion_support'),
+                ('regional_assertions'), ('regional_assertion_support'), ('transitions'),
                 ('transition_basis'), ('notification_endpoints'),
                 ('notification_deliveries'), ('notification_delivery_attempts'),
                 ('audit_events'), ('data_lineage_edges'),
@@ -159,7 +161,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 35);
+    assert_eq!(required_tables, 37);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -168,7 +170,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 30);
+    assert_eq!(tenant_policies, 32);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -178,7 +180,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 30);
+    assert_eq!(forced_rls_tables, 32);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -1884,6 +1886,34 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(assertion_support_count, 1);
+    let regional_assertion: (String, String, String, String, i32, bool, i64) = sqlx::query_as(
+        "SELECT regional.region_class, regional.outcome_kind, \
+                    regional.verdict, regional.quality, \
+                    regional.support_group_count, regional.managed_support, \
+                    count(support.observation_id) \
+             FROM regional_assertions AS regional \
+             LEFT JOIN regional_assertion_support AS support \
+               ON support.tenant_id = regional.tenant_id \
+              AND support.regional_assertion_id = regional.id \
+             WHERE regional.assertion_id = $1 \
+             GROUP BY regional.id",
+    )
+    .bind(current_assertion.0)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        regional_assertion,
+        (
+            "jp".to_owned(),
+            "definitive".to_owned(),
+            "found".to_owned(),
+            "verified".to_owned(),
+            1,
+            true,
+            1,
+        )
+    );
     let baseline: (String, Uuid) = sqlx::query_as(
         "SELECT account_state, account_assertion_id \
          FROM watch_targets WHERE id = $1",
@@ -1911,6 +1941,24 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(assertion_event_count, 1);
+    let assertion_event_payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM search_events \
+         WHERE search_id = $1 AND event_type = 'assertion_updated'",
+    )
+    .bind(Uuid::parse_str(third.search_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let assertion_event: SearchEvent = serde_json::from_value(assertion_event_payload).unwrap();
+    assert!(assertion_event.validate().is_ok());
+    let SearchEventData::AssertionUpdated { assertion } = assertion_event.data else {
+        panic!("expected assertion update event");
+    };
+    let regional = assertion
+        .regional_assertions
+        .expect("new assertion events include regional projections");
+    assert_eq!(regional.len(), 1);
+    assert_eq!(regional[0].region_class.as_str(), "jp");
 
     let historical_assertion_id = Uuid::new_v4();
     sqlx::query(
@@ -2026,7 +2074,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             available_at, created_at, updated_at, completed_at\
          ) VALUES (\
             $1, '00000000-0000-0000-0000-000000000001', \
-            'private-search-target', 'managed-test', $2, 'jp', \
+            'private-search-target', 'managed-test', $2, 'us', \
             decode(repeat('ef', 32), 'hex'), $3, 'private', 'succeeded', \
             clock_timestamp(), clock_timestamp(), clock_timestamp(), \
             clock_timestamp()\
@@ -2050,7 +2098,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             'private-search-target', 'managed-test', $4, 'definitive', \
             'not_found', 'e3_explicit_endpoint', \
             decode(repeat('ee', 32), 'hex'), 'managed_probe', \
-            'managed_worker', 'private', 'jp', true, clock_timestamp(), \
+            'managed_worker', 'private', 'us', true, clock_timestamp(), \
             clock_timestamp() + interval '15 minutes', clock_timestamp()\
          )",
     )
@@ -2089,8 +2137,8 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             .await
             .unwrap();
     assert_eq!(conflict_run_state, "completed");
-    let conflicted_assertion: (String, Option<String>, String, i64) = sqlx::query_as(
-        "SELECT outcome_kind, verdict, quality, \
+    let conflicted_assertion: (Uuid, String, Option<String>, String, i64) = sqlx::query_as(
+        "SELECT id, outcome_kind, verdict, quality, \
                 (SELECT count(*) FROM assertion_support AS support \
                  WHERE support.tenant_id = assertion.tenant_id \
                    AND support.assertion_id = assertion.id \
@@ -2105,9 +2153,63 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(
-        conflicted_assertion,
-        ("inconclusive".to_owned(), None, "conflicted".to_owned(), 2)
+        (
+            conflicted_assertion.1.as_str(),
+            conflicted_assertion.2.as_deref(),
+            conflicted_assertion.3.as_str(),
+            conflicted_assertion.4,
+        ),
+        ("inconclusive", None, "conflicted", 2)
     );
+    let regional_conflict: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+        "SELECT regional.region_class, regional.outcome_kind, \
+                regional.verdict, regional.quality, count(support.observation_id) \
+         FROM regional_assertions AS regional \
+         LEFT JOIN regional_assertion_support AS support \
+           ON support.tenant_id = regional.tenant_id \
+          AND support.regional_assertion_id = regional.id \
+         WHERE regional.assertion_id = $1 \
+         GROUP BY regional.id \
+         ORDER BY regional.region_class",
+    )
+    .bind(conflicted_assertion.0)
+    .fetch_all(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        regional_conflict,
+        vec![
+            (
+                "jp".to_owned(),
+                "definitive".to_owned(),
+                "found".to_owned(),
+                "verified".to_owned(),
+                1,
+            ),
+            (
+                "us".to_owned(),
+                "definitive".to_owned(),
+                "not_found".to_owned(),
+                "verified".to_owned(),
+                1,
+            ),
+        ]
+    );
+    let regional_lineage: (i64, i64) = sqlx::query_as(
+        "SELECT \
+            count(*) FILTER (WHERE parent_kind = 'observation' \
+                              AND child_kind = 'regional_assertion'), \
+            count(*) FILTER (WHERE parent_kind = 'regional_assertion' \
+                              AND child_kind = 'assertion' AND child_id = $1) \
+         FROM data_lineage_edges \
+         WHERE tenant_id = '00000000-0000-0000-0000-000000000001'",
+    )
+    .bind(conflicted_assertion.0)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(regional_lineage.0 >= 3);
+    assert_eq!(regional_lineage.1, 2);
     let conflict_account_state: (String, i64) = sqlx::query_as(
         "SELECT target.account_state, count(transition.id) \
          FROM watch_targets AS target \
@@ -2123,6 +2225,77 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(conflict_account_state, ("found".to_owned(), 1));
+
+    sqlx::query(
+        "UPDATE watches \
+         SET maximum_age_ms = 1, updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(managed_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let verification_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected a regional verification run, got {other:?}"),
+    };
+    let verification_job_id = match store
+        .expand_one_watch(&binding, &managed_rule)
+        .await
+        .unwrap()
+    {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected a regional verification job, got {other:?}"),
+    };
+    let verification_priority: (i16, String) =
+        sqlx::query_as("SELECT priority, priority_reason FROM probe_jobs WHERE id = $1")
+            .bind(verification_job_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(verification_priority, (100, "regional_conflict".to_owned()));
+    let verification_budget: (i32, i64) = sqlx::query_as(
+        "SELECT reserved_probes, reserved_bytes \
+         FROM watch_runs WHERE id = $1",
+    )
+    .bind(verification_run_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(verification_budget.0, 1);
+    assert_eq!(
+        verification_budget.1,
+        i64::try_from(managed_rule.maximum_inspected_bytes_per_search()).unwrap()
+    );
+    sqlx::query(
+        "UPDATE probe_jobs \
+         SET state = 'cancelled', updated_at = clock_timestamp(), \
+             completed_at = clock_timestamp() \
+         WHERE id = $1 AND state = 'queued'",
+    )
+    .bind(verification_job_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watch_run_targets \
+         SET state = 'cancelled', completed_at = clock_timestamp() \
+         WHERE watch_run_id = $1 AND state = 'queued'",
+    )
+    .bind(verification_run_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watch_runs \
+         SET state = 'cancelled', completed_at = clock_timestamp() \
+         WHERE id = $1 AND state = 'running'",
+    )
+    .bind(verification_run_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
 
     sqlx::query(
         "UPDATE probe_jobs \
@@ -2645,6 +2818,175 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             .await
             .unwrap();
     assert_eq!(cancelled_job_state, "cancelled");
+
+    let confirmation_watch = create_managed_watch(
+        &application_pool,
+        "confirmation-priority-target",
+        "00000000-0000-0000-0000-000000000031",
+    )
+    .await;
+    let confirmation_watch_id = Uuid::parse_str(confirmation_watch.watch_id.as_str()).unwrap();
+    let confirmation_watch_target_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM watch_targets WHERE watch_id = $1")
+            .bind(confirmation_watch_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    let confirmation_baseline_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO assertions (\
+            id, tenant_id, normalized_username, site_id, outcome_kind, verdict, \
+            quality, evidence_class, observed_at, expires_at, \
+            derivation_version, is_current, created_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', \
+            'confirmation-priority-target', 'managed-test', \
+            'definitive', 'found', 'verified', 'e4_structured_identity', \
+            clock_timestamp() - interval '2 hours', \
+            clock_timestamp() - interval '1 hour', 'assertion/v1', false, \
+            clock_timestamp() - interval '1 hour'\
+         )",
+    )
+    .bind(confirmation_baseline_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watch_targets \
+         SET account_state = 'found', account_assertion_id = $2, \
+             account_state_since = clock_timestamp() - interval '2 hours' \
+         WHERE id = $1",
+    )
+    .bind(confirmation_watch_target_id)
+    .bind(confirmation_baseline_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watches \
+         SET updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(confirmation_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let confirmation_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected an account confirmation run, got {other:?}"),
+    };
+    let confirmation_job_id = match store
+        .expand_one_watch(&binding, &managed_rule)
+        .await
+        .unwrap()
+    {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected an account confirmation probe, got {other:?}"),
+    };
+    let confirmation_claim = store
+        .claim(&binding, "worker-confirmation", Duration::from_secs(5))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(confirmation_claim.job_id(), confirmation_job_id);
+    let mut managed_absence = managed_result(
+        Verdict::NotFound,
+        None,
+        DomainEvidenceClass::E3ExplicitEndpoint,
+        &candidate.rule_hash,
+        "d",
+    );
+    managed_absence.username = "confirmation-priority-target".to_owned();
+    assert_eq!(
+        store
+            .record_result(&confirmation_claim, &managed_absence, 3)
+            .await
+            .unwrap(),
+        JobDisposition::Succeeded
+    );
+    let pending_confirmation: (String, String) = sqlx::query_as(
+        "SELECT confirmation_status, pending_reason \
+         FROM transitions \
+         WHERE watch_target_id = $1 \
+           AND transition_class = 'account_state'",
+    )
+    .bind(confirmation_watch_target_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pending_confirmation,
+        (
+            "pending".to_owned(),
+            "second_managed_observation_required".to_owned(),
+        )
+    );
+    let confirmation_run_state: String =
+        sqlx::query_scalar("SELECT state FROM watch_runs WHERE id = $1")
+            .bind(confirmation_run_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(confirmation_run_state, "completed");
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    sqlx::query(
+        "UPDATE watches \
+         SET maximum_age_ms = 1, updated_at = created_at, \
+             next_run_at = clock_timestamp() - interval '1 microsecond' \
+         WHERE id = $1",
+    )
+    .bind(confirmation_watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let follow_up_run_id = match store.plan_one_watch(&binding).await.unwrap() {
+        WatchPlanOutcome::Planned { run_id, .. } => run_id,
+        other => panic!("expected a managed confirmation follow-up, got {other:?}"),
+    };
+    let follow_up_job_id = match store
+        .expand_one_watch(&binding, &managed_rule)
+        .await
+        .unwrap()
+    {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected a prioritized confirmation job, got {other:?}"),
+    };
+    let follow_up_priority: (i16, String) =
+        sqlx::query_as("SELECT priority, priority_reason FROM probe_jobs WHERE id = $1")
+            .bind(follow_up_job_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(follow_up_priority, (50, "account_confirmation".to_owned()));
+    sqlx::query(
+        "UPDATE probe_jobs \
+         SET state = 'cancelled', updated_at = clock_timestamp(), \
+             completed_at = clock_timestamp() \
+         WHERE id = $1 AND state = 'queued'",
+    )
+    .bind(follow_up_job_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watch_run_targets \
+         SET state = 'cancelled', completed_at = clock_timestamp() \
+         WHERE watch_run_id = $1 AND state = 'queued'",
+    )
+    .bind(follow_up_run_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watch_runs \
+         SET state = 'cancelled', completed_at = clock_timestamp() \
+         WHERE id = $1 AND state = 'running'",
+    )
+    .bind(follow_up_run_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
 
     let _withdrawn = create_managed_search(
         &application_pool,
@@ -3399,12 +3741,14 @@ async fn install_worker_role(pool: &PgPool) {
             rule_versions, watches, watch_targets,
             watch_notification_endpoints, notification_endpoints, watch_runs,
             watch_run_targets, observations, assertions, assertion_support,
-            transitions, transition_basis, notification_deliveries,
+            regional_assertions, regional_assertion_support, transitions,
+            transition_basis, notification_deliveries,
             notification_delivery_attempts
             TO socialname_migration_test_worker;
         GRANT INSERT ON
             search_events, probe_jobs, probe_job_consumers, observations,
-            assertions, assertion_support, transitions, transition_basis,
+            assertions, assertion_support, regional_assertions,
+            regional_assertion_support, transitions, transition_basis,
             notification_deliveries, notification_delivery_attempts,
             audit_events, data_lineage_edges, watch_runs, watch_run_targets
             TO socialname_migration_test_worker;
@@ -3432,7 +3776,7 @@ async fn install_worker_role(pool: &PgPool) {
         ) ON watch_run_targets TO socialname_migration_test_worker;
         GRANT UPDATE (
             state, attempt_count, available_at, lease_owner, lease_expires_at,
-            last_error_code, updated_at, completed_at
+            last_error_code, priority, updated_at, completed_at
         ) ON probe_jobs TO socialname_migration_test_worker;
         GRANT UPDATE (
             state, attempt_count, next_attempt_at, delivered_at,

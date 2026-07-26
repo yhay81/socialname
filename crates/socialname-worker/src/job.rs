@@ -16,7 +16,8 @@ use uuid::Uuid;
 
 use crate::derivation::{
     DerivationKey, MeasurementOutcome, WatchInterpretationKey, apply_watch_interpretation,
-    lock_derivation_target, recompute_assertion,
+    elevate_probe_job_priority, load_verification_priority, lock_derivation_target,
+    recompute_assertion,
 };
 use crate::{ManagedRule, WorkerError};
 
@@ -464,15 +465,23 @@ impl JobStore {
             target.consent_grant_id,
             "private",
         );
+        let verification_priority = load_verification_priority(
+            &mut transaction,
+            locked.tenant_id,
+            target.watch_target_id,
+            &normalized_username,
+            &binding.site_id,
+        )
+        .await?;
         let proposed_job_id = Uuid::new_v4();
         let inserted_job_id: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO probe_jobs (\
                 id, tenant_id, normalized_username, site_id, rule_version_id, \
                 region_class, work_key_hash, consent_grant_id, visibility, state, \
-                available_at, created_at, updated_at\
+                priority, available_at, created_at, updated_at\
              ) VALUES (\
                 $1, $2, $3, $4, $5, $6, $7, $8, 'private', 'queued', \
-                clock_timestamp(), clock_timestamp(), clock_timestamp()\
+                $9, clock_timestamp(), clock_timestamp(), clock_timestamp()\
              ) \
              ON CONFLICT (\
                 tenant_id, normalized_username, site_id, rule_version_id, \
@@ -489,6 +498,7 @@ impl JobStore {
         .bind(&binding.region_class)
         .bind(work_key_hash.as_slice())
         .bind(target.consent_grant_id)
+        .bind(verification_priority.value())
         .fetch_optional(&mut *transaction)
         .await
         .map_err(|_| JobError::StorageInvariant)?;
@@ -518,6 +528,13 @@ impl JobStore {
             .await
             .map_err(|_| JobError::StorageInvariant)?
         };
+        elevate_probe_job_priority(
+            &mut transaction,
+            locked.tenant_id,
+            job_id,
+            verification_priority,
+        )
+        .await?;
         let linked: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO probe_job_consumers (\
                 id, tenant_id, probe_job_id, watch_target_id, \

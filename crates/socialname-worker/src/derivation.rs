@@ -209,6 +209,21 @@ struct CurrentAssertionRow {
 }
 
 #[derive(FromRow)]
+struct CurrentRegionalAssertionRow {
+    id: Uuid,
+    region_class: String,
+    outcome_kind: String,
+    verdict: Option<String>,
+    uncertainty_reason: Option<String>,
+    quality: String,
+    evidence_class: String,
+    observed_at_unix_ms: i64,
+    expires_at_unix_ms: i64,
+    support_group_count: i32,
+    managed_support: bool,
+}
+
+#[derive(FromRow)]
 struct LockedAccountBaseline {
     account_state: Option<String>,
     account_assertion_id: Option<Uuid>,
@@ -220,6 +235,131 @@ enum AccountConfirmation {
     Confirmed(&'static str),
     Pending(&'static str),
     Suppressed(&'static str),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum VerificationPriority {
+    Routine,
+    AccountConfirmation,
+    RegionalConflict,
+}
+
+impl VerificationPriority {
+    pub(crate) const fn value(self) -> i16 {
+        match self {
+            Self::Routine => 0,
+            Self::AccountConfirmation => 50,
+            Self::RegionalConflict => 100,
+        }
+    }
+
+    const fn from_persisted_state(regional_conflict: bool, account_candidate: bool) -> Self {
+        if regional_conflict {
+            Self::RegionalConflict
+        } else if account_candidate {
+            Self::AccountConfirmation
+        } else {
+            Self::Routine
+        }
+    }
+}
+
+pub(crate) async fn load_verification_priority(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    watch_target_id: Uuid,
+    normalized_username: &str,
+    site_id: &str,
+) -> Result<VerificationPriority, JobError> {
+    let (regional_conflict, account_candidate): (bool, bool) = sqlx::query_as(
+        "SELECT \
+            EXISTS (\
+                SELECT 1 FROM assertions \
+                WHERE tenant_id = $1 \
+                  AND normalized_username = $3 AND site_id = $4 \
+                  AND is_current AND withdrawn_at IS NULL \
+                  AND quality = 'conflicted'\
+            ), \
+            EXISTS (\
+                SELECT 1 FROM transitions \
+                WHERE tenant_id = $1 AND watch_target_id = $2 \
+                  AND transition_class = 'account_state' \
+                  AND (\
+                      confirmation_status = 'pending' \
+                      OR (\
+                          confirmation_status = 'suppressed' \
+                          AND suppression_reason = 'shared_only_absence'\
+                      )\
+                  )\
+            )",
+    )
+    .bind(tenant_id)
+    .bind(watch_target_id)
+    .bind(normalized_username)
+    .bind(site_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?;
+    Ok(VerificationPriority::from_persisted_state(
+        regional_conflict,
+        account_candidate,
+    ))
+}
+
+pub(crate) async fn elevate_probe_job_priority(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    probe_job_id: Uuid,
+    priority: VerificationPriority,
+) -> Result<(), JobError> {
+    if priority == VerificationPriority::Routine {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE probe_jobs \
+         SET priority = $3, updated_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2 \
+           AND state IN ('queued', 'retry_wait') \
+           AND priority < $3",
+    )
+    .bind(tenant_id)
+    .bind(probe_job_id)
+    .bind(priority.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?;
+    Ok(())
+}
+
+async fn elevate_watch_probe_priorities(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    watch_target_id: Uuid,
+    priority: VerificationPriority,
+) -> Result<(), JobError> {
+    if priority == VerificationPriority::Routine {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE probe_jobs AS job \
+         SET priority = $3, updated_at = clock_timestamp() \
+         WHERE job.tenant_id = $1 \
+           AND job.state IN ('queued', 'retry_wait') \
+           AND job.priority < $3 \
+           AND EXISTS (\
+               SELECT 1 FROM probe_job_consumers AS consumer \
+               WHERE consumer.tenant_id = job.tenant_id \
+                 AND consumer.probe_job_id = job.id \
+                 AND consumer.watch_target_id = $2\
+           )",
+    )
+    .bind(tenant_id)
+    .bind(watch_target_id)
+    .bind(priority.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?;
+    Ok(())
 }
 
 pub(crate) async fn lock_derivation_target(
@@ -381,7 +521,16 @@ pub(crate) async fn recompute_assertion(
         .fetch_all(&mut **transaction)
         .await
         .map_err(|_| JobError::StorageInvariant)?;
-        if assertion_matches(current, &assertion) && current_support == expected_support {
+        if assertion_matches(current, &assertion)
+            && current_support == expected_support
+            && regional_assertions_match(
+                transaction,
+                key.tenant_id,
+                current.id,
+                &regional_assertions,
+            )
+            .await?
+        {
             return Ok(Some(DerivedAssertion {
                 id: current.id,
                 assertion,
@@ -464,6 +613,13 @@ pub(crate) async fn recompute_assertion(
         )
         .await?;
     }
+    persist_regional_assertions(
+        transaction,
+        key.tenant_id,
+        assertion_id,
+        &regional_assertions,
+    )
+    .await?;
 
     Ok(Some(DerivedAssertion {
         id: assertion_id,
@@ -472,6 +628,146 @@ pub(crate) async fn recompute_assertion(
         evidence,
         sources,
     }))
+}
+
+async fn regional_assertions_match(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    assertion_id: Uuid,
+    expected: &BTreeMap<String, DerivedRegionalAssertion>,
+) -> Result<bool, JobError> {
+    let current: Vec<CurrentRegionalAssertionRow> = sqlx::query_as(
+        "SELECT regional.id, regional.region_class, regional.outcome_kind, \
+                regional.verdict, regional.uncertainty_reason, \
+                regional.quality, regional.evidence_class, \
+                (extract(epoch FROM regional.observed_at) * 1000)::bigint \
+                    AS observed_at_unix_ms, \
+                (extract(epoch FROM regional.expires_at) * 1000)::bigint \
+                    AS expires_at_unix_ms, \
+                regional.support_group_count, regional.managed_support \
+         FROM regional_assertions AS regional \
+         WHERE regional.tenant_id = $1 AND regional.assertion_id = $2 \
+         ORDER BY regional.region_class",
+    )
+    .bind(tenant_id)
+    .bind(assertion_id)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?;
+    if current.len() != expected.len() {
+        return Ok(false);
+    }
+
+    for regional in current {
+        let Some(expected) = expected.get(&regional.region_class) else {
+            return Ok(false);
+        };
+        if !regional_assertion_matches(&regional, &expected.assertion)? {
+            return Ok(false);
+        }
+        let current_support: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT observation_id, support_role \
+             FROM regional_assertion_support \
+             WHERE tenant_id = $1 AND regional_assertion_id = $2 \
+             ORDER BY observation_id, support_role",
+        )
+        .bind(tenant_id)
+        .bind(regional.id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+        if current_support != expected_support(&expected.assertion)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+async fn persist_regional_assertions(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    assertion_id: Uuid,
+    regional_assertions: &BTreeMap<String, DerivedRegionalAssertion>,
+) -> Result<(), JobError> {
+    if regional_assertions.is_empty() || regional_assertions.len() > 16 {
+        return Err(JobError::StorageInvariant);
+    }
+    for (region, derived) in regional_assertions {
+        let assertion = &derived.assertion;
+        if assertion.regions.len() != 1 || !assertion.regions.contains(region) {
+            return Err(JobError::StorageInvariant);
+        }
+        let regional_assertion_id = Uuid::new_v4();
+        let (outcome_kind, verdict, uncertainty_reason) = assertion_outcome(assertion)?;
+        let support_group_count =
+            i32::try_from(assertion.support_group_count).map_err(|_| JobError::StorageInvariant)?;
+        sqlx::query(
+            "INSERT INTO regional_assertions (\
+                id, tenant_id, assertion_id, region_class, outcome_kind, \
+                verdict, uncertainty_reason, quality, evidence_class, \
+                observed_at, expires_at, support_group_count, managed_support, \
+                created_at\
+             ) VALUES (\
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, \
+                to_timestamp($10::double precision / 1000.0), \
+                to_timestamp($11::double precision / 1000.0), $12, $13, \
+                clock_timestamp()\
+             )",
+        )
+        .bind(regional_assertion_id)
+        .bind(tenant_id)
+        .bind(assertion_id)
+        .bind(region)
+        .bind(outcome_kind)
+        .bind(verdict)
+        .bind(uncertainty_reason)
+        .bind(assertion_quality_name(assertion.quality))
+        .bind(evidence_class_name(assertion.evidence_class))
+        .bind(assertion.observed_at_unix_ms)
+        .bind(assertion.expires_at_unix_ms)
+        .bind(support_group_count)
+        .bind(assertion.managed_support)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
+
+        for (observation_id, support_role) in expected_support(assertion)? {
+            sqlx::query(
+                "INSERT INTO regional_assertion_support (\
+                    tenant_id, regional_assertion_id, observation_id, \
+                    support_role, created_at\
+                 ) VALUES ($1, $2, $3, $4, clock_timestamp())",
+            )
+            .bind(tenant_id)
+            .bind(regional_assertion_id)
+            .bind(observation_id)
+            .bind(&support_role)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|_| JobError::StorageInvariant)?;
+            insert_lineage(
+                transaction,
+                tenant_id,
+                "observation",
+                observation_id,
+                "regional_assertion",
+                regional_assertion_id,
+                &support_role,
+            )
+            .await?;
+        }
+        insert_lineage(
+            transaction,
+            tenant_id,
+            "regional_assertion",
+            regional_assertion_id,
+            "assertion",
+            assertion_id,
+            "regional_projection",
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn apply_watch_interpretation(
@@ -518,6 +814,13 @@ pub(crate) async fn apply_watch_interpretation(
                 key.tenant_id,
                 key.watch_target_id,
                 derived,
+            )
+            .await?;
+            elevate_watch_probe_priorities(
+                transaction,
+                key.tenant_id,
+                key.watch_target_id,
+                VerificationPriority::RegionalConflict,
             )
             .await?;
             return Ok(());
@@ -628,6 +931,19 @@ pub(crate) async fn apply_watch_interpretation(
         "account_state_candidate",
     )
     .await?;
+
+    if matches!(
+        confirmation,
+        AccountConfirmation::Pending(_) | AccountConfirmation::Suppressed("shared_only_absence")
+    ) {
+        elevate_watch_probe_priorities(
+            transaction,
+            key.tenant_id,
+            key.watch_target_id,
+            VerificationPriority::AccountConfirmation,
+        )
+        .await?;
+    }
 
     if let AccountConfirmation::Confirmed(confirmation_basis) = confirmation {
         let affected = sqlx::query(
@@ -1235,6 +1551,24 @@ fn assertion_matches(current: &CurrentAssertionRow, assertion: &DomainAssertion)
         && current.derivation_version == assertion.derivation_version
 }
 
+fn regional_assertion_matches(
+    current: &CurrentRegionalAssertionRow,
+    assertion: &DomainAssertion,
+) -> Result<bool, JobError> {
+    let (outcome_kind, verdict, uncertainty_reason) = assertion_outcome(assertion)?;
+    let support_group_count =
+        i32::try_from(assertion.support_group_count).map_err(|_| JobError::StorageInvariant)?;
+    Ok(current.outcome_kind == outcome_kind
+        && current.verdict.as_deref() == verdict
+        && current.uncertainty_reason.as_deref() == uncertainty_reason
+        && current.quality == assertion_quality_name(assertion.quality)
+        && current.evidence_class == evidence_class_name(assertion.evidence_class)
+        && current.observed_at_unix_ms == assertion.observed_at_unix_ms
+        && current.expires_at_unix_ms == assertion.expires_at_unix_ms
+        && current.support_group_count == support_group_count
+        && current.managed_support == assertion.managed_support)
+}
+
 fn assertion_outcome(
     assertion: &DomainAssertion,
 ) -> Result<(&'static str, Option<&'static str>, Option<&'static str>), JobError> {
@@ -1462,6 +1796,19 @@ mod tests {
         assert_eq!(regional.len(), 2);
         assert_eq!(regional[0].region_class.as_str(), "jp");
         assert_eq!(regional[1].region_class.as_str(), "us");
+    }
+
+    #[test]
+    fn verification_priority_prefers_conflicts_then_account_confirmation() {
+        let routine = VerificationPriority::from_persisted_state(false, false);
+        let account = VerificationPriority::from_persisted_state(false, true);
+        let conflict = VerificationPriority::from_persisted_state(true, true);
+
+        assert_eq!(routine.value(), 0);
+        assert_eq!(account.value(), 50);
+        assert_eq!(conflict.value(), 100);
+        assert!(routine < account);
+        assert!(account < conflict);
     }
 
     #[test]
