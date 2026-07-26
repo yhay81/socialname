@@ -3,10 +3,11 @@
 `socialname-server` is the operable Axum/Tower process boundary for the managed
 SocialName product. It embeds forward-only PostgreSQL migrations, provides
 explicit workspace/API-key operator commands, exposes authenticated private
-workspace/search/watch resources, and provides ordered SSE replay. Notification
-and other product routes remain closed until their ordered roadmap slices add
-authorization, storage use, lineage, and failure behavior end to end. Managed
-network execution remains in the separate signed worker.
+workspace/search/watch resources, bounded monitoring pages, and ordered SSE
+replay. Notification endpoint administration and other product routes remain
+closed until their ordered roadmap slices add authorization, storage use,
+lineage, and failure behavior end to end. Managed network execution remains in
+the separate signed worker.
 
 The server depends on `socialname-protocol`; it does not make the protocol,
 domain, or engine depend on HTTP or persistence.
@@ -72,9 +73,11 @@ GET /v1/searches/{search_id}
 GET /v1/searches/{search_id}/events
 DELETE /v1/searches/{search_id}
 POST /v1/watches
+GET /v1/watches
 GET /v1/watches/{watch_id}
 PATCH /v1/watches/{watch_id}
 DELETE /v1/watches/{watch_id}
+GET /v1/watches/{watch_id}/transitions
 ```
 
 The two health endpoints return a small `socialname.dev/api/v1` JSON document
@@ -100,12 +103,17 @@ polling windows, batches, keep-alives, and open connection count are bounded.
 The complete contract is in
 [Private search API and ordered event stream](search-api.md).
 
-Watch creation, patching, and deletion require `watch:write`; single-resource
-reads require `watch:read`. Creation verifies active private-history consent,
-known sites, and active tenant-local notification endpoints. Revision-checked
-patches prevent last-writer-wins schedule loss, while pause/delete atomically
-cancel older pending runs. The API process stores policy but performs no
-probe. See [Freshness-aware watch scheduling](watch-scheduling.md).
+Watch creation, patching, and deletion require `watch:write`; single-resource,
+bounded watch-list, and transition/delivery timeline reads require
+`watch:read`. Creation verifies active private-history consent, known sites,
+and active tenant-local notification endpoints. Revision-checked patches
+prevent last-writer-wins schedule loss, while pause/delete atomically cancel
+older pending runs. List and timeline pages use tenant-validated UUID keyset
+cursors, cap results at 50, and expose typed public resources without endpoint
+destinations, signatures, request digests, worker labels, or audit details.
+The API process stores policy but performs no probe. See
+[Freshness-aware watch scheduling](watch-scheduling.md) and
+[Minimal monitoring console](monitoring-console.md).
 
 Every other path returns a protocol `not_found` response. Unsupported methods
 return a protocol `invalid_request` response. Notification endpoint management,
@@ -178,4 +186,6 @@ forced RLS, non-owner authentication, workspace/search/watch isolation, key
 expiry/revocation/scope, consent, exact/conflicting idempotency, ordered SSE
 replay, watch revision/cancellation, bounded stream capacity, readiness,
 operator lifecycle, evidence/event immutability, notification safety, and
-deletion lineage.
+deletion lineage. It also proves monitoring read scope, tenant/cursor
+isolation, account-versus-measurement timelines, delivery retry/dead-letter
+state, and the absence of delivery secrets from public pages.

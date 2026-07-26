@@ -386,11 +386,21 @@ HTTP responses.
 
 ```http
 POST   /v1/watches
+GET    /v1/watches
 GET    /v1/watches/{watch_id}
 PATCH  /v1/watches/{watch_id}
 DELETE /v1/watches/{watch_id}
 GET    /v1/watches/{watch_id}/transitions
 ```
+
+The implemented console consumes only these versioned same-origin resources.
+Watch and transition pages are bounded and tenant-keyset paginated under
+`watch:read`; delivery details reuse the public protocol resource and omit
+destinations and attempt internals. A pasted scoped API key remains in page
+memory and is dropped on reload or disconnect. Topcoat 0.4.0 was evaluated at
+this replaceable boundary but not adopted because a second direct-data path
+would duplicate Axum authentication and forced-RLS authorization. See
+[Minimal monitoring console](monitoring-console.md).
 
 ### Rules and health
 
@@ -428,6 +438,7 @@ schemas/
 web/
 apps/
   desktop/                  Tauri shell and React presentation
+  console/                  same-origin monitoring presentation
 ```
 
 Crate dependencies should point inward: CLI, server, and worker depend on the
@@ -474,8 +485,8 @@ domain and engine; the engine does not depend on those applications.
 
 ### Web and operations
 
-- TypeScript and React with a small Vite application when the monitoring UI is
-  started.
+- TypeScript and React with a small Vite monitoring application consuming the
+  versioned same-origin API.
 - OpenAPI generated from or checked against protocol types.
 - OCI images for server and worker deployment.
 - Managed PostgreSQL and S3-compatible encrypted object storage.

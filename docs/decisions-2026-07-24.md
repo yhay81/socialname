@@ -149,6 +149,12 @@ so status does not diverge across design records.
   public-address-only, proxy-free, redirect-free, time-bounded, lease-fenced,
   and response-body-blind. Attempt history, audit, and lineage retain closed
   metadata rather than destinations or bodies.
+- Topcoat 0.4.0 was evaluated at the replaceable web boundary and rejected for
+  the Milestone 2 console because its experimental direct-data model would add
+  a second authentication/authorization path. The implemented React/Vite
+  client consumes only bounded same-origin Axum API v1 resources, keeps a
+  pasted scoped key in page memory only, and has no CORS or direct PostgreSQL
+  access.
 
 ## Detailed records
 
@@ -171,6 +177,7 @@ so status does not diverge across design records.
 - [Managed probe jobs and observation ingestion](managed-jobs.md)
 - [Assertion recomputation and transition persistence](assertion-recomputation.md)
 - [Signed webhook delivery](webhook-delivery.md)
+- [Minimal monitoring console](monitoring-console.md)
 
 ## Implementation baseline
 
@@ -219,7 +226,13 @@ so status does not diverge across design records.
     encrypt destinations, sign stable webhook payloads, enforce public-only
     outbound networking, fence bounded retries and dead-letter state, and
     preserve append-only attempts, audit, and lineage.
+17. **Done:** Add bounded watch-list and transition/delivery timeline API v1
+    resources under tenant-local forced RLS, then consume them from a
+    same-origin React/Vite monitoring console with memory-only scoped-key
+    handling and independent CI.
 
-Milestone 1's repository-completable software gate is done. Its external live
-rule evidence remains pending and all affected rules stay disabled. The next
-work in Milestone 2 is the minimal monitoring UI.
+Milestones 1 and 2 have completed their repository-completable software gates.
+Their external live-rule, destination-ownership, hosted-security, and managed
+deployment evidence remains pending, with affected capabilities disabled. The
+next work is the repository-completable deployment/operator boundary for
+Milestone 3 managed regional canaries and workers.

@@ -82,6 +82,9 @@ The first vertical slice is implemented in the repository:
   webhook enqueue, endpoint-bound destination encryption, stable signed
   payloads, bounded retry/dead-letter handling, append-only attempt history,
   audit, and lineage;
+- bounded tenant-RLS watch-list and transition/delivery timeline resources plus
+  a same-origin React/Vite monitoring console whose pasted scoped key remains
+  only in page memory;
 - a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache and
   cached-first sources, immutable observation persistence, source-preserving
   refresh streaming, freshness display, cancellation, and explicit
@@ -150,6 +153,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Signed webhook delivery](webhook-delivery.md) — logical deduplication,
   destination encryption, HMAC payloads, outbound SSRF policy, fenced retry,
   dead letter, audit, and operator boundaries.
+- [Minimal monitoring console](monitoring-console.md) — Topcoat evaluation,
+  bounded read API, memory-only browser credential policy, presentation, and
+  deployment gates.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native
@@ -176,11 +182,12 @@ These terms have distinct meanings and should not be used interchangeably:
 
 ## Current execution focus
 
-The current milestone is **First paid monitoring loop**. Managed observation,
-assertion recomputation, meaningful transitions, and deduplicated signed
-webhook delivery now form the tested backend loop. The next executable item in
-the canonical [`ROADMAP.md`](../ROADMAP.md) is a minimal monitoring UI without
-weakening the API boundary.
+The **First paid monitoring loop** software gate is complete. Managed
+observation, assertion recomputation, meaningful transitions, signed webhook
+delivery, and the minimal API-backed console form the tested loop. The current
+roadmap milestone is **Trust, governance, and multi-region operation**; its
+first repository-completable work defines a disabled-by-default regional
+deployment/operator boundary while real deployment remains external.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

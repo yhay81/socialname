@@ -24,7 +24,8 @@ API schema version; it is not silently treated as an additive v1 change.
 
 - search creation, search resources, and ordered search events;
 - predictable API errors;
-- watch creation, revision-checked patching, and watch resources;
+- watch creation, revision-checked patching, watch resources, and bounded
+  monitoring pages;
 - transitions;
 - notification endpoint creation/resources and delivery state;
 - authenticated private-workspace resources and API-key scope metadata.
@@ -159,6 +160,14 @@ active private-history consent, tenant-local endpoints, and known sites.
 Scheduling, freshness reuse, and worker coalescing are specified in
 [Freshness-aware watch scheduling](watch-scheduling.md).
 
+`WatchListPage` and `WatchTransitionPage` are read resources for the monitoring
+console. Each contains at most 50 items and an optional opaque keyset cursor
+that, when present, must equal the final returned resource ID. Duplicate IDs,
+cross-watch transitions, delivery/transition mismatches, deliveries from
+nonconfirmed transitions, and more than 16 deliveries for one transition fail
+validation. The server validates every supplied cursor in the same
+tenant-scoped forced-RLS transaction before continuing the ordering.
+
 ## Transitions and notifications
 
 `TransitionChange` is a closed tagged union:
@@ -234,4 +243,5 @@ revision and schedule rules, transition confirmation, shared-only absence,
 write-only notification destinations, delivery state consistency, bounded
 webhook construction, workspace metadata, closed unique API-key scopes,
 absence of key secret/digest fields, exact accepted private-search resources,
-and Cartesian target/progress consistency.
+Cartesian target/progress consistency, monitoring page bounds, cursor
+relations, and transition/delivery ownership.

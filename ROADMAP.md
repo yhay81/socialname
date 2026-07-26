@@ -64,8 +64,9 @@ Outcome: local CLI and desktop users receive fast, source-explicit,
 freshness-aware results from rules whose health is measured rather than
 assumed.
 
-Next executable item: add a minimal monitoring UI without weakening the API
-boundary.
+Next executable item: define the repository-completable regional deployment
+and operator boundary for Milestone 3 managed canaries and workers. Real
+deployment remains an external evidence gate.
 Milestone 1's software gate is complete only when both 1A and 1B software gates
 pass; its external evidence gate may remain pending with affected rules safely
 disabled.
@@ -449,7 +450,7 @@ adds the cache-before-local and cancellation paths. Together these satisfy the
 
 ## Milestone 2 — First paid monitoring loop
 
-Status: **Current**
+Status: **Software gate complete; external evidence pending**
 
 Outcome: a user can create a watch, the managed system observes it over time,
 derives a trustworthy transition, and delivers one auditable notification.
@@ -472,7 +473,7 @@ derives a trustworthy transition, and delivers one auditable notification.
       account change from measurement degradation.
 - [x] Deliver a deduplicated signed webhook with retry, dead-letter state, and
       audit history.
-- [ ] Add a minimal monitoring UI without weakening the API boundary.
+- [x] Add a minimal monitoring UI without weakening the API boundary.
 - [x] Provide one end-to-end test: watch creation -> managed observation ->
       assertion change -> transition -> exactly-once logical notification.
 
@@ -481,7 +482,7 @@ Protocol-slice evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-protocol
-# 28 unit tests and 6 public contract tests passed
+# 30 unit tests and 7 public contract tests passed
 cargo clippy --locked -p socialname-protocol --all-targets --all-features -- -D warnings
 ```
 
@@ -504,7 +505,7 @@ Server-runtime evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked -p socialname-server --all-targets
-# 25 library, 2 binary, and 1 PostgreSQL integration test passed
+# 26 library, 2 binary, and 1 PostgreSQL integration test passed
 cargo clippy --locked -p socialname-server --all-targets --all-features -- -D warnings
 cargo build --locked -p socialname-server
 ```
@@ -531,7 +532,7 @@ PostgreSQL-schema evidence:
 cargo fmt --all -- --check
 cargo run --locked -p socialname-server -- migrate
 cargo test --locked --workspace --all-targets
-# socialname-server: 25 library, 2 binary, and 1 PostgreSQL integration test passed
+# socialname-server: 26 library, 2 binary, and 1 PostgreSQL integration test passed
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo run --locked -p socialname-cli -- rules validate
 # validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
@@ -568,7 +569,7 @@ Authenticated-workspace evidence:
 cargo fmt --all -- --check
 cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-protocol -p socialname-server --all-targets
-# protocol: 28 unit + 6 contract; server: 25 library + 2 binary + 1 PostgreSQL
+# protocol: 30 unit + 7 contract; server: 26 library + 2 binary + 1 PostgreSQL
 cargo clippy --locked -p socialname-protocol -p socialname-server --all-targets --all-features -- -D warnings
 ```
 
@@ -663,7 +664,7 @@ Managed-job evidence:
 ```console
 cargo fmt --all -- --check
 cargo test --locked --workspace --all-targets
-# includes 25 server library, 2 server binary,
+# includes 26 server library, 2 server binary,
 # 14 worker library, and 4 worker binary tests
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 # With the three documented disposable PostgreSQL test URLs:
@@ -792,7 +793,42 @@ permanent 4xx, stale-lease fencing, lease-exhaustion dead letter, audit, and
 delivery/attempt lineage without persisting destination or body content.
 External destination ownership verification and production key management
 remain pending; absent keys or an encrypted verified active endpoint keep
-delivery disabled. The next executable item is the minimal monitoring UI.
+delivery disabled.
+
+Monitoring-console evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked -p socialname-protocol -p socialname-server --all-targets
+cargo clippy --locked -p socialname-protocol -p socialname-server --all-targets --all-features -- -D warnings
+# With disposable PostgreSQL 18 administrator/application/worker URLs:
+cargo test --locked -p socialname-server --test postgres_migrations -- --nocapture
+# 1 PostgreSQL 18 integration test passed
+cd apps/console
+npm ci
+npm test
+# 2 deterministic model tests passed
+npm run check
+npm run build
+```
+
+Two closed API v1 pages list watches and a selected watch's transition timeline
+through `watch:read`. UUID keyset cursors are validated inside the same
+tenant-scoped transaction; pages are capped at 50 and keep account changes,
+measurement health, confirmation, delivery retry, success, and dead letter as
+distinct typed state. The PostgreSQL 18 test proves scope enforcement,
+cross-tenant empty/not-found behavior, cursor continuation, and absence of
+destination, signature, body digest, worker, and audit data from the response.
+
+The React/TypeScript/Vite console consumes only same-origin `/v1` routes. It
+holds a pasted scoped key only in page memory, makes no CORS/direct-database
+path, creates and revision-updates watches, and presents loaded-page metrics
+without claiming global totals. Topcoat 0.4.0 was evaluated at the replaceable
+UI boundary and rejected for this slice because its experimental direct-data
+model would duplicate the established Axum authorization/RLS boundary. Hosted
+TLS, CSP, session authentication, endpoint ownership, and production
+accessibility evidence remain external. See
+[`docs/monitoring-console.md`](docs/monitoring-console.md).
 
 Software acceptance gate:
 
@@ -810,7 +846,7 @@ External evidence gate:
 
 ## Milestone 3 — Trust, governance, and multi-region operation
 
-Status: **Planned**
+Status: **Current; external deployment evidence pending**
 
 - [ ] Deploy managed canaries and workers in the required regions.
 - [ ] Add region-aware assertions, conflict escalation, and managed
@@ -986,3 +1022,9 @@ Choose these only when their trigger is measured:
   transport, fenced retry/dead-letter handling, append-only attempts, audit,
   and lineage with PostgreSQL 18 evidence; selected the minimal monitoring UI
   next.
+- **2026-07-26:** Added bounded tenant-RLS watch and transition/delivery pages
+  plus a same-origin memory-only-key React/Vite monitoring console,
+  deterministic model and PostgreSQL 18 boundary tests, and an independent CI
+  job. Completed the Milestone 2 software gate while leaving hosting,
+  destination ownership, managed deployment, and production policy as explicit
+  external evidence.

@@ -223,7 +223,9 @@ ingestion, account baselines and confirmed transitions, conflicting evidence,
 measurement degradation, invalid targets, revision cancellation, consent
 withdrawal, regional rule degradation, logical webhook enqueue, timeout/retry,
 same-ID success, permanent 4xx, lease reclamation, stale fencing, final
-dead-letter state, attempt audit, and lineage. Tests skip only when
+dead-letter state, attempt audit, lineage, and bounded watch/transition page
+reads with scope, tenant, cursor, account/measurement, and secret-exclusion
+checks. Tests skip only when
 `SOCIALNAME_TEST_DATABASE_URL` is
 absent; the CI job always supplies it. The administrator, application, and
 worker test URLs must identify the same disposable test database with their

@@ -4,7 +4,8 @@ SocialName is being rebuilt as a Rust-based public-identifier observability
 platform. The current implementation provides private local clients, one
 shared probe/classification engine, strict rule and trust artifacts, a local
 cache, authenticated managed search persistence, and a signed worker connected
-through fenced PostgreSQL jobs and atomic observation ingestion.
+through fenced PostgreSQL jobs and atomic observation ingestion, plus a
+same-origin monitoring console over the versioned API.
 
 > Turn public-identifier presence and change into fast, continuous,
 > evidence-backed, privacy-respecting, actionable knowledge.
@@ -63,13 +64,19 @@ person.
 - Consent/visibility-isolated managed job expansion, `SKIP LOCKED` claims,
   attempt fencing, bounded retry, continuous authorization checks, and
   idempotent observation/event/lineage ingestion under forced tenant RLS.
+- Revisioned watch scheduling, assertion/transition recomputation, signed
+  deduplicated webhook delivery, and bounded retry/dead-letter audit lineage.
+- A React/TypeScript/Vite monitoring console using tenant-RLS watch and
+  transition/delivery pages without direct database access or browser key
+  persistence.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The next implementation slice adds freshness-aware watch scheduling and
-equivalent-work coalescing before recomputing current assertions.
+The next repository-completable slice defines the regional deployment and
+operator boundary for Milestone 3 managed canaries and workers. Real regional
+deployment remains an external evidence gate.
 
 ## Build and verify
 
@@ -107,6 +114,18 @@ npm run tauri -- dev
 
 Windows and macOS CI compile the complete native desktop target separately.
 
+Run the local monitoring console against the loopback server (Node.js 24):
+
+```console
+cd apps/console
+npm ci
+npm run dev
+```
+
+The Vite development server proxies relative `/v1` requests to
+`127.0.0.1:8080`; production hosting, TLS, CSP, and session authentication are
+not claimed by the repository build.
+
 All representative rules remain `discovery` until the external managed
 multi-region live-canary gate passes. Local probing requires the deliberate
 `--allow-disabled` override; the managed worker has no equivalent bypass and
@@ -130,6 +149,7 @@ crates/
   socialname-testkit/        offline fixture verification
 apps/
   desktop/                   Tauri 2 + React application for Windows and macOS
+  console/                   same-origin React/Vite monitoring console
 rules/
   sites/                     one reviewed YAML rule per site
   canaries/                  time-bounded reviewed controls (currently empty)
@@ -142,7 +162,8 @@ Start with the [ultimate goal](docs/ultimate-goal.md), the
 [accepted decisions](docs/decisions-2026-07-24.md), and the
 [Site Rule v1 validation record](docs/site-rule-v1-validation.md).
 The desktop boundary and platform policy are recorded in
-[Desktop application](docs/desktop-application.md).
+[Desktop application](docs/desktop-application.md). The web monitoring
+boundary is recorded in [Minimal monitoring console](docs/monitoring-console.md).
 
 ## Legacy implementation
 
