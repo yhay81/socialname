@@ -59,7 +59,13 @@ async fn load_evidence_capsule(
          WHERE capsule.tenant_id = $1 \
            AND capsule.observation_id = $2 \
            AND capsule.structured_payload IS NOT NULL \
-           AND capsule.structured_retained_until > clock_timestamp()",
+           AND capsule.structured_retained_until > clock_timestamp() \
+           AND NOT EXISTS (\
+               SELECT 1 FROM deletion_resource_matches AS matched \
+               WHERE matched.tenant_id = capsule.tenant_id \
+                 AND matched.resource_id IN (capsule.id, capsule.observation_id) \
+                 AND matched.resource_kind IN ('evidence_capsule', 'observation')\
+           )",
     )
     .bind(principal.workspace_id)
     .bind(observation_id)

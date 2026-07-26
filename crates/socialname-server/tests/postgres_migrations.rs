@@ -32,7 +32,8 @@ use socialname_protocol::{
     ApiErrorCode, ApiErrorResponse, ConsentCollectionProfileVersion, ConsentGrantCreateRequest,
     ConsentGrantId, ConsentGrantListPage, ConsentGrantResource, ConsentGrantState,
     ConsentNoticeVersion, ConsentPurpose, ConsentSource, ConsentSubjectKind,
-    ConsentWithdrawalRequest, DefinitiveVerdict, EventId, EvidenceCapsuleId,
+    ConsentWithdrawalRequest, ContributorDeletionCreateRequest, DefinitiveVerdict,
+    DeletionRequestResource, DeletionRequestState, EventId, EvidenceCapsuleId,
     EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
     EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
     EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
@@ -45,14 +46,15 @@ use socialname_protocol::{
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
-    InitialRulePackTrust, RuleRegistryError, ServerConfig, apply_rule_pack_metadata, build_router,
-    migrate_database,
+    InitialRulePackTrust, RuleRegistryError, ServerConfig, TargetDeletionSelector,
+    VerifiedTargetDeletionInput, apply_rule_pack_metadata, build_router, migrate_database,
+    request_verified_target_deletion,
 };
 use socialname_worker::{
-    DeliveryError, DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets, DeliveryStore,
-    EvidenceRetentionOutcome, ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore,
-    ManagedRule, WatchPlanOutcome, WebhookRequest, WebhookSendError, WebhookTransport,
-    process_one_delivery,
+    DeletionProcessOutcome, DeletionStore, DeliveryError, DeliveryProcessConfig,
+    DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, EvidenceRetentionOutcome,
+    ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule,
+    WatchPlanOutcome, WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
 };
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -94,6 +96,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_managed_probe_job_boundary(&pool).await;
     assert_evidence_capsule_retention_boundary(&pool).await;
     assert_monitoring_console_boundary(&pool).await;
+    assert_lineage_backed_deletion_boundary(&pool).await;
 
     pool.close().await;
 }
@@ -115,7 +118,7 @@ async fn reset_test_state(pool: &PgPool) {
             notification_delivery_attempts, audit_events,
             data_lineage_edges, deletion_requests, deletion_tasks,
             deletion_receipts, suppression_tokens, evidence_capsules,
-            evidence_retention_receipts
+            evidence_retention_receipts, deletion_resource_matches
         CASCADE;
 
         DO $$
@@ -172,7 +175,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('audit_events'), ('data_lineage_edges'),
                 ('deletion_requests'), ('deletion_tasks'), ('deletion_receipts'),
                 ('suppression_tokens'), ('evidence_capsules'),
-                ('evidence_retention_receipts')
+                ('evidence_retention_receipts'), ('deletion_resource_matches')
         )
         SELECT count(*)
         FROM required
@@ -182,7 +185,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 44);
+    assert_eq!(required_tables, 45);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -191,7 +194,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 34);
+    assert_eq!(tenant_policies, 35);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -201,7 +204,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 34);
+    assert_eq!(forced_rls_tables, 35);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -473,6 +476,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "consent:read",
                 "consent:write",
                 "evidence:read",
+                "data:delete",
             ],
             state: "active",
             expires_at_unix_ms: None,
@@ -492,6 +496,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "consent:read",
                 "consent:write",
                 "evidence:read",
+                "data:delete",
             ],
             state: "active",
             expires_at_unix_ms: None,
@@ -626,17 +631,24 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             watches, watch_targets, watch_notification_endpoints,
             notification_endpoints, watch_runs, watch_run_targets,
             transitions, transition_basis, notification_deliveries,
-            rule_versions, evidence_capsules
+            rule_versions, evidence_capsules, suppression_tokens,
+            deletion_requests, deletion_resource_matches, observations,
+            data_lineage_edges, probe_jobs, probe_job_consumers
             TO socialname_migration_test_app;
         GRANT INSERT ON
             clients, consent_grants, consent_events,
             searches, search_targets, search_events, watches, watch_targets,
-            watch_notification_endpoints
+            watch_notification_endpoints, deletion_requests, deletion_tasks,
+            suppression_tokens, deletion_resource_matches, audit_events
             TO socialname_migration_test_app;
         GRANT UPDATE (last_seen_at) ON clients
             TO socialname_migration_test_app;
         GRANT UPDATE (withdrawn_at) ON consent_grants
             TO socialname_migration_test_app;
+        GRANT UPDATE (
+            state, next_attempt_at, delivered_at, last_error_code,
+            lease_owner, lease_started_at, lease_expires_at
+        ) ON notification_deliveries TO socialname_migration_test_app;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
             TO socialname_migration_test_app;
         GRANT UPDATE (state, completed_at) ON search_targets
@@ -653,6 +665,9 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT DELETE ON watch_notification_endpoints
             TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
+            TO socialname_migration_test_app;
+        GRANT EXECUTE ON FUNCTION
+            socialname_redact_deletion_job_targets(uuid, uuid)
             TO socialname_migration_test_app;
         "#,
     ))
@@ -1352,7 +1367,8 @@ async fn install_other_consent_member(pool: &PgPool) {
             '00000000-0000-0000-0000-0000000000b6', \
             '00000000-0000-0000-0000-000000000001', \
             '00000000-0000-0000-0000-000000000013', \
-            ARRAY['consent:read', 'consent:write'], 'active', clock_timestamp()\
+            ARRAY['consent:read', 'consent:write', 'data:delete'], \
+            'active', clock_timestamp()\
          )",
     )
     .execute(pool)
@@ -1761,7 +1777,10 @@ async fn assert_private_search_and_event_stream_boundary(administrator_pool: &Pg
             4_096,
             1,
         )
-        .unwrap(),
+        .unwrap()
+        .with_suppression_hmac_key(
+            socialname_server::SuppressionHmacKey::from_hex(&"11".repeat(32)).unwrap(),
+        ),
         application_pool.clone(),
     );
     let first_stream = bounded_router
@@ -2073,7 +2092,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
         .connect(&worker_database_url)
         .await
         .unwrap();
-    let store = JobStore::new(worker_pool.clone());
+    let store = JobStore::new(worker_pool.clone(), [0x11; 32]);
     let managed_rule = fixture.managed_rule;
     let binding = store.bind_rule(&managed_rule).await.unwrap();
     assert_eq!(binding.rule_version_id(), rule_version_id);
@@ -3303,7 +3322,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             )
             .await
             .unwrap_err(),
-        JobExecutionError::Cancelled
+        JobExecutionError::AuthorizationRevoked
     );
     assert_eq!(
         store
@@ -3326,6 +3345,150 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             .await
             .unwrap();
     assert_eq!(cancelled_job_state, "cancelled");
+
+    let active_shared_grant: Uuid = sqlx::query_scalar(
+        "SELECT id FROM consent_grants \
+         WHERE tenant_id = '00000000-0000-0000-0000-000000000001' \
+           AND membership_id = '00000000-0000-0000-0000-000000000011' \
+           AND purpose = 'shared_observation' AND withdrawn_at IS NULL \
+         ORDER BY granted_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let suppressed_search_request = SearchCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        targets: TargetSelection {
+            usernames: vec![Username::new("suppressed-future-target").unwrap()],
+            site_ids: vec![SiteId::new("managed-test").unwrap()],
+        },
+        mode: SearchMode::Remote,
+        sync: SyncPolicy::Shared,
+        consent_grant_id: Some(ConsentGrantId::new(active_shared_grant.to_string()).unwrap()),
+        maximum_age_ms: 60_000,
+        region_classes: vec![RegionClass::new("jp").unwrap()],
+    };
+    let suppressed_search = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "target-suppression-before-network"),
+        ],
+        serde_json::to_string(&suppressed_search_request).unwrap(),
+    )
+    .await;
+    assert_eq!(suppressed_search.status(), StatusCode::CREATED);
+    let suppressed_job_id = match store.expand_one(&binding, &managed_rule).await.unwrap() {
+        ExpandOutcome::Enqueued { job_id } => job_id,
+        other => panic!("expected a suppressible shared job, got {other:?}"),
+    };
+    let suppressed_claim = store
+        .claim(&binding, "worker-suppressed", Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(suppressed_claim.job_id(), suppressed_job_id);
+    let incompatible_target_suppression = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO suppression_tokens (\
+            id, tenant_id, purpose, token_hmac, key_fingerprint, \
+            created_at, expires_at\
+         ) VALUES (\
+            $1, $2, 'target_reingestion', $3, $4, \
+            clock_timestamp(), clock_timestamp() + interval '1 day'\
+         )",
+    )
+    .bind(incompatible_target_suppression)
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap())
+    .bind([0x55_u8; 32].as_slice())
+    .bind([0x22_u8; 32].as_slice())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        store
+            .execute_claim(
+                &suppressed_claim,
+                &managed_rule,
+                current_unix_ms(),
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap_err(),
+        JobExecutionError::AuthorizationUnavailable
+    );
+    sqlx::query("DELETE FROM suppression_tokens WHERE id = $1")
+        .bind(incompatible_target_suppression)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    let suppression_output = request_verified_target_deletion(
+        administrator_pool,
+        &[0x11; 32],
+        VerifiedTargetDeletionInput {
+            schema: "socialname.dev/verified-target-deletion/v1".to_owned(),
+            verification_reference: "externally-verified-empty-case".to_owned(),
+            selectors: vec![TargetDeletionSelector {
+                site_id: "managed-test".to_owned(),
+                normalized_username: "suppressed-future-target".to_owned(),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    assert!(suppression_output.deletion_request_ids.is_empty());
+    assert_eq!(
+        store
+            .execute_claim(
+                &suppressed_claim,
+                &managed_rule,
+                current_unix_ms(),
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap_err(),
+        JobExecutionError::TargetSuppressed
+    );
+    assert_eq!(
+        store
+            .record_target_suppressed(&suppressed_claim)
+            .await
+            .unwrap(),
+        JobDisposition::Cancelled
+    );
+    let suppressed_result: (String, String, i64, String, String, String, String, String) =
+        sqlx::query_as(
+            "SELECT job.state, job.normalized_username, \
+                (SELECT count(*) FROM observations WHERE probe_job_id = $1), \
+                target.state, target.requested_username, \
+                event.payload #>> '{data,failure,kind}', event.payload::text, \
+                search.state \
+         FROM probe_jobs AS job \
+         JOIN probe_job_consumers AS consumer \
+           ON consumer.probe_job_id = job.id \
+         JOIN search_targets AS target \
+           ON target.id = consumer.search_target_id \
+         JOIN searches AS search ON search.id = target.search_id \
+         JOIN search_events AS event \
+           ON event.search_target_id = target.id \
+          AND event.event_type = 'operational_failure' \
+         WHERE job.id = $1",
+        )
+        .bind(suppressed_job_id)
+        .fetch_one(administrator_pool)
+        .await
+        .unwrap();
+    assert_eq!(suppressed_result.0, "cancelled");
+    assert!(suppressed_result.1.starts_with("deleted-target-"));
+    assert_eq!(suppressed_result.2, 0);
+    assert_eq!(suppressed_result.3, "failed");
+    assert!(suppressed_result.4.starts_with("deleted-target-"));
+    assert_eq!(suppressed_result.5, "blocked");
+    assert!(!suppressed_result.6.contains("suppressed-future-target"));
+    assert_eq!(suppressed_result.7, "completed");
 
     let confirmation_watch = create_managed_watch(
         &application_pool,
@@ -3530,7 +3693,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             )
             .await
             .unwrap_err(),
-        JobExecutionError::Cancelled
+        JobExecutionError::AuthorizationRevoked
     );
     assert_eq!(
         store
@@ -3588,7 +3751,7 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
             )
             .await
             .unwrap_err(),
-        JobExecutionError::Cancelled
+        JobExecutionError::AuthorizationRevoked
     );
     assert_eq!(
         store
@@ -4084,7 +4247,7 @@ async fn assert_evidence_capsule_retention_boundary(administrator_pool: &PgPool)
         .connect(&worker_database_url)
         .await
         .unwrap();
-    let store = JobStore::new(worker_pool);
+    let store = JobStore::new(worker_pool, [0x11; 32]);
     assert_eq!(
         store.enforce_evidence_retention(0).await.unwrap_err(),
         JobError::InvalidConfiguration
@@ -4337,6 +4500,541 @@ async fn insert_retention_capsule_fixture(
         capsule_id,
         observation_id,
     }
+}
+
+async fn assert_lineage_backed_deletion_boundary(administrator_pool: &PgPool) {
+    let tenant_one = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let tenant_two = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+    let member_two = Uuid::parse_str("00000000-0000-0000-0000-000000000012").unwrap();
+    let member_three = Uuid::parse_str("00000000-0000-0000-0000-000000000013").unwrap();
+    let owner_grant: Uuid = sqlx::query_scalar(
+        "SELECT id FROM consent_grants \
+         WHERE tenant_id = $1 \
+           AND membership_id = '00000000-0000-0000-0000-000000000011' \
+           AND subject_kind = 'account' AND purpose = 'shared_observation' \
+           AND withdrawn_at IS NULL \
+         ORDER BY granted_at DESC, id DESC LIMIT 1",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let independent_grant = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO consent_grants (\
+            id, tenant_id, membership_id, subject_kind, purpose, \
+            collection_profile_version, notice_version, source, granted_at\
+         ) VALUES (\
+            $1, $2, $3, 'account', 'shared_observation', \
+            'profile-v1', 'notice-v1', 'api', clock_timestamp()\
+         )",
+    )
+    .bind(independent_grant)
+    .bind(tenant_one)
+    .bind(member_three)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let rule_version_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM rule_versions WHERE site_id = 'github' \
+         ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let deleted_job = Uuid::new_v4();
+    let retained_job = Uuid::new_v4();
+    let deleted_observation = Uuid::new_v4();
+    let retained_observation = Uuid::new_v4();
+    for (job_id, consent_grant_id, region, work_byte) in [
+        (deleted_job, independent_grant, "jp", 0xd1_u8),
+        (retained_job, owner_grant, "us", 0xd2_u8),
+    ] {
+        sqlx::query(
+            "INSERT INTO probe_jobs (\
+                id, tenant_id, normalized_username, site_id, rule_version_id, \
+                region_class, work_key_hash, consent_grant_id, visibility, state, \
+                available_at, created_at, updated_at, completed_at\
+             ) VALUES (\
+                $1, $2, 'deletion-recompute-target', 'github', $3, $4, $5, $6, \
+                'shared', 'succeeded', clock_timestamp(), clock_timestamp(), \
+                clock_timestamp(), clock_timestamp()\
+             )",
+        )
+        .bind(job_id)
+        .bind(tenant_one)
+        .bind(rule_version_id)
+        .bind(region)
+        .bind([work_byte; 32].as_slice())
+        .bind(consent_grant_id)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    }
+    for (observation_id, job_id, consent_grant_id, region, digest_byte) in [
+        (
+            deleted_observation,
+            deleted_job,
+            independent_grant,
+            "jp",
+            0xe1_u8,
+        ),
+        (
+            retained_observation,
+            retained_job,
+            owner_grant,
+            "us",
+            0xe2_u8,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO observations (\
+                id, tenant_id, probe_job_id, consent_grant_id, normalized_username, \
+                site_id, rule_version_id, outcome_kind, verdict, evidence_class, \
+                evidence_digest, source, producer_kind, visibility, region_class, \
+                rule_health_green, observed_at, expires_at, created_at\
+             ) VALUES (\
+                $1, $2, $3, $4, 'deletion-recompute-target', 'github', $5, \
+                'definitive', 'found', 'e4_structured_identity', $6, \
+                'managed_probe', 'managed_worker', 'shared', $7, true, \
+                clock_timestamp(), clock_timestamp() + interval '1 day', \
+                clock_timestamp()\
+             )",
+        )
+        .bind(observation_id)
+        .bind(tenant_one)
+        .bind(job_id)
+        .bind(consent_grant_id)
+        .bind(rule_version_id)
+        .bind([digest_byte; 32].as_slice())
+        .bind(region)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    }
+    let original_assertion = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO assertions (\
+            id, tenant_id, normalized_username, site_id, outcome_kind, verdict, \
+            quality, evidence_class, observed_at, expires_at, derivation_version, \
+            is_current, created_at\
+         ) VALUES (\
+            $1, $2, 'deletion-recompute-target', 'github', 'definitive', 'found', \
+            'corroborated', 'e4_structured_identity', clock_timestamp(), \
+            clock_timestamp() + interval '1 day', 'assertion/v1', true, \
+            clock_timestamp()\
+         )",
+    )
+    .bind(original_assertion)
+    .bind(tenant_one)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    for observation_id in [deleted_observation, retained_observation] {
+        sqlx::query(
+            "INSERT INTO assertion_support (\
+                tenant_id, assertion_id, observation_id, support_role, created_at\
+             ) VALUES ($1, $2, $3, 'supporting', clock_timestamp())",
+        )
+        .bind(tenant_one)
+        .bind(original_assertion)
+        .bind(observation_id)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO data_lineage_edges (\
+                id, tenant_id, parent_kind, parent_id, child_kind, child_id, \
+                purpose, created_at\
+             ) VALUES (\
+                $1, $2, 'observation', $3, 'assertion', $4, \
+                'supporting', clock_timestamp()\
+             )",
+        )
+        .bind(Uuid::new_v4())
+        .bind(tenant_one)
+        .bind(observation_id)
+        .bind(original_assertion)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    }
+
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let owner_token = api_key_token("ffffffffffffffff", 0x66);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let wrong_scope_token = api_key_token("cccccccccccccccc", 0x33);
+    let request = ContributorDeletionCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        consent_grant_id: ConsentGrantId::new(independent_grant.to_string()).unwrap(),
+    };
+    let wrong_scope = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/deletion-requests/contributor",
+        Some(&wrong_scope_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+
+    let incompatible_contributor_suppression = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO suppression_tokens (\
+            id, tenant_id, purpose, token_hmac, key_fingerprint, \
+            created_at, expires_at\
+         ) VALUES (\
+            $1, $2, 'contributor_reingestion', $3, $4, \
+            clock_timestamp(), clock_timestamp() + interval '1 day'\
+         )",
+    )
+    .bind(incompatible_contributor_suppression)
+    .bind(tenant_one)
+    .bind([0x44_u8; 32].as_slice())
+    .bind([0x22_u8; 32].as_slice())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let key_mismatch = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/deletion-requests/contributor",
+        Some(&owner_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(key_mismatch.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_api_error(key_mismatch, ApiErrorCode::Unavailable).await;
+    sqlx::query("DELETE FROM suppression_tokens WHERE id = $1")
+        .bind(incompatible_contributor_suppression)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+
+    let created = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/deletion-requests/contributor",
+        Some(&owner_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let location = created.headers()[LOCATION].to_str().unwrap().to_owned();
+    let resource: DeletionRequestResource =
+        serde_json::from_value(json_body(created).await).unwrap();
+    assert!(resource.validate().is_ok());
+    assert_eq!(resource.state, DeletionRequestState::Hidden);
+    assert_eq!(
+        resource.hide_by_unix_ms - resource.requested_at_unix_ms,
+        300_000
+    );
+    assert_eq!(
+        resource.support_withdrawal_by_unix_ms - resource.requested_at_unix_ms,
+        3_600_000
+    );
+    assert_eq!(
+        resource.primary_delete_by_unix_ms - resource.requested_at_unix_ms,
+        86_400_000
+    );
+    assert_eq!(
+        location,
+        format!(
+            "/v1/deletion-requests/{}",
+            resource.deletion_request_id.as_str()
+        )
+    );
+    assert!(resource.matched_observations >= 1);
+    assert!(resource.hidden_resources >= resource.matched_observations);
+    let deletion_request_id = Uuid::parse_str(resource.deletion_request_id.as_str()).unwrap();
+    let still_physical_but_hidden: (bool, bool) = sqlx::query_as(
+        "SELECT \
+            EXISTS(SELECT 1 FROM observations WHERE id = $1), \
+            EXISTS(\
+                SELECT 1 FROM deletion_resource_matches \
+                WHERE tenant_id = $2 AND deletion_request_id = $3 \
+                  AND resource_kind = 'observation' AND resource_id = $1\
+            )",
+    )
+    .bind(deleted_observation)
+    .bind(tenant_one)
+    .bind(deletion_request_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(still_physical_but_hidden, (true, true));
+
+    let replay = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/deletion-requests/contributor",
+        Some(&owner_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay: DeletionRequestResource = serde_json::from_value(json_body(replay).await).unwrap();
+    assert_eq!(replay.deletion_request_id, resource.deletion_request_id);
+    let foreign_get = server_request(
+        &application_pool,
+        &format!(
+            "/v1/deletion-requests/{}",
+            resource.deletion_request_id.as_str()
+        ),
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(foreign_get.status(), StatusCode::NOT_FOUND);
+    let suppressed_consent = post_consent_grant(
+        &application_pool,
+        &owner_token,
+        &consent_request(ConsentPurpose::SharedObservation),
+    )
+    .await;
+    assert_eq!(suppressed_consent.status(), StatusCode::CONFLICT);
+    assert_api_error(suppressed_consent, ApiErrorCode::Conflict).await;
+
+    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
+        .expect("worker database URL must accompany the PostgreSQL integration test");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&worker_database_url)
+        .await
+        .unwrap();
+    let deletion_store = DeletionStore::new(worker_pool.clone());
+    let outcome = deletion_store
+        .process_one("deletion-worker", Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        DeletionProcessOutcome::Processed {
+            deletion_request_id: processed,
+            processing_attempt: 1,
+            ..
+        } if processed == deletion_request_id
+    ));
+    let contributor_result: (bool, bool, String, i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+            EXISTS(SELECT 1 FROM observations WHERE id = $1), \
+            EXISTS(SELECT 1 FROM observations WHERE id = $2), \
+            (SELECT state FROM deletion_requests WHERE id = $3), \
+            (SELECT count(*) FROM assertions \
+             WHERE tenant_id = $4 AND normalized_username = 'deletion-recompute-target' \
+               AND site_id = 'github' AND is_current AND withdrawn_at IS NULL), \
+            (SELECT count(*) FROM assertion_support AS support \
+             JOIN assertions AS assertion \
+               ON assertion.tenant_id = support.tenant_id \
+              AND assertion.id = support.assertion_id \
+             WHERE assertion.tenant_id = $4 \
+               AND assertion.normalized_username = 'deletion-recompute-target' \
+               AND assertion.is_current \
+               AND support.observation_id = $2), \
+            (SELECT count(*) FROM deletion_tasks \
+             WHERE tenant_id = $4 AND deletion_request_id = $3 \
+               AND store_kind = 'primary' AND state = 'completed')",
+    )
+    .bind(deleted_observation)
+    .bind(retained_observation)
+    .bind(deletion_request_id)
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        contributor_result,
+        (false, true, "rebuilding".to_owned(), 1, 1, 1)
+    );
+    assert_eq!(
+        deletion_store
+            .process_one("deletion-worker", Duration::from_secs(60))
+            .await
+            .unwrap(),
+        DeletionProcessOutcome::Idle
+    );
+
+    let target_grant = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO consent_grants (\
+            id, tenant_id, membership_id, subject_kind, purpose, \
+            collection_profile_version, notice_version, source, granted_at\
+         ) VALUES (\
+            $1, $2, $3, 'account', 'shared_observation', \
+            'profile-v1', 'notice-v1', 'api', clock_timestamp()\
+         )",
+    )
+    .bind(target_grant)
+    .bind(tenant_two)
+    .bind(member_two)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let shared_target_job = Uuid::new_v4();
+    let private_target_job = Uuid::new_v4();
+    let shared_target_observation = Uuid::new_v4();
+    let private_target_observation = Uuid::new_v4();
+    for (job_id, visibility, work_byte) in [
+        (shared_target_job, "shared", 0xf1_u8),
+        (private_target_job, "private", 0xf2_u8),
+    ] {
+        sqlx::query(
+            "INSERT INTO probe_jobs (\
+                id, tenant_id, normalized_username, site_id, rule_version_id, \
+                region_class, work_key_hash, consent_grant_id, visibility, state, \
+                available_at, created_at, updated_at, completed_at\
+             ) VALUES (\
+                $1, $2, 'verified-target-alias', 'github', $3, 'jp', $4, $5, $6, \
+                'succeeded', clock_timestamp(), clock_timestamp(), \
+                clock_timestamp(), clock_timestamp()\
+             )",
+        )
+        .bind(job_id)
+        .bind(tenant_two)
+        .bind(rule_version_id)
+        .bind([work_byte; 32].as_slice())
+        .bind(target_grant)
+        .bind(visibility)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    }
+    for (observation_id, job_id, visibility, digest_byte) in [
+        (
+            shared_target_observation,
+            shared_target_job,
+            "shared",
+            0xa1_u8,
+        ),
+        (
+            private_target_observation,
+            private_target_job,
+            "private",
+            0xa2_u8,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO observations (\
+                id, tenant_id, probe_job_id, consent_grant_id, normalized_username, \
+                site_id, rule_version_id, outcome_kind, verdict, evidence_class, \
+                evidence_digest, source, producer_kind, visibility, region_class, \
+                rule_health_green, observed_at, expires_at, created_at\
+             ) VALUES (\
+                $1, $2, $3, $4, 'verified-target-alias', 'github', $5, \
+                'definitive', 'found', 'e4_structured_identity', $6, \
+                'managed_probe', 'managed_worker', $7, 'jp', true, \
+                clock_timestamp(), clock_timestamp() + interval '1 day', \
+                clock_timestamp()\
+             )",
+        )
+        .bind(observation_id)
+        .bind(tenant_two)
+        .bind(job_id)
+        .bind(target_grant)
+        .bind(rule_version_id)
+        .bind([digest_byte; 32].as_slice())
+        .bind(visibility)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    }
+    let target_input = VerifiedTargetDeletionInput {
+        schema: "socialname.dev/verified-target-deletion/v1".to_owned(),
+        verification_reference: "externally-verified-case-1".to_owned(),
+        selectors: vec![TargetDeletionSelector {
+            site_id: "github".to_owned(),
+            normalized_username: "verified-target-alias".to_owned(),
+        }],
+    };
+    let target_output =
+        request_verified_target_deletion(administrator_pool, &[0x11; 32], target_input.clone())
+            .await
+            .unwrap();
+    assert_eq!(target_output.matched_observations, 1);
+    assert_eq!(target_output.deletion_request_ids.len(), 1);
+    assert_eq!(target_output.suppressed_tenants, 2);
+    let replayed_target =
+        request_verified_target_deletion(administrator_pool, &[0x11; 32], target_input.clone())
+            .await
+            .unwrap();
+    assert_eq!(
+        replayed_target.request_group_id,
+        target_output.request_group_id
+    );
+    assert_eq!(
+        replayed_target.deletion_request_ids,
+        target_output.deletion_request_ids
+    );
+    let target_request_id = target_output.deletion_request_ids[0];
+    let target_storage: (i64, i32, bool, bool) = sqlx::query_as(
+        "SELECT \
+            (SELECT count(*) FROM suppression_tokens \
+             WHERE purpose = 'target_reingestion'), \
+            (SELECT octet_length(verification_reference_digest) \
+             FROM deletion_requests WHERE id = $1), \
+            (SELECT selector_ciphertext IS NULL \
+             FROM deletion_requests WHERE id = $1), \
+            EXISTS(SELECT 1 FROM observations WHERE id = $2)",
+    )
+    .bind(target_request_id)
+    .bind(private_target_observation)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(target_storage.0 >= 2);
+    assert_eq!(target_storage.1, 32);
+    assert!(target_storage.2);
+    assert!(target_storage.3);
+
+    let target_outcome = deletion_store
+        .process_one("deletion-worker", Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert!(matches!(
+        target_outcome,
+        DeletionProcessOutcome::Processed {
+            deletion_request_id: processed,
+            ..
+        } if processed == target_request_id
+    ));
+    let target_result: (bool, bool, String) = sqlx::query_as(
+        "SELECT \
+            EXISTS(SELECT 1 FROM observations WHERE id = $1), \
+            EXISTS(SELECT 1 FROM observations WHERE id = $2), \
+            (SELECT state FROM deletion_requests WHERE id = $3)",
+    )
+    .bind(shared_target_observation)
+    .bind(private_target_observation)
+    .bind(target_request_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(target_result, (false, true, "rebuilding".to_owned()));
+    let replayed_after_purge =
+        request_verified_target_deletion(administrator_pool, &[0x11; 32], target_input)
+            .await
+            .unwrap();
+    assert_eq!(
+        replayed_after_purge.request_group_id,
+        target_output.request_group_id
+    );
+    assert_eq!(
+        replayed_after_purge.deletion_request_ids,
+        target_output.deletion_request_ids
+    );
+    assert_eq!(replayed_after_purge.matched_observations, 1);
+
+    deletion_store.close().await;
+    application_pool.close().await;
 }
 
 fn delivery_secrets() -> DeliverySecrets {
@@ -5010,7 +5708,8 @@ async fn install_worker_role(pool: &PgPool) {
             regional_assertions, regional_assertion_support, transitions,
             transition_basis, notification_deliveries,
             notification_delivery_attempts, evidence_capsules,
-            evidence_retention_receipts
+            evidence_retention_receipts, deletion_requests,
+            deletion_resource_matches, deletion_tasks, suppression_tokens
             TO socialname_migration_test_worker;
         GRANT INSERT ON
             search_events, probe_jobs, probe_job_consumers, observations,
@@ -5022,7 +5721,9 @@ async fn install_worker_role(pool: &PgPool) {
             TO socialname_migration_test_worker;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
             TO socialname_migration_test_worker;
-        GRANT UPDATE (normalized_username, state, completed_at) ON search_targets
+        GRANT UPDATE (
+            requested_username, normalized_username, state, completed_at
+        ) ON search_targets
             TO socialname_migration_test_worker;
         GRANT UPDATE (next_run_at, updated_at) ON watches
             TO socialname_migration_test_worker;
@@ -5033,6 +5734,8 @@ async fn install_worker_role(pool: &PgPool) {
             TO socialname_migration_test_worker;
         GRANT UPDATE (is_current) ON assertions
             TO socialname_migration_test_worker;
+        GRANT UPDATE (is_current, withdrawn_at) ON assertions
+            TO socialname_migration_test_worker;
         GRANT UPDATE (
             confirmation_status, confirmation_basis, pending_reason,
             suppression_reason
@@ -5040,16 +5743,34 @@ async fn install_worker_role(pool: &PgPool) {
         GRANT UPDATE (state, reserved_bytes, completed_at) ON watch_runs
             TO socialname_migration_test_worker;
         GRANT UPDATE (
-            state, probe_job_id, observation_id, reserved_bytes, completed_at
+            state, probe_job_id, observation_id, observation_deleted_at,
+            reserved_bytes, completed_at
         ) ON watch_run_targets TO socialname_migration_test_worker;
         GRANT UPDATE (
-            state, attempt_count, available_at, lease_owner, lease_expires_at,
-            last_error_code, priority, updated_at, completed_at
+            normalized_username, work_key_hash, state, attempt_count,
+            available_at, lease_owner, lease_expires_at, last_error_code,
+            priority, updated_at, completed_at
         ) ON probe_jobs TO socialname_migration_test_worker;
         GRANT UPDATE (
             state, attempt_count, next_attempt_at, delivered_at,
             last_error_code, lease_owner, lease_started_at, lease_expires_at
         ) ON notification_deliveries TO socialname_migration_test_worker;
+        GRANT UPDATE (
+            state, support_withdrawn_at, primary_completed_at,
+            lease_owner, lease_expires_at, last_error_code
+        ) ON deletion_requests TO socialname_migration_test_worker;
+        GRANT UPDATE (support_withdrawn_at, primary_deleted_at)
+            ON deletion_resource_matches TO socialname_migration_test_worker;
+        GRANT UPDATE (
+            state, attempt_count, completed_at, last_error_code
+        ) ON deletion_tasks TO socialname_migration_test_worker;
+        GRANT DELETE ON
+            assertion_support, regional_assertion_support,
+            transition_basis, notification_delivery_attempts,
+            notification_deliveries, transitions, regional_assertions,
+            assertions, evidence_retention_receipts, evidence_capsules,
+            search_events, observations, data_lineage_edges
+            TO socialname_migration_test_worker;
         GRANT EXECUTE ON FUNCTION
             socialname_worker_resolve_rule(
                 text, bytea, bytea, text, bytea, bigint, bytea, bigint
@@ -5061,7 +5782,8 @@ async fn install_worker_role(pool: &PgPool) {
             socialname_worker_claim_job(uuid, text, text, integer),
             socialname_worker_lock_claim_consent(uuid, integer, text),
             socialname_worker_claim_webhook_delivery(text, integer, integer),
-            socialname_worker_enforce_evidence_retention(integer)
+            socialname_worker_enforce_evidence_retention(integer),
+            socialname_worker_claim_deletion(text, integer)
             TO socialname_migration_test_worker;
         "#,
     ))
@@ -5366,6 +6088,9 @@ fn test_server_config() -> ServerConfig {
         8,
     )
     .unwrap()
+    .with_suppression_hmac_key(
+        socialname_server::SuppressionHmacKey::from_hex(&"11".repeat(32)).unwrap(),
+    )
 }
 
 fn api_key_token(prefix: &str, secret_byte: u8) -> String {

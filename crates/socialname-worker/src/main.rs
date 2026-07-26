@@ -15,9 +15,9 @@ use socialname_canary::{RulePackMetadataVerifier, RulePackRolloutStage, RulePack
 use socialname_engine::SearchResult;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_worker::{
-    DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, ExpandOutcome,
-    JobDisposition, JobExecutionError, JobStore, ManagedRule, ManagedWebhookTransport,
-    WatchPlanOutcome, WorkerError, process_one_delivery,
+    DeletionProcessOutcome, DeletionStore, DeliveryProcessConfig, DeliveryProcessOutcome,
+    DeliverySecrets, DeliveryStore, ExpandOutcome, JobDisposition, JobExecutionError, JobStore,
+    ManagedRule, ManagedWebhookTransport, WatchPlanOutcome, WorkerError, process_one_delivery,
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -44,6 +44,8 @@ enum Command {
     DeliverOne(DeliverOneArgs),
     /// Purge one bounded batch of Evidence Capsule data whose DB deadline has passed.
     EnforceRetention(EnforceRetentionArgs),
+    /// Withdraw support and purge primary data for at most one deletion request.
+    ProcessDeletion(ProcessDeletionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -118,6 +120,18 @@ struct EnforceRetentionArgs {
     allow_live: bool,
 }
 
+#[derive(Debug, Args)]
+struct ProcessDeletionArgs {
+    /// Closed lowercase label recorded as the fenced deletion lease owner.
+    #[arg(long)]
+    worker_id: String,
+    #[arg(long, default_value_t = 60)]
+    lease_seconds: u64,
+    /// Acknowledge irreversible deletion of lineage-selected primary data.
+    #[arg(long)]
+    allow_live: bool,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProbeInput {
@@ -161,6 +175,16 @@ struct EnforceRetentionOutput {
     expired_receipts_deleted: u32,
 }
 
+#[derive(Serialize)]
+struct ProcessDeletionOutput {
+    schema: &'static str,
+    status: &'static str,
+    deletion_request_id: Option<Uuid>,
+    processing_attempt: Option<u32>,
+    matched_resources: Option<u32>,
+    recomputed_targets: Option<u32>,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -175,7 +199,48 @@ async fn run() -> Result<()> {
         Command::ProcessOne(args) => process_one(args).await,
         Command::DeliverOne(args) => deliver_one(args).await,
         Command::EnforceRetention(args) => enforce_retention(args).await,
+        Command::ProcessDeletion(args) => process_deletion(args).await,
     }
+}
+
+async fn process_deletion(args: ProcessDeletionArgs) -> Result<()> {
+    if !args.allow_live {
+        bail!("deletion processing requires --allow-live");
+    }
+    validate_worker_id(&args.worker_id)?;
+    if !(5..=300).contains(&args.lease_seconds) {
+        bail!("deletion lease must be between 5 and 300 seconds");
+    }
+    let store = DeletionStore::connect_from_env().await?;
+    let outcome = store
+        .process_one(&args.worker_id, Duration::from_secs(args.lease_seconds))
+        .await;
+    store.close().await;
+    let output = match outcome? {
+        DeletionProcessOutcome::Idle => ProcessDeletionOutput {
+            schema: "socialname.dev/deletion-process/v1",
+            status: "idle",
+            deletion_request_id: None,
+            processing_attempt: None,
+            matched_resources: None,
+            recomputed_targets: None,
+        },
+        DeletionProcessOutcome::Processed {
+            deletion_request_id,
+            processing_attempt,
+            matched_resources,
+            recomputed_targets,
+        } => ProcessDeletionOutput {
+            schema: "socialname.dev/deletion-process/v1",
+            status: "processed",
+            deletion_request_id: Some(deletion_request_id),
+            processing_attempt: Some(processing_attempt),
+            matched_resources: Some(matched_resources),
+            recomputed_targets: Some(recomputed_targets),
+        },
+    };
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
 }
 
 async fn enforce_retention(args: EnforceRetentionArgs) -> Result<()> {
@@ -358,6 +423,12 @@ async fn process_one_with_store(
             Err(JobExecutionError::Worker(WorkerError::Cancelled))
             | Err(JobExecutionError::Cancelled) => {
                 bail!("managed job execution was cancelled; its lease will expire safely");
+            }
+            Err(JobExecutionError::AuthorizationRevoked) => {
+                store.record_authorization_revoked(&claim).await?
+            }
+            Err(JobExecutionError::TargetSuppressed) => {
+                store.record_target_suppressed(&claim).await?
             }
             Err(JobExecutionError::AuthorizationUnavailable) => {
                 bail!(

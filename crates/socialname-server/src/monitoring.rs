@@ -215,6 +215,12 @@ async fn load_transition_page(
            ON target.tenant_id = transition.tenant_id \
           AND target.id = transition.watch_target_id \
          WHERE transition.tenant_id = $1 AND target.watch_id = $2 \
+           AND NOT EXISTS (\
+               SELECT 1 FROM deletion_resource_matches AS matched \
+               WHERE matched.tenant_id = transition.tenant_id \
+                 AND matched.resource_kind = 'transition' \
+                 AND matched.resource_id = transition.id\
+           ) \
            AND (\
                 $3::uuid IS NULL \
                 OR EXISTS (\
@@ -283,7 +289,13 @@ async fn ensure_transition_cursor(
               ON target.tenant_id = transition.tenant_id \
              AND target.id = transition.watch_target_id \
             WHERE transition.tenant_id = $1 AND transition.id = $2 \
-              AND target.watch_id = $3\
+              AND target.watch_id = $3 \
+              AND NOT EXISTS (\
+                  SELECT 1 FROM deletion_resource_matches AS matched \
+                  WHERE matched.tenant_id = transition.tenant_id \
+                    AND matched.resource_kind = 'transition' \
+                    AND matched.resource_id = transition.id\
+              )\
          )",
     )
     .bind(tenant_id)
@@ -326,7 +338,13 @@ async fn load_transition_entry(
          LEFT JOIN rule_versions AS version \
            ON version.id = transition.rule_version_id \
          WHERE transition.tenant_id = $1 AND transition.id = $2 \
-           AND target.watch_id = $3",
+           AND target.watch_id = $3 \
+           AND NOT EXISTS (\
+               SELECT 1 FROM deletion_resource_matches AS matched \
+               WHERE matched.tenant_id = transition.tenant_id \
+                 AND matched.resource_kind = 'transition' \
+                 AND matched.resource_id = transition.id\
+           )",
     )
     .bind(tenant_id)
     .bind(transition_id)
@@ -338,6 +356,12 @@ async fn load_transition_entry(
         "SELECT observation_id \
          FROM transition_basis \
          WHERE tenant_id = $1 AND transition_id = $2 \
+           AND NOT EXISTS (\
+               SELECT 1 FROM deletion_resource_matches AS matched \
+               WHERE matched.tenant_id = transition_basis.tenant_id \
+                 AND matched.resource_kind = 'observation' \
+                 AND matched.resource_id = transition_basis.observation_id\
+           ) \
          ORDER BY observation_id",
     )
     .bind(tenant_id)
@@ -364,6 +388,12 @@ async fn load_transition_entry(
            ON endpoint.tenant_id = delivery.tenant_id \
           AND endpoint.id = delivery.endpoint_id \
          WHERE delivery.tenant_id = $1 AND delivery.transition_id = $2 \
+           AND NOT EXISTS (\
+               SELECT 1 FROM deletion_resource_matches AS matched \
+               WHERE matched.tenant_id = delivery.tenant_id \
+                 AND matched.resource_kind = 'notification_delivery' \
+                 AND matched.resource_id = delivery.id\
+           ) \
          ORDER BY delivery.created_at, delivery.id",
     )
     .bind(tenant_id)

@@ -2,6 +2,7 @@
 
 mod common;
 mod consent;
+mod deletion;
 mod error;
 mod evidence;
 mod monitoring;
@@ -14,17 +15,22 @@ mod workspace;
 
 pub use common::{
     API_V1_SCHEMA, ApiKeyId, ConsentGrantId, ConsentSubjectId, DefinitiveVerdict,
-    DeliveryErrorCode, EmailAddress, EventId, EvidenceCapsuleId, EvidenceClass, EvidenceDigest,
-    Freshness, FreshnessState, HttpsUrl, IdempotencyKey, IdentifierError, InstallationId,
-    NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey, ObservationId,
-    ProtocolVersion, RegionClass, RequestId, ResultSource, RuleHash, RuleHealthStatus, SearchId,
-    SearchMode, SiteId, SyncPolicy, Target, TargetSelection, TransitionId, Username, Validate,
-    ValidationCode, ValidationErrors, ValidationIssue, WatchId, WorkspaceId,
+    DeletionRequestId, DeliveryErrorCode, EmailAddress, EventId, EvidenceCapsuleId, EvidenceClass,
+    EvidenceDigest, Freshness, FreshnessState, HttpsUrl, IdempotencyKey, IdentifierError,
+    InstallationId, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
+    ObservationId, ProtocolVersion, RegionClass, RequestId, ResultSource, RuleHash,
+    RuleHealthStatus, SearchId, SearchMode, SiteId, SyncPolicy, Target, TargetSelection,
+    TransitionId, Username, Validate, ValidationCode, ValidationErrors, ValidationIssue, WatchId,
+    WorkspaceId,
 };
 pub use consent::{
     ConsentCollectionProfileVersion, ConsentGrantCreateRequest, ConsentGrantListPage,
     ConsentGrantResource, ConsentGrantState, ConsentNoticeVersion, ConsentPurpose, ConsentSource,
     ConsentSubjectKind, ConsentWithdrawalRequest, MAX_CONSENT_PAGE_ITEMS,
+};
+pub use deletion::{
+    ContributorDeletionCreateRequest, DeletionRequestResource, DeletionRequestState, DeletionScope,
+    MAXIMUM_DELETION_MATCH_COUNT,
 };
 pub use error::{ApiError, ApiErrorCode, ApiErrorResponse, FieldViolation};
 pub use evidence::{

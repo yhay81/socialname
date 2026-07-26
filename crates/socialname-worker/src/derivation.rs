@@ -421,6 +421,12 @@ pub(crate) async fn recompute_assertion(
            AND consent.granted_at <= \
                to_timestamp($5::double precision / 1000.0) \
            AND consent.withdrawn_at IS NULL \
+           AND NOT EXISTS (\
+               SELECT 1 FROM deletion_resource_matches AS matched \
+               WHERE matched.tenant_id = observation.tenant_id \
+                 AND matched.resource_kind = 'observation' \
+                 AND matched.resource_id = observation.id\
+           ) \
            AND (\
                consent.expires_at IS NULL \
                OR consent.expires_at > \
@@ -444,6 +450,20 @@ pub(crate) async fn recompute_assertion(
     .await
     .map_err(|_| JobError::StorageInvariant)?;
     if rows.is_empty() {
+        sqlx::query(
+            "UPDATE assertions \
+             SET is_current = false, withdrawn_at = clock_timestamp() \
+             WHERE tenant_id = $1 \
+               AND normalized_username = $2 \
+               AND site_id = $3 \
+               AND is_current AND withdrawn_at IS NULL",
+        )
+        .bind(key.tenant_id)
+        .bind(key.normalized_username)
+        .bind(key.site_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?;
         return Ok(None);
     }
 

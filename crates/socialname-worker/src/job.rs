@@ -1,5 +1,6 @@
 use std::{env, fmt, time::Duration};
 
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use socialname_domain::{EvidenceClass as DomainEvidenceClass, InconclusiveReason, Verdict};
 use socialname_engine::SearchResult;
@@ -25,6 +26,7 @@ use crate::derivation::{
 use crate::{ManagedRule, WorkerError};
 
 pub const WORKER_DATABASE_URL_ENV: &str = "SOCIALNAME_WORKER_DATABASE_URL";
+pub const SUPPRESSION_HMAC_KEY_ENV: &str = "SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,6 +51,7 @@ const MAXIMUM_RETENTION_BATCH: u32 = 1_000;
 #[derive(Clone)]
 pub struct JobStore {
     pool: PgPool,
+    suppression_hmac_key: [u8; 32],
 }
 
 impl fmt::Debug for JobStore {
@@ -59,12 +62,16 @@ impl fmt::Debug for JobStore {
 
 impl JobStore {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, suppression_hmac_key: [u8; 32]) -> Self {
+        Self {
+            pool,
+            suppression_hmac_key,
+        }
     }
 
     pub async fn connect_from_env() -> Result<Self, JobError> {
-        Ok(Self::new(connect_worker_pool_from_env().await?))
+        let key = suppression_hmac_key_from_env()?;
+        Ok(Self::new(connect_worker_pool_from_env().await?, key))
     }
 
     pub async fn close(&self) {
@@ -382,21 +389,28 @@ impl JobStore {
         .await
         .map_err(|_| JobError::StorageInvariant)?;
         let fresh_observation: Option<FreshObservation> = sqlx::query_as(
-            "SELECT id, outcome_kind FROM observations \
-             WHERE tenant_id = $1 \
-               AND normalized_username = $2 \
-               AND site_id = $3 \
-               AND rule_version_id = $4 \
-               AND region_class = $5 \
-               AND consent_grant_id = $6 \
-               AND visibility = 'private' \
-               AND source = 'managed_probe' \
-               AND producer_kind = 'managed_worker' \
-               AND rule_health_green \
-               AND expires_at > clock_timestamp() \
-               AND observed_at >= clock_timestamp() \
+            "SELECT observation.id, observation.outcome_kind \
+             FROM observations AS observation \
+             WHERE observation.tenant_id = $1 \
+               AND observation.normalized_username = $2 \
+               AND observation.site_id = $3 \
+               AND observation.rule_version_id = $4 \
+               AND observation.region_class = $5 \
+               AND observation.consent_grant_id = $6 \
+               AND observation.visibility = 'private' \
+               AND observation.source = 'managed_probe' \
+               AND observation.producer_kind = 'managed_worker' \
+               AND observation.rule_health_green \
+               AND observation.expires_at > clock_timestamp() \
+               AND observation.observed_at >= clock_timestamp() \
                    - ($7::bigint::text || ' milliseconds')::interval \
-             ORDER BY observed_at DESC, id \
+               AND NOT EXISTS (\
+                   SELECT 1 FROM deletion_resource_matches AS matched \
+                   WHERE matched.tenant_id = observation.tenant_id \
+                     AND matched.resource_kind = 'observation' \
+                     AND matched.resource_id = observation.id\
+               ) \
+             ORDER BY observation.observed_at DESC, observation.id \
              LIMIT 1",
         )
         .bind(locked.tenant_id)
@@ -971,19 +985,33 @@ impl JobStore {
         claim
             .matches_rule(rule)
             .map_err(JobExecutionError::Worker)?;
-        if !self
-            .claim_is_authorized(claim)
+        match self
+            .claim_authorization(claim)
             .await
             .map_err(|_| JobExecutionError::AuthorizationUnavailable)?
         {
-            return Err(JobExecutionError::Cancelled);
+            ClaimAuthorization::Authorized => {}
+            ClaimAuthorization::Revoked => {
+                return Err(JobExecutionError::AuthorizationRevoked);
+            }
+            ClaimAuthorization::TargetSuppressed => {
+                return Err(JobExecutionError::TargetSuppressed);
+            }
         }
         tokio::select! {
             biased;
             () = shutdown.cancelled() => Err(JobExecutionError::Cancelled),
             authorization = self.wait_until_unauthorized(claim) => {
                 match authorization {
-                    Ok(()) => Err(JobExecutionError::Cancelled),
+                    Ok(ClaimAuthorization::Revoked) => {
+                        Err(JobExecutionError::AuthorizationRevoked)
+                    }
+                    Ok(ClaimAuthorization::TargetSuppressed) => {
+                        Err(JobExecutionError::TargetSuppressed)
+                    }
+                    Ok(ClaimAuthorization::Authorized) => {
+                        Err(JobExecutionError::AuthorizationUnavailable)
+                    }
                     Err(_) => Err(JobExecutionError::AuthorizationUnavailable),
                 }
             }
@@ -1025,6 +1053,67 @@ impl JobStore {
         .await
     }
 
+    pub async fn record_authorization_revoked(
+        &self,
+        claim: &JobClaim,
+    ) -> Result<JobDisposition, JobError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        set_tenant(&mut transaction, claim.tenant_id).await?;
+        match lock_claim(&mut transaction, claim).await? {
+            ClaimState::Final => {
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|_| JobError::DatabaseUnavailable)?;
+                Ok(JobDisposition::AlreadyFinal)
+            }
+            ClaimState::Active => {
+                cancel_orphaned_claim(&mut transaction, claim).await?;
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|_| JobError::DatabaseUnavailable)?;
+                Ok(JobDisposition::Cancelled)
+            }
+        }
+    }
+
+    pub async fn record_target_suppressed(
+        &self,
+        claim: &JobClaim,
+    ) -> Result<JobDisposition, JobError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        set_tenant(&mut transaction, claim.tenant_id).await?;
+        match lock_claim(&mut transaction, claim).await? {
+            ClaimState::Final => {
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|_| JobError::DatabaseUnavailable)?;
+                Ok(JobDisposition::AlreadyFinal)
+            }
+            ClaimState::Active => {
+                if !self.target_is_suppressed(&mut transaction, claim).await? {
+                    return Err(JobError::StorageInvariant);
+                }
+                finalize_target_suppressed(&mut transaction, claim).await?;
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|_| JobError::DatabaseUnavailable)?;
+                Ok(JobDisposition::Cancelled)
+            }
+        }
+    }
+
     async fn record_observation(
         &self,
         claim: &JobClaim,
@@ -1050,6 +1139,14 @@ impl JobStore {
         ensure_rule_available(&mut transaction, claim).await?;
         if !lock_active_consent(&mut transaction, claim).await? {
             cancel_orphaned_claim(&mut transaction, claim).await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+            return Ok(JobDisposition::Cancelled);
+        }
+        if self.target_is_suppressed(&mut transaction, claim).await? {
+            finalize_target_suppressed(&mut transaction, claim).await?;
             transaction
                 .commit()
                 .await
@@ -1319,6 +1416,14 @@ impl JobStore {
                 .map_err(|_| JobError::DatabaseUnavailable)?;
             return Ok(JobDisposition::Cancelled);
         }
+        if self.target_is_suppressed(&mut transaction, claim).await? {
+            finalize_target_suppressed(&mut transaction, claim).await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+            return Ok(JobDisposition::Cancelled);
+        }
         prune_dead_watch_consumers(&mut transaction, claim).await?;
         let search_consumers = load_live_search_consumers(&mut transaction, claim).await?;
         let watch_consumers = load_live_watch_consumers(&mut transaction, claim).await?;
@@ -1424,19 +1529,26 @@ impl JobStore {
         Ok(JobDisposition::Failed)
     }
 
-    async fn claim_is_authorized(&self, claim: &JobClaim) -> Result<bool, JobError> {
+    async fn claim_authorization(&self, claim: &JobClaim) -> Result<ClaimAuthorization, JobError> {
         let mut transaction = self
             .pool
             .begin()
             .await
             .map_err(|_| JobError::DatabaseUnavailable)?;
         set_tenant(&mut transaction, claim.tenant_id).await?;
+        if self.target_is_suppressed(&mut transaction, claim).await? {
+            transaction
+                .commit()
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+            return Ok(ClaimAuthorization::TargetSuppressed);
+        }
         if !rule_is_available(&mut transaction, claim).await? {
             transaction
                 .commit()
                 .await
                 .map_err(|_| JobError::DatabaseUnavailable)?;
-            return Ok(false);
+            return Ok(ClaimAuthorization::Revoked);
         }
         let authorized: bool = sqlx::query_scalar(
             "SELECT EXISTS (\
@@ -1525,16 +1637,69 @@ impl JobStore {
             .commit()
             .await
             .map_err(|_| JobError::DatabaseUnavailable)?;
-        Ok(authorized)
+        Ok(if authorized {
+            ClaimAuthorization::Authorized
+        } else {
+            ClaimAuthorization::Revoked
+        })
     }
 
-    async fn wait_until_unauthorized(&self, claim: &JobClaim) -> Result<(), JobError> {
+    async fn target_is_suppressed(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+        claim: &JobClaim,
+    ) -> Result<bool, JobError> {
+        if claim.visibility != "shared" {
+            return Ok(false);
+        }
+        let token = target_suppression_token(
+            &self.suppression_hmac_key,
+            claim.tenant_id,
+            &claim.site_id,
+            &claim.normalized_username,
+        )?;
+        let key_fingerprint = suppression_key_fingerprint(&self.suppression_hmac_key)?;
+        let (incompatible_key_exists, suppressed): (bool, bool) = sqlx::query_as(
+            "SELECT \
+                EXISTS (\
+                    SELECT 1 FROM suppression_tokens \
+                    WHERE tenant_id = $1 \
+                      AND purpose = 'target_reingestion' \
+                      AND expires_at > clock_timestamp() \
+                      AND key_fingerprint IS DISTINCT FROM $3\
+                ), \
+                EXISTS (\
+                    SELECT 1 FROM suppression_tokens \
+                    WHERE tenant_id = $1 \
+                      AND purpose = 'target_reingestion' \
+                      AND token_hmac = $2 \
+                      AND key_fingerprint = $3 \
+                      AND expires_at > clock_timestamp()\
+                )",
+        )
+        .bind(claim.tenant_id)
+        .bind(token.as_slice())
+        .bind(key_fingerprint.as_slice())
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+        if incompatible_key_exists {
+            return Err(JobError::InvalidConfiguration);
+        }
+        Ok(suppressed)
+    }
+
+    async fn wait_until_unauthorized(
+        &self,
+        claim: &JobClaim,
+    ) -> Result<ClaimAuthorization, JobError> {
         let mut interval = tokio::time::interval(Duration::from_millis(250));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
-            if !self.claim_is_authorized(claim).await? {
-                return Ok(());
+            let authorization = self.claim_authorization(claim).await?;
+            if authorization != ClaimAuthorization::Authorized {
+                return Ok(authorization);
             }
         }
     }
@@ -1712,6 +1877,10 @@ pub enum JobError {
 pub enum JobExecutionError {
     #[error("managed job execution was cancelled")]
     Cancelled,
+    #[error("managed shared target was suppressed before observation")]
+    TargetSuppressed,
+    #[error("managed job authorization was revoked")]
+    AuthorizationRevoked,
     #[error("managed job authorization could not be rechecked")]
     AuthorizationUnavailable,
     #[error(transparent)]
@@ -1814,6 +1983,13 @@ struct LiveWatchConsumer {
     retention_days: i16,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClaimAuthorization {
+    Authorized,
+    Revoked,
+    TargetSuppressed,
+}
+
 #[derive(Clone, Copy)]
 enum ManagedResult {
     Observation(RecordedOutcome),
@@ -1904,6 +2080,52 @@ pub(crate) async fn connect_worker_pool_from_env() -> Result<PgPool, JobError> {
     .await
     .map_err(|_| JobError::DatabaseUnavailable)?
     .map_err(|_| JobError::DatabaseUnavailable)
+}
+
+fn suppression_hmac_key_from_env() -> Result<[u8; 32], JobError> {
+    let value = env::var(SUPPRESSION_HMAC_KEY_ENV).map_err(|_| JobError::DatabaseConfiguration)?;
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(JobError::DatabaseConfiguration);
+    }
+    hex::decode(value)
+        .map_err(|_| JobError::DatabaseConfiguration)?
+        .try_into()
+        .map_err(|_| JobError::DatabaseConfiguration)
+}
+
+fn target_suppression_token(
+    key: &[u8; 32],
+    tenant_id: Uuid,
+    site_id: &str,
+    normalized_username: &str,
+) -> Result<[u8; 32], JobError> {
+    let mut hmac = Hmac::<Sha256>::new_from_slice(key).map_err(|_| JobError::StorageInvariant)?;
+    for field in [
+        b"socialname:suppression:v1".as_slice(),
+        b"target",
+        tenant_id.as_bytes(),
+        site_id.as_bytes(),
+        normalized_username.as_bytes(),
+    ] {
+        let field_length = u64::try_from(field.len()).map_err(|_| JobError::StorageInvariant)?;
+        hmac.update(&field_length.to_be_bytes());
+        hmac.update(field);
+    }
+    Ok(hmac.finalize().into_bytes().into())
+}
+
+fn suppression_key_fingerprint(key: &[u8; 32]) -> Result<[u8; 32], JobError> {
+    let mut hmac =
+        Hmac::<Sha256>::new_from_slice(key).map_err(|_| JobError::InvalidConfiguration)?;
+    let domain = b"socialname:suppression-key-fingerprint:v1";
+    let domain_length = u64::try_from(domain.len()).map_err(|_| JobError::InvalidConfiguration)?;
+    hmac.update(&domain_length.to_be_bytes());
+    hmac.update(domain);
+    Ok(hmac.finalize().into_bytes().into())
 }
 
 pub(crate) async fn set_tenant(
@@ -2200,6 +2422,92 @@ async fn cancel_orphaned_claim(
 ) -> Result<(), JobError> {
     prune_dead_watch_consumers(transaction, claim).await?;
     transition_job_to_final(transaction, claim, "cancelled", Some("consumer_cancelled")).await
+}
+
+async fn finalize_target_suppressed(
+    transaction: &mut Transaction<'_, Postgres>,
+    claim: &JobClaim,
+) -> Result<(), JobError> {
+    if claim.visibility != "shared" {
+        return Err(JobError::StorageInvariant);
+    }
+    prune_dead_watch_consumers(transaction, claim).await?;
+    let search_consumers = load_live_search_consumers(transaction, claim).await?;
+    if !load_live_watch_consumers(transaction, claim)
+        .await?
+        .is_empty()
+    {
+        return Err(JobError::StorageInvariant);
+    }
+
+    transition_job_to_final(transaction, claim, "cancelled", Some("target_suppressed")).await?;
+    let occurred_at_unix_ms = database_now_ms(transaction).await?;
+    for consumer in search_consumers {
+        let redacted_username = format!("deleted-target-{}", consumer.search_target_id.simple());
+        let affected = sqlx::query(
+            "UPDATE search_targets \
+             SET requested_username = $4, normalized_username = $4 \
+             WHERE tenant_id = $1 AND id = $2 AND search_id = $3 \
+               AND state IN ('pending', 'running')",
+        )
+        .bind(claim.tenant_id)
+        .bind(consumer.search_target_id)
+        .bind(consumer.search_id)
+        .bind(&redacted_username)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| JobError::StorageInvariant)?
+        .rows_affected();
+        if affected != 1 {
+            return Err(JobError::StorageInvariant);
+        }
+        let event = operational_failure_event_for_username(
+            claim,
+            &consumer,
+            &redacted_username,
+            OperationalFailureKind::Blocked,
+            false,
+            occurred_at_unix_ms,
+        )?;
+        insert_search_result(transaction, claim.tenant_id, &consumer, &event, "failed").await?;
+        insert_lineage(
+            transaction,
+            claim.tenant_id,
+            "probe_job",
+            claim.job_id,
+            "search_event",
+            event_uuid(&event)?,
+            "operational_failure",
+        )
+        .await?;
+        finish_search_if_complete(transaction, claim.tenant_id, consumer.search_id).await?;
+    }
+
+    let redacted_job_username = format!("deleted-target-{}", claim.job_id.simple());
+    let affected = sqlx::query(
+        "UPDATE probe_jobs AS job \
+         SET normalized_username = $4, \
+             work_key_hash = decode(\
+                 md5(job.id::text || ':target-suppressed') \
+                 || md5(job.id::text || ':target-suppressed:redacted'), \
+                 'hex'\
+             ), \
+             updated_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2 \
+           AND attempt_count = $3 AND state = 'cancelled'",
+    )
+    .bind(claim.tenant_id)
+    .bind(claim.job_id)
+    .bind(i32::try_from(claim.attempt_count).map_err(|_| JobError::StorageInvariant)?)
+    .bind(redacted_job_username)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| JobError::StorageInvariant)?
+    .rows_affected();
+    if affected != 1 {
+        return Err(JobError::StorageInvariant);
+    }
+    Ok(())
 }
 
 async fn prune_dead_watch_consumers(
@@ -2803,13 +3111,31 @@ fn operational_failure_event(
     retryable: bool,
     occurred_at_unix_ms: i64,
 ) -> Result<SearchEvent, JobError> {
+    operational_failure_event_for_username(
+        claim,
+        consumer,
+        &claim.normalized_username,
+        kind,
+        retryable,
+        occurred_at_unix_ms,
+    )
+}
+
+fn operational_failure_event_for_username(
+    claim: &JobClaim,
+    consumer: &LiveSearchConsumer,
+    username: &str,
+    kind: OperationalFailureKind,
+    retryable: bool,
+    occurred_at_unix_ms: i64,
+) -> Result<SearchEvent, JobError> {
     new_search_event(
         consumer.search_id,
         occurred_at_unix_ms,
         SearchEventData::OperationalFailure {
             failure: OperationalFailure {
                 target: Target {
-                    username: Username::new(claim.normalized_username.clone())
+                    username: Username::new(username.to_owned())
                         .map_err(|_| JobError::InvalidProtocol)?,
                     site_id: SiteId::new(claim.site_id.clone())
                         .map_err(|_| JobError::InvalidProtocol)?,
@@ -3152,6 +3478,19 @@ mod tests {
         assert_ne!(
             first,
             work_key_hash(tenant, "target", &binding, Uuid::from_u128(3), "shared")
+        );
+    }
+
+    #[test]
+    fn target_suppression_token_matches_the_operator_vector() {
+        let token = target_suppression_token(&[7; 32], Uuid::nil(), "github", "alice").unwrap();
+        assert_eq!(
+            hex::encode(token),
+            "6e37c557c2a2a94a5f411838fe1abda09a8f7800423d1583603f3b31c0fbe77f"
+        );
+        assert_eq!(
+            hex::encode(suppression_key_fingerprint(&[7; 32]).unwrap()),
+            "82814fa27e037e0e33842b233eec843bb5e70a7273b6eadac9e57f5c7f2a247b"
         );
     }
 

@@ -4159,6 +4159,7 @@ dependencies = [
  "axum",
  "futures-util",
  "hex",
+ "hmac",
  "rand 0.10.2",
  "serde",
  "serde_json",

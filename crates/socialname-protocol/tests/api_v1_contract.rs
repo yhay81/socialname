@@ -1,17 +1,19 @@
 use socialname_protocol::{
     API_V1_SCHEMA, AccountState, ConfirmationBasis, ConsentCollectionProfileVersion,
     ConsentGrantCreateRequest, ConsentGrantId, ConsentNoticeVersion, ConsentPurpose,
-    ConsentSubjectKind, DefinitiveVerdict, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
-    EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
-    EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
-    EvidenceTransportOutcome, EvidenceVantage, InstallationId, NotificationChannel,
-    NotificationDelivery, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
-    ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget, ProtocolVersion,
-    RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent, SearchEventData,
-    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason,
-    SyncPolicy, Target, TargetSelection, Transition, TransitionChange, TransitionConfirmation,
-    TransitionId, Username, Validate, WatchCreateRequest, WatchId, WatchListPage, WatchResource,
-    WatchSchedule, WatchState, WatchTransitionEntry, WatchTransitionPage, WebhookNotification,
+    ConsentSubjectKind, ContributorDeletionCreateRequest, DefinitiveVerdict, DeletionRequestId,
+    DeletionRequestResource, DeletionRequestState, DeletionScope, EventId, EvidenceCapsuleId,
+    EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
+    EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
+    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
+    NotificationChannel, NotificationDelivery, NotificationDeliveryId, NotificationEndpointId,
+    NotificationLogicalKey, ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget,
+    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent,
+    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId,
+    SuppressionReason, SyncPolicy, Target, TargetSelection, Transition, TransitionChange,
+    TransitionConfirmation, TransitionId, Username, Validate, WatchCreateRequest, WatchId,
+    WatchListPage, WatchResource, WatchSchedule, WatchState, WatchTransitionEntry,
+    WatchTransitionPage, WebhookNotification,
 };
 
 fn target() -> Target {
@@ -46,6 +48,61 @@ fn installation_consent_has_one_exact_redacted_v1_wire_shape() {
         })
     );
     assert!(!format!("{request:?}").contains("11111111-1111-4111-8111-111111111111"));
+}
+
+#[test]
+fn contributor_deletion_has_one_selector_free_v1_wire_shape() {
+    let request = ContributorDeletionCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        consent_grant_id: ConsentGrantId::new("grant_01").unwrap(),
+    };
+    assert!(request.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "consent_grant_id": "grant_01"
+        })
+    );
+
+    let resource = DeletionRequestResource {
+        schema: ProtocolVersion::ApiV1,
+        deletion_request_id: DeletionRequestId::new("deletion_01").unwrap(),
+        scope: DeletionScope::Contributor,
+        state: DeletionRequestState::Hidden,
+        requested_at_unix_ms: 1_000,
+        hide_by_unix_ms: 301_000,
+        support_withdrawal_by_unix_ms: 3_601_000,
+        primary_delete_by_unix_ms: 86_401_000,
+        derived_rebuild_by_unix_ms: 604_801_000,
+        backup_expiry_by_unix_ms: 3_024_001_000,
+        matched_observations: 2,
+        hidden_resources: 5,
+        support_withdrawn_at_unix_ms: None,
+        primary_completed_at_unix_ms: None,
+        completed_at_unix_ms: None,
+    };
+    assert!(resource.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(resource).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "deletion_request_id": "deletion_01",
+            "scope": "contributor",
+            "state": "hidden",
+            "requested_at_unix_ms": 1_000,
+            "hide_by_unix_ms": 301_000,
+            "support_withdrawal_by_unix_ms": 3_601_000,
+            "primary_delete_by_unix_ms": 86_401_000,
+            "derived_rebuild_by_unix_ms": 604_801_000,
+            "backup_expiry_by_unix_ms": 3_024_001_000_i64,
+            "matched_observations": 2,
+            "hidden_resources": 5,
+            "support_withdrawn_at_unix_ms": null,
+            "primary_completed_at_unix_ms": null,
+            "completed_at_unix_ms": null
+        })
+    );
 }
 
 #[test]

@@ -19,6 +19,49 @@ pub const BIND_ENV: &str = "SOCIALNAME_SERVER_BIND";
 pub const REQUEST_TIMEOUT_ENV: &str = "SOCIALNAME_SERVER_REQUEST_TIMEOUT_MS";
 pub const MAXIMUM_BODY_BYTES_ENV: &str = "SOCIALNAME_SERVER_MAXIMUM_BODY_BYTES";
 pub const MAXIMUM_IN_FLIGHT_ENV: &str = "SOCIALNAME_SERVER_MAXIMUM_IN_FLIGHT";
+pub const SUPPRESSION_HMAC_KEY_ENV: &str = "SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX";
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct SuppressionHmacKey([u8; 32]);
+
+impl SuppressionHmacKey {
+    pub fn from_hex(value: &str) -> Result<Self, ConfigError> {
+        if value.len() != 64
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(ConfigError::new(
+                SUPPRESSION_HMAC_KEY_ENV,
+                "must be exactly 64 lowercase hexadecimal characters",
+            ));
+        }
+        let decoded = hex::decode(value).map_err(|_| {
+            ConfigError::new(
+                SUPPRESSION_HMAC_KEY_ENV,
+                "must be exactly 64 lowercase hexadecimal characters",
+            )
+        })?;
+        let key = decoded.try_into().map_err(|_| {
+            ConfigError::new(
+                SUPPRESSION_HMAC_KEY_ENV,
+                "must be exactly 64 lowercase hexadecimal characters",
+            )
+        })?;
+        Ok(Self(key))
+    }
+
+    #[must_use]
+    pub const fn expose(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SuppressionHmacKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SuppressionHmacKey([REDACTED])")
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServerConfig {
@@ -26,6 +69,7 @@ pub struct ServerConfig {
     request_timeout: Duration,
     maximum_body_bytes: usize,
     maximum_in_flight: usize,
+    suppression_hmac_key: Option<SuppressionHmacKey>,
 }
 
 impl Default for ServerConfig {
@@ -35,6 +79,7 @@ impl Default for ServerConfig {
             request_timeout: Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS),
             maximum_body_bytes: DEFAULT_MAXIMUM_BODY_BYTES,
             maximum_in_flight: DEFAULT_MAXIMUM_IN_FLIGHT,
+            suppression_hmac_key: None,
         }
     }
 }
@@ -82,6 +127,7 @@ impl ServerConfig {
             request_timeout,
             maximum_body_bytes,
             maximum_in_flight,
+            suppression_hmac_key: None,
         })
     }
 
@@ -123,12 +169,20 @@ impl ServerConfig {
             defaults.maximum_in_flight,
             "must be an integer request count",
         )?;
-        Self::new(
+        let mut config = Self::new(
             bind_address,
             Duration::from_millis(request_timeout_ms),
             maximum_body_bytes,
             maximum_in_flight,
-        )
+        )?;
+        let key = lookup(SUPPRESSION_HMAC_KEY_ENV)?.ok_or_else(|| {
+            ConfigError::new(
+                SUPPRESSION_HMAC_KEY_ENV,
+                "is required for suppression-aware managed operation",
+            )
+        })?;
+        config.suppression_hmac_key = Some(SuppressionHmacKey::from_hex(&key)?);
+        Ok(config)
     }
 
     #[must_use]
@@ -149,6 +203,17 @@ impl ServerConfig {
     #[must_use]
     pub const fn maximum_in_flight(&self) -> usize {
         self.maximum_in_flight
+    }
+
+    #[must_use]
+    pub fn suppression_hmac_key(&self) -> Option<&SuppressionHmacKey> {
+        self.suppression_hmac_key.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_suppression_hmac_key(mut self, key: SuppressionHmacKey) -> Self {
+        self.suppression_hmac_key = Some(key);
+        self
     }
 }
 
@@ -186,7 +251,10 @@ mod tests {
 
     #[test]
     fn defaults_bind_only_to_loopback_with_bounded_resources() {
-        let config = ServerConfig::from_lookup(|_| Ok(None)).unwrap();
+        let config = ServerConfig::from_lookup(|name| {
+            Ok((name == SUPPRESSION_HMAC_KEY_ENV).then(|| "11".repeat(32)))
+        })
+        .unwrap();
         assert_eq!(config.bind_address(), "127.0.0.1:8080".parse().unwrap());
         assert_eq!(config.request_timeout(), Duration::from_secs(30));
         assert_eq!(config.maximum_body_bytes(), 262_144);
@@ -201,6 +269,7 @@ mod tests {
                 REQUEST_TIMEOUT_ENV => Some("5000".to_owned()),
                 MAXIMUM_BODY_BYTES_ENV => Some("65536".to_owned()),
                 MAXIMUM_IN_FLIGHT_ENV => Some("32".to_owned()),
+                SUPPRESSION_HMAC_KEY_ENV => Some("22".repeat(32)),
                 _ => None,
             })
         })
@@ -220,6 +289,17 @@ mod tests {
                 .to_string();
         assert!(error.contains(BIND_ENV));
         assert!(!error.contains(secret));
+    }
+
+    #[test]
+    fn suppression_key_is_required_and_redacted() {
+        let missing = ServerConfig::from_lookup(|_| Ok(None)).unwrap_err();
+        assert!(missing.to_string().contains(SUPPRESSION_HMAC_KEY_ENV));
+        let secret = "private-suppression-secret";
+        let invalid = SuppressionHmacKey::from_hex(secret).unwrap_err();
+        assert!(!invalid.to_string().contains(secret));
+        let key = SuppressionHmacKey::from_hex(&"33".repeat(32)).unwrap();
+        assert!(!format!("{key:?}").contains(&"33".repeat(32)));
     }
 
     #[test]

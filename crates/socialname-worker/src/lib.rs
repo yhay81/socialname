@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod deletion;
 mod delivery;
 mod derivation;
 mod job;
@@ -9,6 +10,7 @@ use socialname_engine::{SearchEngine, SearchResult};
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use tokio_util::sync::CancellationToken;
 
+pub use deletion::{DeletionError, DeletionProcessOutcome, DeletionStore};
 pub use delivery::{
     DeliveryClaim, DeliveryError, DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets,
     DeliveryStore, ENDPOINT_ENCRYPTION_KEY_HEX_ENV, ENDPOINT_ENCRYPTION_KEY_ID_ENV,
@@ -17,7 +19,7 @@ pub use delivery::{
 };
 pub use job::{
     EvidenceRetentionOutcome, ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError,
-    JobStore, RuleBinding, WORKER_DATABASE_URL_ENV, WatchPlanOutcome,
+    JobStore, RuleBinding, SUPPRESSION_HMAC_KEY_ENV, WORKER_DATABASE_URL_ENV, WatchPlanOutcome,
 };
 
 #[derive(Clone, Debug)]

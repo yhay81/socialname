@@ -3,7 +3,7 @@ use std::{env, error::Error, ffi::OsString, future};
 use socialname_server::{
     ServerConfig, apply_rule_pack_metadata_from_env, bootstrap_workspace_from_env,
     connect_runtime_database_from_env, issue_api_key_from_env, migrate_database_from_env,
-    revoke_api_key_from_env,
+    request_target_deletion_from_env, revoke_api_key_from_env,
 };
 use thiserror::Error;
 use tracing_subscriber::EnvFilter;
@@ -31,6 +31,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let applied = apply_rule_pack_metadata_from_env().await?;
             println!("{}", serde_json::to_string(&applied.output())?);
         }
+        Command::RequestTargetDeletion => {
+            let output = request_target_deletion_from_env().await?;
+            println!("{}", serde_json::to_string(&output)?);
+        }
     }
     Ok(())
 }
@@ -53,11 +57,12 @@ enum Command {
     IssueApiKey,
     RevokeApiKey,
     ApplyRulePack,
+    RequestTargetDeletion,
 }
 
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 #[error(
-    "expected no arguments or one of `migrate`, `bootstrap-workspace`, `issue-api-key`, `revoke-api-key`, or `apply-rule-pack`"
+    "expected no arguments or one of `migrate`, `bootstrap-workspace`, `issue-api-key`, `revoke-api-key`, `apply-rule-pack`, or `request-target-deletion`"
 )]
 struct CommandError;
 
@@ -73,6 +78,9 @@ fn command_from_args(args: impl IntoIterator<Item = OsString>) -> Result<Command
         (Some(argument), None) if argument == "issue-api-key" => Ok(Command::IssueApiKey),
         (Some(argument), None) if argument == "revoke-api-key" => Ok(Command::RevokeApiKey),
         (Some(argument), None) if argument == "apply-rule-pack" => Ok(Command::ApplyRulePack),
+        (Some(argument), None) if argument == "request-target-deletion" => {
+            Ok(Command::RequestTargetDeletion)
+        }
         _ => Err(CommandError),
     }
 }
@@ -136,6 +144,7 @@ mod tests {
             ("issue-api-key", Command::IssueApiKey),
             ("revoke-api-key", Command::RevokeApiKey),
             ("apply-rule-pack", Command::ApplyRulePack),
+            ("request-target-deletion", Command::RequestTargetDeletion),
         ] {
             assert_eq!(command_from_args(args(&["server", name])), Ok(expected));
         }

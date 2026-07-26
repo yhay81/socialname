@@ -49,7 +49,17 @@ pub(crate) async fn create_consent_grant(
     if let Err(errors) = request.validate() {
         return invalid_request_response(StatusCode::BAD_REQUEST, request_id, errors);
     }
-    match persist_consent_grant(&state.database, &principal, &request).await {
+    let Some(suppression_key) = state.config.suppression_hmac_key() else {
+        return error_response(request_id, ConsentError::Unavailable);
+    };
+    match persist_consent_grant(
+        &state.database,
+        &principal,
+        &request,
+        suppression_key.expose(),
+    )
+    .await
+    {
         Ok(CreateConsentOutcome { resource, replayed }) => {
             let location = format!("/v1/consent-grants/{}", resource.consent_grant_id.as_str());
             let mut response = (
@@ -201,6 +211,7 @@ async fn persist_consent_grant(
     pool: &PgPool,
     principal: &AuthenticatedPrincipal,
     request: &ConsentGrantCreateRequest,
+    suppression_key: &[u8; 32],
 ) -> Result<CreateConsentOutcome, ConsentError> {
     let mut transaction =
         auth::begin_authorized_transaction(pool, principal, ApiKeyScope::ConsentWrite).await?;
@@ -232,6 +243,46 @@ async fn persist_consent_grant(
         .execute(&mut *transaction)
         .await
         .map_err(|_| ConsentError::Unavailable)?;
+    let suppression_token = crate::deletion::contributor_suppression_token(
+        suppression_key,
+        principal.workspace_id,
+        request.subject_kind.as_str(),
+        subject_id,
+        request.purpose.as_str(),
+    )
+    .ok_or(ConsentError::Unavailable)?;
+    let key_fingerprint = crate::deletion::suppression_key_fingerprint(suppression_key)
+        .ok_or(ConsentError::Unavailable)?;
+    let (incompatible_key_exists, suppressed): (bool, bool) = sqlx::query_as(
+        "SELECT \
+            EXISTS (\
+                SELECT 1 FROM suppression_tokens \
+                WHERE tenant_id = $1 \
+                  AND purpose = 'contributor_reingestion' \
+                  AND expires_at > clock_timestamp() \
+                  AND key_fingerprint IS DISTINCT FROM $3\
+            ), \
+            EXISTS (\
+                SELECT 1 FROM suppression_tokens \
+                WHERE tenant_id = $1 \
+                  AND purpose = 'contributor_reingestion' \
+                  AND token_hmac = $2 \
+                  AND key_fingerprint = $3 \
+                  AND expires_at > clock_timestamp()\
+            )",
+    )
+    .bind(principal.workspace_id)
+    .bind(suppression_token.as_slice())
+    .bind(key_fingerprint.as_slice())
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| ConsentError::Unavailable)?;
+    if incompatible_key_exists {
+        return Err(ConsentError::Unavailable);
+    }
+    if suppressed {
+        return Err(ConsentError::Conflict);
+    }
 
     let existing: Option<(Uuid, bool)> = sqlx::query_as(
         "SELECT id, \

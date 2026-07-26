@@ -5,10 +5,12 @@ mod auth;
 mod config;
 mod consent;
 mod database;
+mod deletion;
 mod evidence;
 mod monitoring;
 mod rule_registry_operator;
 mod search;
+mod target_deletion_operator;
 mod watch;
 mod workspace;
 mod workspace_operator;
@@ -47,7 +49,7 @@ use tracing::Instrument;
 
 pub use config::{
     BIND_ENV, ConfigError, MAXIMUM_BODY_BYTES_ENV, MAXIMUM_IN_FLIGHT_ENV, REQUEST_TIMEOUT_ENV,
-    ServerConfig,
+    SUPPRESSION_HMAC_KEY_ENV, ServerConfig, SuppressionHmacKey,
 };
 pub use database::{
     DATABASE_URL_ENV, DatabaseError, MIGRATOR, RUNTIME_DATABASE_URL_ENV,
@@ -57,6 +59,11 @@ pub use rule_registry_operator::{
     AppliedRulePack, AppliedRulePackOutput, INITIAL_RULE_TRUST_FILE_ENV, INITIAL_RULE_TRUST_ID_ENV,
     InitialRulePackTrust, RULE_METADATA_FILE_ENV, RULES_DIRECTORY_ENV, RuleRegistryError,
     apply_rule_pack_metadata, apply_rule_pack_metadata_from_env,
+};
+pub use target_deletion_operator::{
+    TargetDeletionOperatorError, TargetDeletionSelector, VerifiedTargetDeletionInput,
+    VerifiedTargetDeletionOutput, request_target_deletion_from_env,
+    request_verified_target_deletion,
 };
 pub use workspace_operator::{
     API_KEY_EXPIRES_AT_ENV, API_KEY_ID_ENV, API_KEY_SCOPES_ENV, IssuedApiKey, MEMBERSHIP_ID_ENV,
@@ -229,6 +236,22 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let deletion_routes = Router::new()
+        .route(
+            "/v1/deletion-requests/contributor",
+            axum::routing::post(deletion::create_contributor_deletion),
+        )
+        .route(
+            "/v1/deletion-requests/{deletion_request_id}",
+            get(deletion::get_deletion_request),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::DataDelete,
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
@@ -241,6 +264,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(consent_write_routes)
         .merge(consent_read_routes)
         .merge(evidence_read_routes)
+        .merge(deletion_routes)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state.clone());
@@ -541,6 +565,7 @@ mod tests {
             8,
         )
         .unwrap()
+        .with_suppression_hmac_key(SuppressionHmacKey::from_hex(&"11".repeat(32)).unwrap())
     }
 
     fn test_database() -> PgPool {

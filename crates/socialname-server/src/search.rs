@@ -613,7 +613,14 @@ async fn load_search_resource_with_terminal_check(
             count(*) FILTER (WHERE event_type = 'uncertain_result'), \
             count(*) FILTER (WHERE event_type = 'operational_failure'), \
             count(*) FILTER (WHERE event_type = 'finished') \
-         FROM search_events WHERE tenant_id = $1 AND search_id = $2",
+         FROM search_events AS event \
+         WHERE event.tenant_id = $1 AND event.search_id = $2 \
+           AND NOT EXISTS (\
+               SELECT 1 FROM deletion_resource_matches AS matched \
+               WHERE matched.tenant_id = event.tenant_id \
+                 AND matched.resource_kind = 'search_event' \
+                 AND matched.resource_id = event.id\
+           )",
     )
     .bind(workspace_id)
     .bind(search_id)
@@ -808,8 +815,14 @@ async fn resolve_event_cursor(
     }
     let sequence = if let Some(event_id) = after_event_id {
         sqlx::query_scalar(
-            "SELECT sequence FROM search_events \
-             WHERE tenant_id = $1 AND search_id = $2 AND id = $3",
+            "SELECT event.sequence FROM search_events AS event \
+             WHERE event.tenant_id = $1 AND event.search_id = $2 AND event.id = $3 \
+               AND NOT EXISTS (\
+                   SELECT 1 FROM deletion_resource_matches AS matched \
+                   WHERE matched.tenant_id = event.tenant_id \
+                     AND matched.resource_kind = 'search_event' \
+                     AND matched.resource_id = event.id\
+               )",
         )
         .bind(principal.workspace_id)
         .bind(search_id)
@@ -922,7 +935,13 @@ async fn fetch_event_batch(
             FROM search_events AS event \
             WHERE event.tenant_id = search.tenant_id \
               AND event.search_id = search.id \
-              AND event.event_type = 'finished'\
+              AND event.event_type = 'finished' \
+              AND NOT EXISTS (\
+                  SELECT 1 FROM deletion_resource_matches AS matched \
+                  WHERE matched.tenant_id = event.tenant_id \
+                    AND matched.resource_kind = 'search_event' \
+                    AND matched.resource_id = event.id\
+              )\
          ) \
          FROM searches AS search \
          WHERE search.tenant_id = $1 AND search.id = $2",
@@ -940,10 +959,16 @@ async fn fetch_event_batch(
         return Err(SearchError::Unavailable);
     }
     let rows: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT sequence, payload::text \
-         FROM search_events \
-         WHERE tenant_id = $1 AND search_id = $2 AND sequence > $3 \
-         ORDER BY sequence \
+        "SELECT event.sequence, event.payload::text \
+         FROM search_events AS event \
+         WHERE event.tenant_id = $1 AND event.search_id = $2 AND event.sequence > $3 \
+           AND NOT EXISTS (\
+               SELECT 1 FROM deletion_resource_matches AS matched \
+               WHERE matched.tenant_id = event.tenant_id \
+                 AND matched.resource_kind = 'search_event' \
+                 AND matched.resource_id = event.id\
+           ) \
+         ORDER BY event.sequence \
          LIMIT $4",
     )
     .bind(principal.workspace_id)
