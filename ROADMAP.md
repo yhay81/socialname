@@ -1052,6 +1052,10 @@ never revived. The real PostgreSQL 18 test proves all purposes and both
 subjects, tenant/owner isolation, bounded foreign-cursor rejection, exact
 replay, immutable history, replacement grants, and that a managed search is
 accepted immediately before withdrawal and forbidden immediately afterward.
+Quality run
+[`30201766719`](https://github.com/yhay81/socialname/actions/runs/30201766719)
+passed Rust core with PostgreSQL migrations/tests, Windows/macOS desktop,
+monitoring console, and managed-worker OCI for commit `04f60e4`.
 
 Withdrawal deliberately makes no prior-contribution deletion claim. The
 lineage-backed deletion item remains next in its recorded order after bounded
