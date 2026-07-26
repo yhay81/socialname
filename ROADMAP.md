@@ -1113,6 +1113,10 @@ or its derived support. Those production-data guarantees remain the next
 lineage-backed deletion item. Production retention scheduling, alerting, and
 regional evidence remain external. The complete boundary is in
 [`docs/evidence-capsule-v1.md`](docs/evidence-capsule-v1.md).
+Quality run
+[`30206607492`](https://github.com/yhay81/socialname/actions/runs/30206607492)
+passed Rust core with PostgreSQL migrations/tests, Windows/macOS desktop,
+monitoring console, and managed-worker OCI for commit `663f04f`.
 
 Acceptance gate:
 
