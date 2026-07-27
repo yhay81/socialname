@@ -22,10 +22,10 @@ use sha2::{Digest, Sha256};
 use socialname_protocol::{
     API_V1_SCHEMA, ApiError, ApiErrorCode, ApiErrorResponse, ApiKeyScope, ConsentGrantId, EventId,
     IdempotencyKey, MAX_SEARCH_EXPORT_EVENTS, MAX_SEARCH_EXPORT_PAGE_EVENTS,
-    MAX_SEARCH_HISTORY_PAGE_ITEMS, ProtocolVersion, RegionClass, RequestId, SearchCreateRequest,
-    SearchEvent, SearchEventData, SearchExportPage, SearchExportSchema, SearchHistoryPage,
-    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId,
-    SyncPolicy, Username, Validate, ValidationCode, ValidationErrors,
+    MAX_SEARCH_HISTORY_PAGE_ITEMS, PlanCapability, ProtocolVersion, RegionClass, RequestId,
+    SearchCreateRequest, SearchEvent, SearchEventData, SearchExportPage, SearchExportSchema,
+    SearchHistoryPage, SearchId, SearchMode, SearchProgress, SearchResource, SearchState,
+    SearchTerminalState, SiteId, SyncPolicy, Username, Validate, ValidationCode, ValidationErrors,
 };
 use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
 use tokio::sync::OwnedSemaphorePermit;
@@ -34,6 +34,7 @@ use uuid::Uuid;
 use crate::{
     ServerState,
     auth::{self, AuthenticatedPrincipal, AuthenticationError},
+    plan::{self, PlanCapabilityError},
     standard_api_error, unauthenticated_response,
 };
 
@@ -400,6 +401,16 @@ async fn persist_search(
 
     let (search_id, replayed) = if let Some((search_id, created_at_unix_ms)) = inserted {
         insert_search_targets(&mut transaction, principal.workspace_id, search_id, request).await?;
+        plan::require_plan_capability(
+            &mut transaction,
+            principal.workspace_id,
+            PlanCapability::ManagedSearch,
+        )
+        .await
+        .map_err(|error| match error {
+            PlanCapabilityError::Required => SearchError::EntitlementRequired,
+            PlanCapabilityError::Unavailable => SearchError::Unavailable,
+        })?;
         admit_developer_usage(
             &mut transaction,
             principal.workspace_id,
@@ -1436,7 +1447,8 @@ fn stream_error_event(request_id: &RequestId, error: SearchError) -> Event {
                     (ApiErrorCode::Unauthenticated, false, None)
                 }
                 SearchError::Authentication(AuthenticationError::Forbidden)
-                | SearchError::ConsentForbidden => (ApiErrorCode::Forbidden, false, None),
+                | SearchError::ConsentForbidden
+                | SearchError::EntitlementRequired => (ApiErrorCode::Forbidden, false, None),
                 SearchError::NotFound => (ApiErrorCode::NotFound, false, None),
                 SearchError::IdempotencyConflict => {
                     (ApiErrorCode::IdempotencyConflict, false, None)
@@ -1480,6 +1492,7 @@ fn error_response(request_id: RequestId, error: SearchError) -> Response {
             invalid_request_response(request_id, ValidationErrors::new(field, code))
         }
         SearchError::ConsentForbidden
+        | SearchError::EntitlementRequired
         | SearchError::Authentication(AuthenticationError::Forbidden) => crate::api_error_response(
             StatusCode::FORBIDDEN,
             request_id,
@@ -1605,6 +1618,8 @@ enum SearchError {
     InvalidRequest(&'static str, ValidationCode),
     #[error("search consent is not authorized")]
     ConsentForbidden,
+    #[error("the current plan does not grant managed search")]
+    EntitlementRequired,
     #[error("search was not found")]
     NotFound,
     #[error("idempotency key was reused with a different request")]

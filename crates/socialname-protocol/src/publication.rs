@@ -82,7 +82,7 @@ const IDEMPOTENCY: &[PublishedParameter] = &[PublishedParameter::IdempotencyKey]
 const RESUMABLE_STREAM: &[PublishedParameter] = &[PublishedParameter::LastEventId];
 const WINDOW: &[PublishedParameter] = &[PublishedParameter::Window];
 
-static OPERATIONS: [PublishedApiOperation; 28] = [
+static OPERATIONS: [PublishedApiOperation; 29] = [
     PublishedApiOperation {
         method: PublishedHttpMethod::Get,
         path: "/v1/workspace",
@@ -94,6 +94,19 @@ static OPERATIONS: [PublishedApiOperation; 28] = [
         parameters: NONE,
         success_statuses: OK,
         response: PublishedResponseKind::Json("workspace_resource"),
+        returns_location: false,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Get,
+        path: "/v1/workspace/plan",
+        operation_id: "getPlanEntitlement",
+        required_scope: ApiKeyScope::WorkspaceRead,
+        tag: "workspace",
+        summary: "Read the current provider-neutral plan entitlement.",
+        request_schema: None,
+        parameters: NONE,
+        success_statuses: OK,
+        response: PublishedResponseKind::Json("plan_entitlement_resource"),
         returns_location: false,
     },
     PublishedApiOperation {
@@ -904,7 +917,7 @@ mod tests {
 
     #[test]
     fn publication_has_one_unique_operation_for_every_current_route() {
-        assert_eq!(published_api_v1_operations().len(), 28);
+        assert_eq!(published_api_v1_operations().len(), 29);
         let identities = published_api_v1_operations()
             .iter()
             .map(|operation| (operation.method, operation.path))

@@ -98,8 +98,11 @@ person.
 - Tenant-local private search history and terminal, Event-ID-paginated export
   under independent `search:read` and `data:export` scopes, with deletion
   hiding and dependency-free resumable-SSE/export examples.
-- Deterministic API v1 publication with 28 scoped operations, OpenAPI 3.1.2,
-  33 Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
+- Provider-neutral plan entitlements with closed managed-search/monitoring
+  capabilities, digest-only optimistic reconciliation, suspension-safe
+  read/cancel paths, and admission/scheduler gates outside the engine.
+- Deterministic API v1 publication with 29 scoped operations, OpenAPI 3.1.2,
+  34 Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
   SHA-256 drift manifest.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
@@ -109,11 +112,10 @@ person.
 Milestone 3's repository-completable software is implemented, and Milestone 4
 now has stable REST/JSON and SSE publication, batch admission, quota, usage,
 service reporting, search-completion webhooks, consent-bound remote clients,
-private search history, and bounded export examples. Real regional deployment,
-retained production SLO history, production notification/export evidence, and
-a hosted Developer API remain external gates. The next ordered repository
-slice adds plan entitlements and billing boundaries without coupling billing
-to the measurement engine.
+private search history, bounded export examples, and provider-neutral plan
+entitlements. Real regional deployment, retained production SLO history,
+production notification/export evidence, a payment-provider integration, and
+a hosted Developer API remain external gates.
 
 ## Build and verify
 

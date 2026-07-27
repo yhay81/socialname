@@ -76,6 +76,9 @@ The first vertical slice is implemented in the repository:
   transactional workspace/API-key operator lifecycle, digest-only bearer
   authentication, forced tenant RLS, consented idempotent private searches,
   polling/cancellation, and bounded resumable PostgreSQL-backed SSE;
+- provider-neutral plan entitlements with closed derived capabilities,
+  digest-only optimistic reconciliation, fail-closed admission/scheduling,
+  and suspension-safe read, cancellation, and privacy behavior;
 - closed purpose/profile/notice consent resources for account and
   installation subjects, tenant-separated installation digests, membership
   non-override, bounded reads, and immutable one-way withdrawal;
@@ -197,6 +200,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Search-completion webhooks](search-completion-webhooks.md) — idempotent
   per-search binding, terminal-state convergence, minimal signed payload,
   cancellation, and deletion lineage.
+- [Plan entitlements and billing boundary](plan-entitlements-billing.md) —
+  closed capabilities, effective/suspended access, digest-only reconciliation,
+  admission gates, least privilege, and external payment-provider boundary.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native
@@ -231,12 +237,13 @@ repository-completable software. Hosted schedule history, provider inventory,
 multi-region deployment, retained production SLO history, and live notification
 evidence remain external.
 
-The current roadmap milestone is **Developer platform**. Stable versioned
-REST/JSON and SSE publication plus the existing bounded batch, exact polling
-and idempotency, atomic quota, immutable usage, and service-reporting boundary
-and target-free search-completion webhooks are repository-complete. Remote and
-remote-assisted client source combinations are next; none of these software
-boundaries makes a hosted-service claim.
+The **Developer platform** repository software gate is complete: stable
+REST/JSON and SSE publication, bounded batch/polling/idempotency, atomic quota,
+immutable usage, service reporting, target-free completion webhooks,
+consent-bound remote clients, private history/export, and provider-neutral
+plan entitlements are verified. Payment-provider integration and hosted
+commercial evidence remain external. The next ordered roadmap milestone is
+**Team workflows and quality network**.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

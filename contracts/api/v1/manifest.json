@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "openapi.json",
-      "sha256": "85d26942fb7787193f59817158401e60d451c5425e8a5bcb048714c4fcd932ed"
+      "sha256": "52672c1a380edc61b780ff4e9797c58ad46dc6ede816cd2f427620a3fccf2888"
     },
     {
       "path": "schemas/api_error_response.schema.json",
@@ -73,6 +73,10 @@
     {
       "path": "schemas/operational_report_resource.schema.json",
       "sha256": "c239c0c003f613c441b3d17ed8fc094b63508c4719daf1b6b78ab966919c7187"
+    },
+    {
+      "path": "schemas/plan_entitlement_resource.schema.json",
+      "sha256": "e7d7e122b1108a1b9b48a813b03b1e04e3821d898d27dc205903ae8ea92ad17d"
     },
     {
       "path": "schemas/search_completion_webhook.schema.json",

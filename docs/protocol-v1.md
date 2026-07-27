@@ -33,12 +33,13 @@ API schema version; it is not silently treated as an additive v1 change.
 - bounded Evidence Capsule resources;
 - contributor deletion creation and target-free request resources;
 - authenticated private-workspace resources and API-key scope metadata;
+- provider-neutral plan entitlement state and derived capabilities;
 - target-free operational reports and fixed software-objective state.
 
 The repository publishes every root beside an OpenAPI 3.1.2 description, an
 exact SSE transport contract, and a digest manifest under
 [`contracts/api/v1`](../contracts/api/v1/README.md). The generator-owned route
-registry contains all 28 current operations and their required scopes; server
+registry contains all 29 current operations and their required scopes; server
 tests independently prove that every published method/path is registered
 behind authentication with the same scope. See
 [API v1 contract publication](api-contract-publication.md).
@@ -116,6 +117,16 @@ bearer token or grant access. The server separately verifies the token digest,
 active/nonexpired key state, active key-creating membership, exact route
 scope, active tenant, and transaction-local tenant RLS. A scope whose route has
 not been implemented does not create that capability.
+
+`PlanEntitlementResource` is the independent `GET /v1/workspace/plan`
+response. It exposes one closed `community`, `developer`, `monitor`, or
+`evaluation` plan; a database-time `pending`, `active`, or `suspended` state;
+the exact derived `managed_search` and/or `monitoring` capability set; an
+optimistic revision; and effective, access-deadline, update, and evaluation
+times. Pending and suspended resources must have no capabilities. There is no
+provider, customer, price, invoice, payment method, or raw billing-event
+field. Reconciliation and admission behavior are specified in
+[Plan entitlements and billing boundary](plan-entitlements-billing.md).
 
 ## Consent grants
 

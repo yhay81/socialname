@@ -13,7 +13,8 @@ use socialname_protocol::{
     NotificationChannel, NotificationDelivery, NotificationDeliveryId, NotificationEndpointId,
     NotificationLogicalKey, ObservationId, OperationalBacklog, OperationalFailure,
     OperationalFailureKind, OperationalObjectives, OperationalReportResource,
-    OperationalReportWindow, ProbeBudget, ProtocolVersion, RatioSlo, RegionClass, ResultSource,
+    OperationalReportWindow, PlanCapability, PlanCode, PlanEntitlementResource,
+    PlanEntitlementState, ProbeBudget, ProtocolVersion, RatioSlo, RegionClass, ResultSource,
     RuleHash, SearchCompletionDeliveryStatus, SearchCompletionOutcome, SearchCompletionWebhook,
     SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
     SearchCompletionWebhookSubscriptionState, SearchCreateRequest, SearchEvent, SearchEventData,
@@ -31,6 +32,39 @@ fn target() -> Target {
         username: Username::new("alice-private-target").unwrap(),
         site_id: SiteId::new("github").unwrap(),
     }
+}
+
+#[test]
+fn plan_entitlement_has_one_provider_neutral_v1_wire_shape() {
+    let entitlement = PlanEntitlementResource {
+        schema: ProtocolVersion::ApiV1,
+        plan: PlanCode::Monitor,
+        state: PlanEntitlementState::Active,
+        capabilities: vec![PlanCapability::ManagedSearch, PlanCapability::Monitoring],
+        revision: 4,
+        effective_at_unix_ms: 1_000,
+        access_until_unix_ms: Some(10_000),
+        updated_at_unix_ms: 1_500,
+        evaluated_at_unix_ms: 2_000,
+    };
+    assert!(entitlement.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(&entitlement).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "plan": "monitor",
+            "state": "active",
+            "capabilities": ["managed_search", "monitoring"],
+            "revision": 4,
+            "effective_at_unix_ms": 1_000,
+            "access_until_unix_ms": 10_000,
+            "updated_at_unix_ms": 1_500,
+            "evaluated_at_unix_ms": 2_000
+        })
+    );
+    let mut unknown = serde_json::to_value(entitlement).unwrap();
+    unknown["provider_customer_id"] = serde_json::json!("forbidden");
+    assert!(serde_json::from_value::<PlanEntitlementResource>(unknown).is_err());
 }
 
 #[test]

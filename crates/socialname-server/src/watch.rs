@@ -8,7 +8,7 @@ use axum::{
 };
 use sha2::{Digest, Sha256};
 use socialname_protocol::{
-    ApiErrorCode, ApiKeyScope, ConsentGrantId, NotificationEndpointId, ProbeBudget,
+    ApiErrorCode, ApiKeyScope, ConsentGrantId, NotificationEndpointId, PlanCapability, ProbeBudget,
     ProtocolVersion, RegionClass, RequestId, SiteId, TargetSelection, Username, Validate,
     ValidationCode, ValidationErrors, WatchCreateRequest, WatchId, WatchPatchRequest,
     WatchResource, WatchSchedule, WatchState, WatchStateUpdate,
@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::{
     ServerState,
     auth::{self, AuthenticatedPrincipal, AuthenticationError},
+    plan::{self, PlanCapabilityError},
     standard_api_error, unauthenticated_response,
 };
 
@@ -155,6 +156,16 @@ async fn persist_watch(
     let endpoint_ids = parse_endpoint_ids(&request.notification_endpoint_ids)?;
     let mut transaction =
         auth::begin_authorized_transaction(pool, principal, ApiKeyScope::WatchWrite).await?;
+    plan::require_plan_capability(
+        &mut transaction,
+        principal.workspace_id,
+        PlanCapability::Monitoring,
+    )
+    .await
+    .map_err(|error| match error {
+        PlanCapabilityError::Required => WatchError::EntitlementRequired,
+        PlanCapabilityError::Unavailable => WatchError::Unavailable,
+    })?;
     verify_watch_consent(&mut transaction, principal, consent_grant_id).await?;
     verify_known_sites(&mut transaction, request).await?;
     verify_active_endpoints(&mut transaction, principal.workspace_id, &endpoint_ids).await?;
@@ -292,6 +303,18 @@ async fn apply_watch_patch(
             WatchStateUpdate::Active => WatchState::Active,
             WatchStateUpdate::Paused => WatchState::Paused,
         };
+    }
+    if resource.state == WatchState::Active {
+        plan::require_plan_capability(
+            &mut transaction,
+            principal.workspace_id,
+            PlanCapability::Monitoring,
+        )
+        .await
+        .map_err(|error| match error {
+            PlanCapabilityError::Required => WatchError::EntitlementRequired,
+            PlanCapabilityError::Unavailable => WatchError::Unavailable,
+        })?;
     }
     if let Some(maximum_age_ms) = patch.maximum_age_ms {
         resource.configuration.maximum_age_ms = maximum_age_ms;
@@ -864,6 +887,7 @@ fn error_response(request_id: RequestId, error: WatchError) -> Response {
         }
         WatchError::Validation(errors) => invalid_request_response(request_id, errors),
         WatchError::ConsentForbidden
+        | WatchError::EntitlementRequired
         | WatchError::Authentication(AuthenticationError::Forbidden) => crate::api_error_response(
             StatusCode::FORBIDDEN,
             request_id,
@@ -918,6 +942,8 @@ pub(crate) enum WatchError {
     Validation(ValidationErrors),
     #[error("watch consent is not authorized")]
     ConsentForbidden,
+    #[error("the current plan does not grant monitoring")]
+    EntitlementRequired,
     #[error("watch was not found")]
     NotFound,
     #[error("watch revision conflicts")]

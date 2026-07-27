@@ -12,6 +12,8 @@ mod evidence;
 mod monitoring;
 mod notification;
 mod operations;
+mod plan;
+mod plan_operator;
 mod rule_registry_operator;
 mod search;
 mod search_webhook;
@@ -66,6 +68,12 @@ pub use deletion_operator::{
     RestoreLedgerArtifact, RestoreLedgerEntry, RestoreLedgerPayload, RestoreLedgerReplayOutput,
     export_restore_ledger, export_restore_ledger_from_env, replay_restore_ledger,
     replay_restore_ledger_from_env, verify_backup_expiry, verify_backup_expiry_from_env,
+};
+pub use plan_operator::{
+    BILLING_EVENT_ID_ENV, PLAN_ACCESS_STATE_ENV, PLAN_ACCESS_UNTIL_ENV, PLAN_CODE_ENV,
+    PLAN_EFFECTIVE_AT_ENV, PLAN_EXPECTED_REVISION_ENV, PLAN_WORKSPACE_ID_ENV, PlanOperatorError,
+    PlanReconciliation, PlanReconciliationOutput, ReconciledAccessState,
+    reconcile_plan_entitlement, reconcile_plan_entitlement_from_env,
 };
 pub use rule_registry_operator::{
     AppliedRulePack, AppliedRulePackOutput, INITIAL_RULE_TRUST_FILE_ENV, INITIAL_RULE_TRUST_ID_ENV,
@@ -138,7 +146,7 @@ struct ProtectedRouteState {
 
 fn server_required_scope(operation_id: &str) -> ApiKeyScope {
     match operation_id {
-        "getWorkspace" => ApiKeyScope::WorkspaceRead,
+        "getWorkspace" | "getPlanEntitlement" => ApiKeyScope::WorkspaceRead,
         "createSearch"
         | "cancelSearch"
         | "createSearchCompletionWebhook"
@@ -167,6 +175,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
     let state = ServerState::new(config, database);
     let workspace_routes = Router::new()
         .route("/v1/workspace", get(workspace_resource))
+        .route("/v1/workspace/plan", get(plan::get_plan_entitlement))
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),

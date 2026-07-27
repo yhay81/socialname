@@ -32,6 +32,8 @@ flowchart LR
     CLI --> API["Cloud API"]
     Developer["Developer API client"] --> API
     Web["Web application"] --> API
+    BillingAdapter["Future billing adapter"] --> Entitlements["Plan reconciliation boundary"]
+    Entitlements --> API
 
     API --> Planner["Query planner and coalescer"]
     Planner --> Assertions["Assertion service"]
@@ -301,6 +303,8 @@ Initial PostgreSQL tables:
 | `searches` | User/API search requests, policy, and idempotency digest |
 | `search_targets` | Stable requested target order and later site-specific normalization |
 | `search_events` | Append-only ordered REST/SSE replay records |
+| `tenant_plan_entitlements` | Provider-neutral current plan/access revision |
+| `plan_entitlement_events` | Append-only digest-only reconciliation history |
 | `probe_jobs` | Managed execution queue |
 | `probe_job_consumers` | Search/watch consumers of equivalent work |
 | `observations` | Append-only probe results |
@@ -358,6 +362,7 @@ observations are deleted.
 
 ```http
 GET /v1/workspace
+GET /v1/workspace/plan
 ```
 
 The first implemented private route accepts a strict bearer API key, performs
@@ -368,6 +373,14 @@ authenticated-key metadata only. Bootstrap, key rotation, and revocation are
 explicit audited operator commands rather than unauthenticated HTTP routes.
 The complete boundary is specified in
 [Authenticated private workspaces and API keys](authenticated-workspaces.md).
+
+The plan read exposes only closed effective access and derived capabilities.
+An explicit schema-owner reconciliation command is the future billing-adapter
+seam; it hashes external event identity and advances one optimistic revision.
+New managed work is gated in server admission and watch scheduling. The
+measurement engine, observations, assertions, and already accepted worker
+execution remain plan-free. See
+[Plan entitlements and billing boundary](plan-entitlements-billing.md).
 
 ### Search
 

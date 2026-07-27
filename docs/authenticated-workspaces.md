@@ -1,18 +1,17 @@
 # Authenticated private workspaces and API keys
 
-The first managed authentication slice provides an operator-created private
+The managed authentication boundary provides an operator-created private
 workspace, one-time API-key issuance and revocation, a least-privilege runtime
-database boundary, and one authenticated read:
+database boundary, and authenticated workspace/plan reads:
 
 ```http
 GET /v1/workspace
+GET /v1/workspace/plan
 Authorization: Bearer snk_v1_<prefix>_<secret>
 ```
 
 It deliberately does not implement public signup, browser sessions, an identity
-provider, billing, search creation, watch management, or network ingress. Those
-capabilities remain closed until their ordered roadmap slices supply their full
-authorization and failure behavior.
+provider, payment-provider intake, checkout, pricing, or network ingress.
 
 ## API-key format and storage
 
@@ -186,6 +185,12 @@ read it directly.
 It contains no presented secret, digest, membership subject, database URL, or
 cross-tenant data.
 
+`GET /v1/workspace/plan` uses the same scope and tenant transaction but returns
+only the closed plan, database-time effective state, derived capabilities,
+revision, and timestamps. It contains no provider/customer/payment data.
+Managed admission and reconciliation remain the separate boundary documented
+in [Plan entitlements and billing boundary](plan-entitlements-billing.md).
+
 Missing, malformed, unknown, revoked, or expired credentials all return the
 same nonretryable protocol `unauthenticated` response and
 `WWW-Authenticate: Bearer`. A valid key missing `workspace:read` returns
@@ -200,7 +205,7 @@ bounded database probe shorter than the outer request deadline and returns
 
 The PostgreSQL 18 integration gate covers:
 
-- replay-safe migrations, 52 product tables, and 40 forced-RLS policies;
+- replay-safe migrations, 54 product tables, and 42 forced-RLS policies;
 - credential-table and definer-function `PUBLIC` privilege revocation;
 - a real `LOGIN NOSUPERUSER NOBYPASSRLS` runtime role;
 - transaction-local tenant separation for two valid keys;

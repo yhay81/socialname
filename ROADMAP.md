@@ -1386,7 +1386,7 @@ Acceptance gate:
 
 ## Milestone 4 — Developer platform
 
-Status: **In progress**
+Status: **Software gate complete; external commercial evidence pending**
 
 - [x] Publish stable versioned REST/JSON and SSE contracts.
 - [x] Add batch search, polling, webhooks, idempotency, quotas, usage records,
@@ -1395,7 +1395,7 @@ Status: **In progress**
       desktop with visible, independent sync policies.
 - [x] Add private cloud history, exports, API examples, and integration SDK
       generation only where it reduces real adoption friction.
-- [ ] Add plan entitlements and billing boundaries without coupling billing to
+- [x] Add plan entitlements and billing boundaries without coupling billing to
       the measurement engine.
 
 Stable API-contract publication software evidence:
@@ -1661,6 +1661,63 @@ passed Rust core including PostgreSQL 18 history/export isolation tests,
 contract drift, and the Node.js examples; Windows/macOS desktop, monitoring
 console, and managed-worker OCI also passed for commit `2420203`.
 
+Plan entitlement and billing-boundary software evidence:
+
+```console
+cargo fmt --all -- --check
+# passed
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified exact committed OpenAPI with 29 operations, 34 JSON Schema roots,
+# SSE, and manifest
+cargo test --locked --workspace --all-targets
+# passed against PostgreSQL 18, including protocol 61 unit + 17 wire +
+# 1 publication; server 45 library + 2 binary + 1 full integration
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+node --test examples/api-v1/client.test.mjs
+# 5 passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# passed; npm reported 0 vulnerabilities
+```
+
+Migration `0020` adds forced-RLS current and append-only plan state with closed
+`community`, `developer`, `monitor`, and `evaluation` plans. Exact capabilities
+are derived rather than provider supplied. Database time derives pending,
+active/grace, and suspended access. New workspaces start `community`; existing
+workspaces receive an explicit `evaluation` bridge so migration does not
+silently disable prior managed behavior.
+
+`GET /v1/workspace/plan` publishes only the plan, derived capabilities,
+optimistic revision, and timestamps. The schema-owner
+`reconcile-plan-entitlement` adapter stores only SHA-256 event/request identity,
+advances exactly one revision, and writes append-only history plus target-free
+audit. The HTTP role can read only safe current columns and cannot read current
+hashes, event history, or mutate access.
+
+New managed searches and completion-webhook bindings require
+`managed_search`; new or resumed/active watches and due-watch scheduling
+require `monitoring`. Exact replay, existing reads/history/export, cancellation,
+watch pause/delete, and privacy/recovery paths remain available. Quota remains
+an independent admission guardrail, and no plan type enters the domain,
+measurement engine, observation, assertion, or worker execution contracts.
+
+The PostgreSQL 18 gate proves pending/grace/suspension/restoration, idempotent
+event replay and conflict detection, denied-admission rollback without usage,
+two-tenant isolation, least privilege, suspension-safe operations, and due-run
+suppression. Exact behavior is in
+[`docs/plan-entitlements-billing.md`](docs/plan-entitlements-billing.md).
+Checkout, pricing, taxation, invoices, provider webhook verification,
+self-service subscription management, hosted deployment, and live commercial
+reconciliation remain external or later gates and are not claimed.
+
 Acceptance gate:
 
 - Local test behavior and managed API behavior use the same engine, rule pack,
@@ -1892,3 +1949,10 @@ Choose these only when their trigger is measured:
   creating a second retention store and deferred generated SDK distribution
   until hosted origin and language-specific adoption friction are observed.
   Selected plan entitlements and billing boundaries next.
+- **2026-07-27:** Completed the Milestone 4 repository software gate with
+  closed provider-neutral plan entitlements, digest-only optimistic
+  reconciliation, a scoped plan read, fail-closed new-work admission and
+  scheduling, suspension-safe recovery/privacy paths, and PostgreSQL 18
+  least-privilege evidence. Kept provider integration, pricing, checkout,
+  invoicing, hosted deployment, and live commercial evidence external, and
+  selected Milestone 5 team workflows next.

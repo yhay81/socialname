@@ -8,10 +8,11 @@ use crate::{
     DeletionRequestResource, DeveloperReportResource, EmailNotification, EvidenceCapsuleResource,
     NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
     NotificationDelivery, NotificationEndpointCreateRequest, NotificationEndpointResource,
-    OperationalReportResource, SearchCompletionWebhook, SearchCompletionWebhookCreateRequest,
-    SearchCompletionWebhookResource, SearchCreateRequest, SearchEvent, SearchExportPage,
-    SearchHistoryPage, SearchResource, Transition, WatchCreateRequest, WatchListPage,
-    WatchPatchRequest, WatchResource, WatchTransitionPage, WebhookNotification, WorkspaceResource,
+    OperationalReportResource, PlanEntitlementResource, SearchCompletionWebhook,
+    SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource, SearchCreateRequest,
+    SearchEvent, SearchExportPage, SearchHistoryPage, SearchResource, Transition,
+    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchTransitionPage,
+    WebhookNotification, WorkspaceResource,
 };
 
 #[must_use]
@@ -69,6 +70,10 @@ pub fn api_v1_schemas() -> BTreeMap<&'static str, Schema> {
             "operational_report_resource",
             schema_for!(OperationalReportResource),
         ),
+        (
+            "plan_entitlement_resource",
+            schema_for!(PlanEntitlementResource),
+        ),
         ("search_create_request", schema_for!(SearchCreateRequest)),
         (
             "search_completion_webhook",
@@ -125,6 +130,7 @@ mod tests {
                 "notification_endpoint_create_request",
                 "notification_endpoint_resource",
                 "operational_report_resource",
+                "plan_entitlement_resource",
                 "search_completion_webhook",
                 "search_completion_webhook_create_request",
                 "search_completion_webhook_resource",

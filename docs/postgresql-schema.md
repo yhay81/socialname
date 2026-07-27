@@ -46,7 +46,10 @@ search, generalizes delivery origin to a closed transition/search kind, and
 converges terminal-search and binding-insert order through one deduplicating
 enqueue function. Migration `0019_search_history_export.sql` adds the stable
 tenant/creation-time search-history index. It adds no product table, policy,
-payload copy, or privilege.
+payload copy, or privilege. Migration `0020_plan_entitlements.sql` adds one
+current and one append-only plan table, provider-neutral capability
+evaluation, new-workspace bootstrap, existing-workspace evaluation migration,
+and plan-aware due-watch scheduling.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -75,7 +78,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 52 product tables:
+The migrations create 54 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -84,6 +87,7 @@ The migrations create 52 product tables:
 | Consent | `consent_grants`, `consent_events` |
 | Interactive work | `searches`, `search_targets`, `search_events` |
 | Developer capacity | `developer_quota_policies`, `developer_usage_records` |
+| Plan access | `tenant_plan_entitlements`, `plan_entitlement_events` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `search_completion_webhooks`, `notification_deliveries`, `notification_delivery_attempts`, `notification_acknowledgements` |
@@ -95,7 +99,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Forty tenant-owned tables have row-level security both enabled and
+Forty-two tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -158,7 +162,10 @@ attempt fence, or delete one bounded batch of expired target-free Developer
 usage. They return only opaque IDs, an attempt number, a boolean, payload-free
 counts, or no value. A separate tenant-checked definer function locks exactly
 one Developer quota policy for application admission without granting the
-runtime role table UPDATE.
+runtime role table UPDATE. Another tenant-checked definer evaluates one closed
+plan capability without granting entitlement history or mutation; due-watch
+scheduling evaluates the same monitoring capability inside its existing
+coordinator function.
 
 `PUBLIC` execution is revoked. Deployment grants only these functions plus the
 column-limited ordinary table access exercised by the integration fixture. The
@@ -344,7 +351,10 @@ unknown-window rejection, identifier exclusion, and two-tenant isolation.
 The Developer reporting checks cover default/operator quotas, serialized
 concurrent admission, exact replay, whole-batch rollback, append-only usage,
 least privilege, target-free scoped reports, no-data separation, and bounded
-worker-only expiry.
+worker-only expiry. Plan checks cover bootstrap/migration defaults, closed
+pending/grace/suspended/restored states, optimistic digest-only
+reconciliation, admission rollback, suspension-safe reads/cancellation, due
+watch suppression, two-tenant isolation, and event-history least privilege.
 The same real-database test also pins initial rule trust, applies
 canary then general metadata, rejects persistent replay, stages an overlapping
 key generation without replacing the active root, activates a second pack,
@@ -363,6 +373,8 @@ credential. Startup requires a database connection, readiness is
 PostgreSQL-aware, and every private workspace/search/watch/evidence operation
 authenticates and sets a transaction-local tenant before product access. The
 schema-owner `SOCIALNAME_DATABASE_URL` remains limited to migration and explicit
-workspace/key/rule-pack and externally verified target-deletion operator
-commands. The rule-pack command and its initial out-of-band trust pin are specified in
+workspace/key/plan/rule-pack and externally verified target-deletion operator
+commands. The plan boundary is specified in
+[Plan entitlements and billing boundary](plan-entitlements-billing.md). The
+rule-pack command and its initial out-of-band trust pin are specified in
 [Signed Rule-Pack Distribution v1](rule-pack-distribution-v1.md).

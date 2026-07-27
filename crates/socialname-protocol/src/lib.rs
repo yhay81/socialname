@@ -9,6 +9,7 @@ mod evidence;
 mod monitoring;
 mod notification;
 mod operations;
+mod plan;
 mod publication;
 mod schema;
 mod search;
@@ -65,6 +66,7 @@ pub use operations::{
     OperationalObjectives, OperationalReportResource, OperationalReportWindow, RatioSlo, SloStatus,
     TRANSITION_TO_DELIVERY_P95_TARGET_MS, WATCH_RUN_SUCCESS_TARGET_BASIS_POINTS,
 };
+pub use plan::{PlanCapability, PlanCode, PlanEntitlementResource, PlanEntitlementState};
 pub use publication::{
     API_V1_CONTRACT_VERSION, OPENAPI_VERSION, PublishedApiOperation, PublishedHttpMethod,
     api_v1_contract_files, api_v1_openapi, api_v1_sse_contract, published_api_v1_operations,

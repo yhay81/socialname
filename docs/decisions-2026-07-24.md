@@ -216,7 +216,7 @@ so status does not diverge across design records.
   compliance claim; production SLA history remains external evidence.
 - API v1 publication is generator-owned and committed as OpenAPI 3.1.2,
   independent Draft 2020-12 roots, an exact SocialName SSE contract, and a
-  SHA-256 drift manifest. One closed registry owns the 28 published
+  SHA-256 drift manifest. One closed registry owns the 29 published
   method/path/schema/scope descriptions; Axum keeps an independent
   operation-to-scope mapping and tests route registration plus exact scope
   agreement. The publication declares no production origin or availability.
@@ -236,6 +236,15 @@ so status does not diverge across design records.
   idempotency replay consumes nothing. Quota policy is an operator-controlled
   software guardrail independent of later plan, billing, and entitlement
   selection.
+- Plan access is a closed provider-neutral control-plane model:
+  `community`, `developer`, `monitor`, and the `evaluation` bridge derive
+  exact managed-search/monitoring capabilities. Database time derives
+  pending, active, or suspended access. Reconciliation persists only hashed
+  source-event/request identity with exact optimistic revisions. It gates new
+  managed admission and due-watch scheduling while reads, export,
+  cancellation, watch pause/delete, privacy work, and exact replay remain
+  available. Payment-provider state and the measurement engine remain outside
+  this model.
 - Developer usage records are append-only, target-free
   `search_target_admitted` facts written atomically with a newly admitted
   search and hidden after a fixed 400-day database deadline. The public API
@@ -290,6 +299,7 @@ so status does not diverge across design records.
 - [Lineage-backed deletion workflows](deletion-workflows.md)
 - [Developer quota, usage, and service reporting](developer-usage-reporting.md)
 - [Search-completion webhooks](search-completion-webhooks.md)
+- [Plan entitlements and billing boundary](plan-entitlements-billing.md)
 
 ## Implementation baseline
 
@@ -392,6 +402,11 @@ so status does not diverge across design records.
     under an independent scope, deletion-safe visibility, committed contract
     artifacts, and dependency-free resumable-SSE/export examples without
     prematurely publishing a generated SDK.
+30. **Done:** Add provider-neutral plan entitlements, digest-only optimistic
+    reconciliation, a scoped public read, fail-closed managed admission and
+    watch scheduling, suspension-safe recovery/privacy behavior, and
+    PostgreSQL 18 least-privilege evidence without adding billing concepts to
+    the measurement engine.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -403,7 +418,7 @@ notification acknowledgement, email delivery, and operational reporting are
 repository-complete, while actual multi-region deployment, retained production
 SLO history, and mail-provider evidence remain external gates. Milestone 4 has
 stable REST/JSON and SSE publication plus its bounded batch, polling,
-idempotency, quota, usage-report, search-completion webhook, and consent-bound
-remote client boundaries, private search history, bounded export, and
-adoption-focused examples. The next ordered repository-completable work is
-plan entitlements and billing boundaries.
+idempotency, quota, usage-report, search-completion webhook, consent-bound
+remote client boundaries, private search history, bounded export,
+adoption-focused examples, and provider-neutral plan entitlements. Payment
+provider integration and hosted commercial evidence remain external.

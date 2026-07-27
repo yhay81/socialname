@@ -40,19 +40,21 @@ use socialname_protocol::{
     EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
     NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
     NotificationEndpointId, OperationalFailure, OperationalFailureKind, OperationalReportResource,
-    ProbeBudget, ProtocolVersion, RegionClass, ResultSource, RuleHash,
-    SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
-    SearchCompletionWebhookSubscriptionState, SearchCreateRequest, SearchEvent, SearchEventData,
-    SearchExportPage, SearchHistoryPage, SearchId, SearchMode, SearchProgress, SearchResource,
-    SearchState, SearchTerminalState, SiteId, SloStatus, SyncPolicy, Target, TargetSelection,
-    Username, Validate, WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource,
-    WatchSchedule, WatchState, WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
+    PlanCapability, PlanCode, PlanEntitlementResource, PlanEntitlementState, ProbeBudget,
+    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCompletionWebhookCreateRequest,
+    SearchCompletionWebhookResource, SearchCompletionWebhookSubscriptionState, SearchCreateRequest,
+    SearchEvent, SearchEventData, SearchExportPage, SearchHistoryPage, SearchId, SearchMode,
+    SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId, SloStatus,
+    SyncPolicy, Target, TargetSelection, Username, Validate, WatchCreateRequest, WatchListPage,
+    WatchPatchRequest, WatchResource, WatchSchedule, WatchState, WatchStateUpdate,
+    WatchTransitionPage, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
-    BackupExpiryVerificationInput, InitialRulePackTrust, RuleRegistryError, ServerConfig,
-    TargetDeletionSelector, VerifiedTargetDeletionInput, apply_rule_pack_metadata, build_router,
-    export_restore_ledger, migrate_database, replay_restore_ledger,
+    BackupExpiryVerificationInput, InitialRulePackTrust, PlanOperatorError, PlanReconciliation,
+    ReconciledAccessState, RuleRegistryError, ServerConfig, TargetDeletionSelector,
+    VerifiedTargetDeletionInput, apply_rule_pack_metadata, build_router, export_restore_ledger,
+    migrate_database, reconcile_plan_entitlement, replay_restore_ledger,
     request_verified_target_deletion, verify_backup_expiry,
 };
 use socialname_worker::{
@@ -102,6 +104,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_search_history_export_boundary(&pool).await;
     assert_watch_api_boundary(&pool).await;
     assert_managed_probe_job_boundary(&pool).await;
+    assert_plan_entitlement_boundary(&pool).await;
     assert_developer_usage_reporting_boundary(&pool).await;
     assert_evidence_capsule_retention_boundary(&pool).await;
     assert_notification_acknowledgement_boundary(&pool).await;
@@ -132,7 +135,8 @@ async fn reset_test_state(pool: &PgPool) {
             evidence_retention_receipts, deletion_resource_matches,
             deletion_backup_verifications, deletion_restore_request_links,
             deletion_restore_runs, developer_quota_policies,
-            developer_usage_records
+            developer_usage_records, tenant_plan_entitlements,
+            plan_entitlement_events
         CASCADE;
 
         DO $$
@@ -194,7 +198,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('evidence_retention_receipts'), ('deletion_resource_matches'),
                 ('deletion_backup_verifications'), ('deletion_restore_runs'),
                 ('deletion_restore_request_links'),
-                ('developer_quota_policies'), ('developer_usage_records')
+                ('developer_quota_policies'), ('developer_usage_records'),
+                ('tenant_plan_entitlements'), ('plan_entitlement_events')
         )
         SELECT count(*)
         FROM required
@@ -204,7 +209,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 52);
+    assert_eq!(required_tables, 54);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -213,7 +218,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 40);
+    assert_eq!(tenant_policies, 42);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -223,7 +228,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 40);
+    assert_eq!(forced_rls_tables, 42);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -502,6 +507,36 @@ async fn install_fixtures(pool: &PgPool) {
     .execute(pool)
     .await
     .unwrap();
+
+    let effective_at_unix_ms = current_unix_ms() - 1_000;
+    for (workspace_id, source_event_id) in [
+        (
+            Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+            "fixture-evaluation-tenant-one",
+        ),
+        (
+            Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+            "fixture-evaluation-tenant-two",
+        ),
+    ] {
+        let output = reconcile_plan_entitlement(
+            pool,
+            PlanReconciliation::new(
+                workspace_id,
+                1,
+                PlanCode::Evaluation,
+                ReconciledAccessState::Active,
+                effective_at_unix_ms,
+                None,
+                source_event_id,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(!output.replayed);
+        assert_eq!(output.entitlement.state, PlanEntitlementState::Active);
+    }
 }
 
 async fn install_api_key_fixtures(pool: &PgPool) {
@@ -704,6 +739,10 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             data_lineage_edges, probe_jobs, probe_job_consumers,
             developer_quota_policies, developer_usage_records
             TO socialname_migration_test_app;
+        GRANT SELECT (
+            tenant_id, plan_code, access_state, revision,
+            effective_at, access_until, updated_at
+        ) ON tenant_plan_entitlements TO socialname_migration_test_app;
         GRANT INSERT ON
             clients, consent_grants, consent_events,
             searches, search_targets, search_events, watches, watch_targets,
@@ -741,6 +780,8 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
             TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION socialname_lock_developer_quota(uuid)
+            TO socialname_migration_test_app;
+        GRANT EXECUTE ON FUNCTION socialname_has_plan_capability(uuid, text)
             TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION
             socialname_redact_deletion_job_targets(uuid, uuid)
@@ -802,6 +843,25 @@ async fn assert_tenant_isolation(pool: &PgPool) {
     assert_database_code(cross_tenant_quota_lock, "42501");
     quota_transaction.rollback().await.unwrap();
 
+    let mut plan_transaction = pool.begin().await.unwrap();
+    plan_transaction
+        .execute("SET LOCAL ROLE socialname_migration_test_app")
+        .await
+        .unwrap();
+    sqlx::query("SELECT set_config('socialname.tenant_id', $1, true)")
+        .bind("00000000-0000-0000-0000-000000000001")
+        .execute(&mut *plan_transaction)
+        .await
+        .unwrap();
+    let cross_tenant_plan = sqlx::query("SELECT socialname_has_plan_capability($1, $2)")
+        .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap())
+        .bind("managed_search")
+        .execute(&mut *plan_transaction)
+        .await
+        .unwrap_err();
+    assert_database_code(cross_tenant_plan, "42501");
+    plan_transaction.rollback().await.unwrap();
+
     let can_read_credentials: bool = sqlx::query_scalar(
         "SELECT has_table_privilege(\
             'socialname_migration_test_app', 'api_key_credentials', 'SELECT'\
@@ -860,6 +920,45 @@ async fn assert_tenant_isolation(pool: &PgPool) {
     assert!(can_update_search_state);
     assert!(!can_update_idempotency_hash);
     assert!(!can_update_normalized_username);
+
+    let can_read_plan_code: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'tenant_plan_entitlements', \
+            'plan_code', 'SELECT'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let can_read_plan_event_hash: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'tenant_plan_entitlements', \
+            'source_event_hash', 'SELECT'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let can_update_entitlement: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            'socialname_migration_test_app', 'tenant_plan_entitlements', 'UPDATE'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let can_read_plan_events: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            'socialname_migration_test_app', 'plan_entitlement_events', 'SELECT'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(can_read_plan_code);
+    assert!(!can_read_plan_event_hash);
+    assert!(!can_update_entitlement);
+    assert!(!can_read_plan_events);
 }
 
 async fn assert_cross_tenant_references_are_rejected(pool: &PgPool) {
@@ -4114,6 +4213,501 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     .await;
     application_pool.close().await;
     store.close().await;
+}
+
+async fn assert_plan_entitlement_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
+        .expect("worker database URL must accompany the PostgreSQL integration test");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&worker_database_url)
+        .await
+        .unwrap();
+    let workspace_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let writer_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let reader_token = api_key_token("cccccccccccccccc", 0x33);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+
+    let initial =
+        server_request(&application_pool, "/v1/workspace/plan", Some(&writer_token)).await;
+    assert_eq!(initial.status(), StatusCode::OK);
+    let initial: PlanEntitlementResource =
+        serde_json::from_value(json_body(initial).await).unwrap();
+    assert!(initial.validate().is_ok());
+    assert_eq!(initial.plan, PlanCode::Evaluation);
+    assert_eq!(initial.state, PlanEntitlementState::Active);
+    assert_eq!(
+        initial.capabilities,
+        [PlanCapability::ManagedSearch, PlanCapability::Monitoring]
+    );
+    assert_eq!(initial.revision, 2);
+
+    let wrong_scope =
+        server_request(&application_pool, "/v1/workspace/plan", Some(&reader_token)).await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_scope, ApiErrorCode::Forbidden).await;
+    let other_tenant = server_request(
+        &application_pool,
+        "/v1/workspace/plan",
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(other_tenant.status(), StatusCode::OK);
+    let other_tenant: PlanEntitlementResource =
+        serde_json::from_value(json_body(other_tenant).await).unwrap();
+    assert_eq!(other_tenant.plan, PlanCode::Evaluation);
+    assert_eq!(other_tenant.revision, 2);
+
+    let existing_search = create_private_search(&application_pool, "plan-existing-search").await;
+    let unbound_search = create_private_search(&application_pool, "plan-unbound-search").await;
+    let existing_search_id = Uuid::parse_str(existing_search.search_id.as_str()).unwrap();
+    let unbound_search_id = Uuid::parse_str(unbound_search.search_id.as_str()).unwrap();
+    let webhook_request = SearchCompletionWebhookCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        endpoint_id: NotificationEndpointId::new("00000000-0000-0000-0000-000000000071").unwrap(),
+    };
+    let webhook_path = format!("/v1/searches/{existing_search_id}/completion-webhook");
+    let existing_webhook = server_request_with(
+        &application_pool,
+        Method::POST,
+        &webhook_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&webhook_request).unwrap(),
+    )
+    .await;
+    assert_eq!(existing_webhook.status(), StatusCode::CREATED);
+
+    let plan_consent_grant_id = "00000000-0000-0000-0000-000000000031";
+    let existing_watch =
+        create_managed_watch(&application_pool, "plan-watch", plan_consent_grant_id).await;
+    let watch_id = Uuid::parse_str(existing_watch.watch_id.as_str()).unwrap();
+    let watch_path = format!("/v1/watches/{watch_id}");
+    sqlx::query(
+        "UPDATE watches SET next_run_at = updated_at + interval '1 second' \
+         WHERE tenant_id = $1 AND id <> $2 AND state = 'active'",
+    )
+    .bind(workspace_id)
+    .bind(watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let eligible_rule_version_id: Uuid = sqlx::query_scalar(
+        "SELECT version.id \
+         FROM rule_versions AS version \
+         JOIN rule_packs AS pack ON pack.id = version.rule_pack_id \
+         JOIN sites AS site ON site.id = version.site_id \
+         WHERE site.id = 'managed-test' \
+           AND site.state = 'promoted' \
+           AND version.enabled \
+           AND pack.state = 'active' \
+           AND pack.published_at IS NOT NULL \
+           AND (pack.expires_at IS NULL OR pack.expires_at > clock_timestamp()) \
+           AND EXISTS (\
+               SELECT 1 FROM rule_health_records AS health \
+               WHERE health.rule_version_id = version.id \
+                 AND health.region_class = 'jp' \
+                 AND health.state = 'healthy' \
+                 AND health.evidence_expires_at > clock_timestamp()\
+           ) \
+         ORDER BY version.created_at DESC \
+         LIMIT 1",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let due_before_suspension: Option<Uuid> =
+        sqlx::query_scalar("SELECT watch_id FROM socialname_worker_lock_due_watch($1, 'jp')")
+            .bind(eligible_rule_version_id)
+            .fetch_optional(&worker_pool)
+            .await
+            .unwrap();
+    assert!(due_before_suspension.is_some());
+
+    let now = current_unix_ms();
+    let pending_request = PlanReconciliation::new(
+        workspace_id,
+        2,
+        PlanCode::Developer,
+        ReconciledAccessState::Active,
+        now + 60_000,
+        None,
+        "private-provider-event-pending",
+    )
+    .unwrap();
+    let pending = reconcile_plan_entitlement(administrator_pool, pending_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(pending.entitlement.state, PlanEntitlementState::Pending);
+    assert!(pending.entitlement.capabilities.is_empty());
+    assert_eq!(pending.entitlement.revision, 3);
+    assert!(!pending.replayed);
+
+    let replayed = reconcile_plan_entitlement(administrator_pool, pending_request)
+        .await
+        .unwrap();
+    assert!(replayed.replayed);
+    assert_eq!(replayed.entitlement.revision, 3);
+    let event_conflict = reconcile_plan_entitlement(
+        administrator_pool,
+        PlanReconciliation::new(
+            workspace_id,
+            2,
+            PlanCode::Monitor,
+            ReconciledAccessState::Active,
+            now + 60_000,
+            None,
+            "private-provider-event-pending",
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(event_conflict, PlanOperatorError::EventConflict));
+    assert!(!format!("{event_conflict:?}").contains("private-provider-event"));
+    let revision_conflict = reconcile_plan_entitlement(
+        administrator_pool,
+        PlanReconciliation::new(
+            workspace_id,
+            2,
+            PlanCode::Monitor,
+            ReconciledAccessState::Active,
+            now - 1_000,
+            None,
+            "private-provider-event-stale",
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        revision_conflict,
+        PlanOperatorError::RevisionConflict
+    ));
+
+    let grace = reconcile_plan_entitlement(
+        administrator_pool,
+        PlanReconciliation::new(
+            workspace_id,
+            3,
+            PlanCode::Monitor,
+            ReconciledAccessState::Active,
+            now - 1_000,
+            Some(now + 60_000),
+            "private-provider-event-grace",
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(grace.entitlement.state, PlanEntitlementState::Active);
+    assert_eq!(grace.entitlement.revision, 4);
+    assert_eq!(
+        grace.entitlement.capabilities,
+        [PlanCapability::ManagedSearch, PlanCapability::Monitoring]
+    );
+
+    let suspended = reconcile_plan_entitlement(
+        administrator_pool,
+        PlanReconciliation::new(
+            workspace_id,
+            4,
+            PlanCode::Monitor,
+            ReconciledAccessState::Suspended,
+            now - 1_000,
+            None,
+            "private-provider-event-suspended",
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(suspended.entitlement.state, PlanEntitlementState::Suspended);
+    assert!(suspended.entitlement.capabilities.is_empty());
+    assert_eq!(suspended.entitlement.revision, 5);
+
+    let suspended_api =
+        server_request(&application_pool, "/v1/workspace/plan", Some(&writer_token)).await;
+    assert_eq!(suspended_api.status(), StatusCode::OK);
+    let suspended_api: PlanEntitlementResource =
+        serde_json::from_value(json_body(suspended_api).await).unwrap();
+    assert_eq!(suspended_api.state, PlanEntitlementState::Suspended);
+    assert!(suspended_api.capabilities.is_empty());
+
+    let due_during_suspension: Option<Uuid> =
+        sqlx::query_scalar("SELECT watch_id FROM socialname_worker_lock_due_watch($1, 'jp')")
+            .bind(eligible_rule_version_id)
+            .fetch_optional(&worker_pool)
+            .await
+            .unwrap();
+    assert_eq!(due_during_suspension, None);
+
+    let search_count_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM searches WHERE tenant_id = $1")
+            .bind(workspace_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    let usage_count_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM developer_usage_records WHERE tenant_id = $1")
+            .bind(workspace_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    let denied_search = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "plan-denied-search"),
+        ],
+        serde_json::to_string(&private_search_request(
+            SyncPolicy::Private,
+            "github",
+            60_000,
+        ))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(denied_search.status(), StatusCode::FORBIDDEN);
+    assert_api_error(denied_search, ApiErrorCode::Forbidden).await;
+    let search_count_after: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM searches WHERE tenant_id = $1")
+            .bind(workspace_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    let usage_count_after: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM developer_usage_records WHERE tenant_id = $1")
+            .bind(workspace_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(search_count_after, search_count_before);
+    assert_eq!(usage_count_after, usage_count_before);
+
+    let replayed_search = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "plan-existing-search"),
+        ],
+        serde_json::to_string(&private_search_request(
+            SyncPolicy::Private,
+            "github",
+            60_000,
+        ))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(replayed_search.status(), StatusCode::OK);
+    let replayed_search: SearchResource =
+        serde_json::from_value(json_body(replayed_search).await).unwrap();
+    assert_eq!(replayed_search.search_id, existing_search.search_id);
+
+    let history = server_request(
+        &application_pool,
+        "/v1/searches?limit=10",
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(history.status(), StatusCode::OK);
+    let history: SearchHistoryPage = serde_json::from_value(json_body(history).await).unwrap();
+    assert!(
+        history
+            .searches
+            .iter()
+            .any(|search| search.search_id == existing_search.search_id)
+    );
+
+    let replayed_webhook = server_request_with(
+        &application_pool,
+        Method::POST,
+        &webhook_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&webhook_request).unwrap(),
+    )
+    .await;
+    assert_eq!(replayed_webhook.status(), StatusCode::OK);
+    let denied_webhook_path = format!("/v1/searches/{unbound_search_id}/completion-webhook");
+    let denied_webhook = server_request_with(
+        &application_pool,
+        Method::POST,
+        &denied_webhook_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&webhook_request).unwrap(),
+    )
+    .await;
+    assert_eq!(denied_webhook.status(), StatusCode::FORBIDDEN);
+    assert_api_error(denied_webhook, ApiErrorCode::Forbidden).await;
+    let cancelled_webhook = server_request_with(
+        &application_pool,
+        Method::DELETE,
+        &webhook_path,
+        Some(&writer_token),
+        &[],
+        String::new(),
+    )
+    .await;
+    assert_eq!(cancelled_webhook.status(), StatusCode::OK);
+
+    let denied_watch = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/watches",
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&managed_watch_request(
+            "plan-denied-watch",
+            plan_consent_grant_id,
+        ))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(denied_watch.status(), StatusCode::FORBIDDEN);
+    assert_api_error(denied_watch, ApiErrorCode::Forbidden).await;
+    let pause = WatchPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 1,
+        state: Some(WatchStateUpdate::Paused),
+        maximum_age_ms: None,
+        schedule: None,
+        probe_budget: None,
+        notification_endpoint_ids: None,
+        retention_days: None,
+    };
+    let paused = server_request_with(
+        &application_pool,
+        Method::PATCH,
+        &watch_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&pause).unwrap(),
+    )
+    .await;
+    assert_eq!(paused.status(), StatusCode::OK);
+    let paused: WatchResource = serde_json::from_value(json_body(paused).await).unwrap();
+    assert_eq!(paused.state, WatchState::Paused);
+    assert_eq!(paused.revision, 2);
+    let resume = WatchPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 2,
+        state: Some(WatchStateUpdate::Active),
+        maximum_age_ms: None,
+        schedule: None,
+        probe_budget: None,
+        notification_endpoint_ids: None,
+        retention_days: None,
+    };
+    let denied_resume = server_request_with(
+        &application_pool,
+        Method::PATCH,
+        &watch_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&resume).unwrap(),
+    )
+    .await;
+    assert_eq!(denied_resume.status(), StatusCode::FORBIDDEN);
+    assert_api_error(denied_resume, ApiErrorCode::Forbidden).await;
+    let deleting = server_request_with(
+        &application_pool,
+        Method::DELETE,
+        &watch_path,
+        Some(&writer_token),
+        &[],
+        String::new(),
+    )
+    .await;
+    assert_eq!(deleting.status(), StatusCode::OK);
+    let deleting: WatchResource = serde_json::from_value(json_body(deleting).await).unwrap();
+    assert_eq!(deleting.state, WatchState::Deleting);
+    assert_eq!(deleting.revision, 3);
+
+    let cancelled_search = server_request_with(
+        &application_pool,
+        Method::DELETE,
+        &format!("/v1/searches/{unbound_search_id}"),
+        Some(&writer_token),
+        &[],
+        String::new(),
+    )
+    .await;
+    assert_eq!(cancelled_search.status(), StatusCode::OK);
+
+    let forbidden_provider_columns: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns \
+         WHERE table_schema = 'public' \
+           AND table_name IN ('tenant_plan_entitlements', 'plan_entitlement_events') \
+           AND column_name IN (\
+               'provider', 'provider_customer_id', 'price_id', \
+               'invoice_id', 'payment_method', 'card_number'\
+           )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(forbidden_provider_columns, 0);
+    let exposed_event_values: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events \
+         WHERE tenant_id = $1 \
+           AND details::text LIKE '%private-provider-event%'",
+    )
+    .bind(workspace_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(exposed_event_values, 0);
+    let invalid_event_hashes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM plan_entitlement_events \
+         WHERE tenant_id = $1 \
+           AND (octet_length(source_event_hash) <> 32 \
+                OR octet_length(request_hash) <> 32)",
+    )
+    .bind(workspace_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(invalid_event_hashes, 0);
+
+    let restored = reconcile_plan_entitlement(
+        administrator_pool,
+        PlanReconciliation::new(
+            workspace_id,
+            5,
+            PlanCode::Evaluation,
+            ReconciledAccessState::Active,
+            current_unix_ms() - 1_000,
+            None,
+            "private-provider-event-restored",
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(restored.entitlement.state, PlanEntitlementState::Active);
+    assert_eq!(restored.entitlement.revision, 6);
+    assert_eq!(
+        restored.entitlement.capabilities,
+        [PlanCapability::ManagedSearch, PlanCapability::Monitoring]
+    );
+
+    worker_pool.close().await;
+    application_pool.close().await;
 }
 
 async fn assert_developer_usage_reporting_boundary(administrator_pool: &PgPool) {
@@ -7875,7 +8469,22 @@ async fn create_managed_watch(
     username: &str,
     consent_grant_id: &str,
 ) -> WatchResource {
-    let request = WatchCreateRequest {
+    let request = managed_watch_request(username, consent_grant_id);
+    let response = server_request_with(
+        application_pool,
+        Method::POST,
+        "/v1/watches",
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    serde_json::from_value(json_body(response).await).unwrap()
+}
+
+fn managed_watch_request(username: &str, consent_grant_id: &str) -> WatchCreateRequest {
+    WatchCreateRequest {
         schema: ProtocolVersion::ApiV1,
         targets: TargetSelection {
             usernames: vec![Username::new(username).unwrap()],
@@ -7897,18 +8506,7 @@ async fn create_managed_watch(
         ],
         private_history_consent_grant_id: ConsentGrantId::new(consent_grant_id).unwrap(),
         retention_days: 400,
-    };
-    let response = server_request_with(
-        application_pool,
-        Method::POST,
-        "/v1/watches",
-        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
-        &[("content-type", "application/json")],
-        serde_json::to_string(&request).unwrap(),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::CREATED);
-    serde_json::from_value(json_body(response).await).unwrap()
+    }
 }
 
 fn managed_result(

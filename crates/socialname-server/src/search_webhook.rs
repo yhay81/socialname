@@ -6,7 +6,7 @@ use axum::{
 };
 use socialname_protocol::{
     ApiErrorCode, ApiKeyScope, DeliveryErrorCode, NotificationDeliveryId,
-    NotificationDeliveryState, NotificationEndpointId, ProtocolVersion, RequestId,
+    NotificationDeliveryState, NotificationEndpointId, PlanCapability, ProtocolVersion, RequestId,
     SearchCompletionDeliveryStatus, SearchCompletionWebhookCreateRequest,
     SearchCompletionWebhookResource, SearchCompletionWebhookSubscriptionState, SearchId,
     SearchState, Validate, ValidationCode, ValidationErrors,
@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::{
     ServerState,
     auth::{self, AuthenticatedPrincipal, AuthenticationError},
+    plan::{self, PlanCapabilityError},
     standard_api_error, unauthenticated_response,
 };
 
@@ -182,6 +183,16 @@ async fn persist_binding(
             return Err(SearchWebhookError::Conflict);
         }
     } else {
+        plan::require_plan_capability(
+            &mut transaction,
+            principal.workspace_id,
+            PlanCapability::ManagedSearch,
+        )
+        .await
+        .map_err(|error| match error {
+            PlanCapabilityError::Required => SearchWebhookError::EntitlementRequired,
+            PlanCapabilityError::Unavailable => SearchWebhookError::Unavailable,
+        })?;
         sqlx::query(
             "INSERT INTO audit_events (\
                 id, tenant_id, actor_api_key_id, action, resource_kind, \
@@ -492,7 +503,8 @@ fn error_response(request_id: RequestId, error: SearchWebhookError) -> Response 
             request_id,
             standard_api_error(ApiErrorCode::Conflict, false),
         ),
-        SearchWebhookError::Authentication(AuthenticationError::Forbidden) => {
+        SearchWebhookError::EntitlementRequired
+        | SearchWebhookError::Authentication(AuthenticationError::Forbidden) => {
             crate::api_error_response(
                 StatusCode::FORBIDDEN,
                 request_id,
@@ -535,6 +547,8 @@ enum SearchWebhookError {
     NotFound,
     #[error("search-completion webhook conflicts with current state")]
     Conflict,
+    #[error("the current plan does not grant managed search")]
+    EntitlementRequired,
     #[error(transparent)]
     Authentication(#[from] AuthenticationError),
     #[error("search-completion webhook storage is unavailable")]

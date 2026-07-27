@@ -36,8 +36,9 @@ Every workspace has one operator-controlled software policy:
 The initial safe defaults are 10,000 target pairs per UTC day for a tenant and
 2,000 per API key, with the key limit no greater than the tenant limit.
 Operator values are bounded from 1 through 1,000,000. These are deployment
-guardrails, not commercial plan entitlements; the later billing/entitlement
-roadmap item may select a policy but cannot move quota enforcement into the
+guardrails, not commercial plan entitlements. The implemented entitlement
+boundary determines whether a new managed search may reach quota admission but
+does not select, replace, or bypass either limit; neither concern enters the
 measurement engine.
 
 Database time defines half-open UTC periods `[00:00, next 00:00)`. Search
@@ -175,6 +176,8 @@ The real PostgreSQL 18 gate proves:
 Search-completion webhooks are implemented as the adjacent, separately
 versioned binding and delivery boundary; see
 [Search-completion webhooks](search-completion-webhooks.md).
-Plan selection, billing, hosted origin, endpoint ownership, production
-retention scheduling, alert ownership, and elapsed SLA evidence remain later
-software or external gates.
+Plan admission is implemented separately in
+[Plan entitlements and billing boundary](plan-entitlements-billing.md).
+Payment-provider integration, hosted origin, endpoint ownership, production
+retention scheduling, alert ownership, and elapsed SLA evidence remain
+external or later gates.
