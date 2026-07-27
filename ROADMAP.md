@@ -1718,6 +1718,12 @@ Checkout, pricing, taxation, invoices, provider webhook verification,
 self-service subscription management, hosted deployment, and live commercial
 reconciliation remain external or later gates and are not claimed.
 
+Quality run
+[`30241403083`](https://github.com/yhay81/socialname/actions/runs/30241403083)
+passed Rust core including PostgreSQL 18 plan migration, suspension,
+least-privilege, and contract-drift tests; Windows/macOS desktop, monitoring
+console, and managed-worker OCI also passed for commit `52f18dd`.
+
 Acceptance gate:
 
 - Local test behavior and managed API behavior use the same engine, rule pack,
