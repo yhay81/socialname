@@ -1804,6 +1804,12 @@ desktop and 375-by-812 viewports with no console errors or horizontal overflow.
 Exact behavior is in
 [`docs/team-workflows.md`](docs/team-workflows.md).
 
+Quality run
+[`30264273249`](https://github.com/yhay81/socialname/actions/runs/30264273249)
+passed Rust core including PostgreSQL 18 Team migration, role, review, audit,
+retention, and contract-drift tests; Windows/macOS desktop, monitoring console,
+and managed-worker OCI also passed for commit `9dbca73`.
+
 Acceptance gate:
 
 - Ordinary CLI installations never execute unrelated central jobs.
