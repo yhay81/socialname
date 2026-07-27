@@ -1931,6 +1931,18 @@ unchanged acceptance, isolation, and purge behavior. Replaying every
 threshold against labeled canary history plus scheduled production operation
 remain external calibration gates and are not claimed.
 
+Quality run
+[`30306865708`](https://github.com/yhay81/socialname/actions/runs/30306865708)
+passed Rust core including the PostgreSQL 18 calibration, recomputation, and
+collapse tests plus Windows/macOS desktop, monitoring console, and
+managed-worker OCI for commit `caf5cce`. Its first attempt exposed a latent
+pre-existing race in the plan-entitlement fixture — forcing watches due via
+`updated_at + 1 second` leaves no due watch when a fast run arrives within
+one second of the managed section's last watch update — which commit
+`c5a3b96` fixed with an explicit past database timestamp; Quality run
+[`30307764479`](https://github.com/yhay81/socialname/actions/runs/30307764479)
+passed the complete matrix for that fix.
+
 Acceptance gate:
 
 - Ordinary CLI installations never execute unrelated central jobs.
