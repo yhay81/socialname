@@ -1482,6 +1482,12 @@ availability/SLA history, plans, and billing remain external or later gates.
 Exact behavior and least-privilege grants are documented in
 [`docs/developer-usage-reporting.md`](docs/developer-usage-reporting.md).
 
+Quality run
+[`30233689025`](https://github.com/yhay81/socialname/actions/runs/30233689025)
+passed Rust core including API contract drift and PostgreSQL 18 quota/report
+tests, Windows/macOS desktop, monitoring console, and managed-worker OCI for
+commit `7d02608`.
+
 Acceptance gate:
 
 - Local test behavior and managed API behavior use the same engine, rule pack,
