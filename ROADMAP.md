@@ -1732,7 +1732,13 @@ Acceptance gate:
 
 ## Milestone 5 — Team workflows and quality network
 
-Status: **Current**
+Status: **Current; two items intentionally open on external triggers**
+
+Next executable item: none in this milestone. Collaboration and incident
+integrations wait for demonstrated customer workflow demand, and the
+community measurement daemon waits until managed regional workers are proven
+in Milestone 3. Both triggers are external, so the remaining repository work
+is the Milestone 3 regional deployment gate.
 
 - [x] Add organizations, roles, audit, review, acknowledgement, and retention
       controls.
@@ -2005,6 +2011,12 @@ baseline, a transition, or a notification. Publishing shared knowledge
 through a public API resource, labeled-canary threshold replay, and
 multi-region managed operation remain later or external work and are not
 claimed.
+
+Quality run
+[`30311687450`](https://github.com/yhay81/socialname/actions/runs/30311687450)
+passed Rust core including the PostgreSQL 18 quorum, conflict, supersession,
+escalation, and least-privilege tests; Windows/macOS desktop, monitoring
+console, and managed-worker OCI also passed for commit `c43277e`.
 
 Acceptance gate:
 
