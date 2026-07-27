@@ -18,6 +18,7 @@ mod rule_registry_operator;
 mod search;
 mod search_webhook;
 mod target_deletion_operator;
+mod team;
 mod watch;
 mod workspace;
 mod workspace_operator;
@@ -146,7 +147,14 @@ struct ProtectedRouteState {
 
 fn server_required_scope(operation_id: &str) -> ApiKeyScope {
     match operation_id {
-        "getWorkspace" | "getPlanEntitlement" => ApiKeyScope::WorkspaceRead,
+        "getWorkspace"
+        | "getPlanEntitlement"
+        | "getOrganization"
+        | "listOrganizationMembers"
+        | "createOrganizationMember"
+        | "updateOrganizationMember"
+        | "getOrganizationRetentionPolicy"
+        | "updateOrganizationRetentionPolicy" => ApiKeyScope::WorkspaceRead,
         "createSearch"
         | "cancelSearch"
         | "createSearchCompletionWebhook"
@@ -156,7 +164,10 @@ fn server_required_scope(operation_id: &str) -> ApiKeyScope {
         }
         "exportSearch" => ApiKeyScope::DataExport,
         "createWatch" | "updateWatch" | "deleteWatch" => ApiKeyScope::WatchWrite,
-        "listWatches" | "getWatch" | "listWatchTransitions" => ApiKeyScope::WatchRead,
+        "listWatches" | "getWatch" | "listWatchTransitions" | "listTransitionReviews" => {
+            ApiKeyScope::WatchRead
+        }
+        "updateTransitionReview" => ApiKeyScope::WatchWrite,
         "createConsentGrant" | "withdrawConsentGrant" => ApiKeyScope::ConsentWrite,
         "listConsentGrants" | "getConsentGrant" => ApiKeyScope::ConsentRead,
         "getEvidenceCapsule" => ApiKeyScope::EvidenceRead,
@@ -165,7 +176,7 @@ fn server_required_scope(operation_id: &str) -> ApiKeyScope {
         }
         "createNotificationAcknowledgement" => ApiKeyScope::NotificationWrite,
         "getNotificationAcknowledgement" => ApiKeyScope::NotificationRead,
-        "getOperationalReport" => ApiKeyScope::OperationsRead,
+        "getOperationalReport" | "listOrganizationAuditEvents" => ApiKeyScope::OperationsRead,
         "getDeveloperReport" => ApiKeyScope::UsageRead,
         _ => panic!("server route must name one published operation"),
     }
@@ -180,6 +191,61 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             ProtectedRouteState {
                 server: state.clone(),
                 required_scope: server_required_scope("getWorkspace"),
+            },
+            authenticate_request,
+        ));
+    let organization_routes = Router::new()
+        .route("/v1/organization", get(team::get_organization))
+        .route(
+            "/v1/organization/members",
+            get(team::list_organization_members).post(team::create_organization_member),
+        )
+        .route(
+            "/v1/organization/members/{membership_id}",
+            axum::routing::patch(team::patch_organization_member),
+        )
+        .route(
+            "/v1/organization/retention-policy",
+            get(team::get_organization_retention_policy)
+                .patch(team::patch_organization_retention_policy),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("getOrganization"),
+            },
+            authenticate_request,
+        ));
+    let organization_audit_routes = Router::new()
+        .route(
+            "/v1/organization/audit-events",
+            get(team::list_organization_audit_events),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("listOrganizationAuditEvents"),
+            },
+            authenticate_request,
+        ));
+    let review_read_routes = Router::new()
+        .route("/v1/reviews", get(team::list_transition_reviews))
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("listTransitionReviews"),
+            },
+            authenticate_request,
+        ));
+    let review_write_routes = Router::new()
+        .route(
+            "/v1/reviews/{review_id}",
+            axum::routing::patch(team::patch_transition_review),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("updateTransitionReview"),
             },
             authenticate_request,
         ));
@@ -389,6 +455,10 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
         .merge(workspace_routes)
+        .merge(organization_routes)
+        .merge(organization_audit_routes)
+        .merge(review_read_routes)
+        .merge(review_write_routes)
         .merge(search_create_routes)
         .merge(search_read_routes)
         .merge(search_export_routes)

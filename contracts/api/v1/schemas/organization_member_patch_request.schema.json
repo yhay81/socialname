@@ -1,0 +1,101 @@
+{
+  "$defs": {
+    "OrganizationMemberAction": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "change_role",
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/$defs/OrganizationRole"
+            }
+          },
+          "required": [
+            "kind",
+            "role"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "suspend",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "reactivate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "remove",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OrganizationRole": {
+      "enum": [
+        "owner",
+        "administrator",
+        "member",
+        "viewer"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/OrganizationMemberAction"
+    },
+    "expected_revision": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    }
+  },
+  "required": [
+    "schema",
+    "expected_revision",
+    "action"
+  ],
+  "title": "OrganizationMemberPatchRequest",
+  "type": "object"
+}

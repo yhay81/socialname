@@ -1,30 +1,35 @@
 use socialname_protocol::{
-    API_V1_SCHEMA, AccountState, ChannelSlo, ConfirmationBasis, ConsentCollectionProfileVersion,
-    ConsentGrantCreateRequest, ConsentGrantId, ConsentNoticeVersion, ConsentPurpose,
-    ConsentSubjectKind, ContributorDeletionCreateRequest, DELIVERY_SUCCESS_TARGET_BASIS_POINTS,
-    DefinitiveVerdict, DeletionDeadlineSlo, DeletionOverdueMilestones, DeletionReceiptResource,
-    DeletionReceiptState, DeletionRequestId, DeletionRequestResource, DeletionRequestState,
-    DeletionScope, DeletionStoreKind, DeletionStoreReceipt, DeletionStoreState, EmailNotification,
-    EventId, EvidenceCapsuleId, EvidenceCapsuleProfile, EvidenceCapsuleResource,
-    EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest, EvidenceMatcherTrace,
-    EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
-    EvidenceTransportOutcome, EvidenceVantage, InstallationId, LatencySlo,
-    NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
+    API_V1_SCHEMA, AccountState, ApiKeyId, AuditEventId, AuditResourceId, ChannelSlo,
+    ConfirmationBasis, ConsentCollectionProfileVersion, ConsentGrantCreateRequest, ConsentGrantId,
+    ConsentNoticeVersion, ConsentPurpose, ConsentSubjectKind, ContributorDeletionCreateRequest,
+    DELIVERY_SUCCESS_TARGET_BASIS_POINTS, DefinitiveVerdict, DeletionDeadlineSlo,
+    DeletionOverdueMilestones, DeletionReceiptResource, DeletionReceiptState, DeletionRequestId,
+    DeletionRequestResource, DeletionRequestState, DeletionScope, DeletionStoreKind,
+    DeletionStoreReceipt, DeletionStoreState, EmailNotification, EventId, EvidenceCapsuleId,
+    EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
+    EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
+    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId, LatencySlo,
+    MembershipId, NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
     NotificationChannel, NotificationDelivery, NotificationDeliveryId, NotificationEndpointId,
     NotificationLogicalKey, ObservationId, OperationalBacklog, OperationalFailure,
     OperationalFailureKind, OperationalObjectives, OperationalReportResource,
-    OperationalReportWindow, PlanCapability, PlanCode, PlanEntitlementResource,
-    PlanEntitlementState, ProbeBudget, ProtocolVersion, RatioSlo, RegionClass, ResultSource,
-    RuleHash, SearchCompletionDeliveryStatus, SearchCompletionOutcome, SearchCompletionWebhook,
-    SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
+    OperationalReportWindow, OrganizationAuditActor, OrganizationAuditEventPage,
+    OrganizationAuditEventResource, OrganizationMemberCreateRequest, OrganizationMemberPage,
+    OrganizationMemberResource, OrganizationMemberState, OrganizationRetentionPolicyPatchRequest,
+    OrganizationRole, OrganizationSubjectReference, PlanCapability, PlanCode,
+    PlanEntitlementResource, PlanEntitlementState, ProbeBudget, ProtocolVersion, RatioSlo,
+    RegionClass, ResultSource, RuleHash, SearchCompletionDeliveryStatus, SearchCompletionOutcome,
+    SearchCompletionWebhook, SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
     SearchCompletionWebhookSubscriptionState, SearchCreateRequest, SearchEvent, SearchEventData,
     SearchExportPage, SearchExportSchema, SearchHistoryPage, SearchId, SearchMode, SearchProgress,
     SearchResource, SearchState, SearchTerminalState, SiteId, SuppressionReason, SyncPolicy,
     TRANSITION_TO_DELIVERY_P95_TARGET_MS, Target, TargetSelection, Transition, TransitionChange,
-    TransitionConfirmation, TransitionId, Username, Validate,
+    TransitionConfirmation, TransitionId, TransitionReviewAction, TransitionReviewId,
+    TransitionReviewPage, TransitionReviewPatchRequest, TransitionReviewResolution,
+    TransitionReviewResource, TransitionReviewState, Username, Validate,
     WATCH_RUN_SUCCESS_TARGET_BASIS_POINTS, WatchCreateRequest, WatchId, WatchListPage,
     WatchResource, WatchSchedule, WatchState, WatchTransitionEntry, WatchTransitionPage,
-    WebhookNotification,
+    WebhookNotification, WorkspaceId,
 };
 
 fn target() -> Target {
@@ -65,6 +70,210 @@ fn plan_entitlement_has_one_provider_neutral_v1_wire_shape() {
     let mut unknown = serde_json::to_value(entitlement).unwrap();
     unknown["provider_customer_id"] = serde_json::json!("forbidden");
     assert!(serde_json::from_value::<PlanEntitlementResource>(unknown).is_err());
+}
+
+#[test]
+fn team_member_contract_keeps_the_subject_provisioning_only() {
+    let subject = OrganizationSubjectReference::new("private-directory-subject").unwrap();
+    let request = OrganizationMemberCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        subject_reference: subject.clone(),
+        display_name: "Incident reviewer".to_owned(),
+        role: OrganizationRole::Member,
+    };
+    assert!(request.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(&request).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "subject_reference": "private-directory-subject",
+            "display_name": "Incident reviewer",
+            "role": "member"
+        })
+    );
+    assert!(!format!("{request:?}").contains(subject.as_str()));
+
+    let member = OrganizationMemberResource {
+        schema: ProtocolVersion::ApiV1,
+        organization_id: WorkspaceId::new("organization_01").unwrap(),
+        membership_id: MembershipId::new("membership_01").unwrap(),
+        display_name: "Incident reviewer".to_owned(),
+        role: OrganizationRole::Member,
+        state: OrganizationMemberState::Active,
+        revision: 1,
+        created_at_unix_ms: 1_000,
+        updated_at_unix_ms: 1_000,
+    };
+    let page = OrganizationMemberPage {
+        schema: ProtocolVersion::ApiV1,
+        members: vec![member],
+        next_cursor: Some(MembershipId::new("membership_01").unwrap()),
+    };
+    assert!(page.validate().is_ok());
+    let json = serde_json::to_value(page).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "members": [{
+                "schema": API_V1_SCHEMA,
+                "organization_id": "organization_01",
+                "membership_id": "membership_01",
+                "display_name": "Incident reviewer",
+                "role": "member",
+                "state": "active",
+                "revision": 1,
+                "created_at_unix_ms": 1_000,
+                "updated_at_unix_ms": 1_000
+            }],
+            "next_cursor": "membership_01"
+        })
+    );
+    assert!(!json.to_string().contains(subject.as_str()));
+    let mut forbidden_extension = json["members"][0].clone();
+    forbidden_extension["subject_reference"] = serde_json::json!("must-not-project");
+    assert!(serde_json::from_value::<OrganizationMemberResource>(forbidden_extension).is_err());
+}
+
+#[test]
+fn team_review_and_retention_contracts_are_closed_and_revisioned() {
+    let retention = OrganizationRetentionPolicyPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 3,
+        minimum_watch_retention_days: 30,
+        maximum_watch_retention_days: 365,
+    };
+    assert!(retention.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(retention).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "expected_revision": 3,
+            "minimum_watch_retention_days": 30,
+            "maximum_watch_retention_days": 365
+        })
+    );
+
+    let member_id = MembershipId::new("membership_01").unwrap();
+    let assignment = TransitionReviewPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: 1,
+        action: TransitionReviewAction::Assign {
+            membership_id: member_id.clone(),
+        },
+    };
+    assert!(assignment.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(assignment).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "expected_revision": 1,
+            "action": {
+                "kind": "assign",
+                "membership_id": "membership_01"
+            }
+        })
+    );
+
+    let review = TransitionReviewResource {
+        schema: ProtocolVersion::ApiV1,
+        review_id: TransitionReviewId::new("review_01").unwrap(),
+        transition: Transition {
+            schema: ProtocolVersion::ApiV1,
+            transition_id: TransitionId::new("transition_01").unwrap(),
+            watch_id: WatchId::new("watch_01").unwrap(),
+            target: target(),
+            change: TransitionChange::AccountState {
+                from: AccountState::Found,
+                to: AccountState::NotFound,
+            },
+            confirmation: TransitionConfirmation::Confirmed {
+                basis: ConfirmationBasis::TwoManagedIndependentRegions,
+            },
+            supporting_observation_ids: vec![
+                ObservationId::new("observation_01").unwrap(),
+                ObservationId::new("observation_02").unwrap(),
+            ],
+            detected_at_unix_ms: 2_000,
+        },
+        state: TransitionReviewState::Resolved,
+        revision: 4,
+        assigned_membership_id: Some(member_id.clone()),
+        acknowledged_by_membership_id: Some(member_id.clone()),
+        acknowledged_at_unix_ms: Some(2_100),
+        resolved_by_membership_id: Some(member_id),
+        resolved_at_unix_ms: Some(2_200),
+        resolution: Some(TransitionReviewResolution::MeasurementFollowUp),
+        created_at_unix_ms: 2_000,
+        updated_at_unix_ms: 2_200,
+    };
+    assert!(review.validate().is_ok());
+    let page = TransitionReviewPage {
+        schema: ProtocolVersion::ApiV1,
+        reviews: vec![review],
+        next_cursor: None,
+    };
+    assert!(page.validate().is_ok());
+    let json = serde_json::to_value(page).unwrap();
+    assert_eq!(json["reviews"][0]["state"], "resolved");
+    assert_eq!(json["reviews"][0]["resolution"], "measurement_follow_up");
+    assert_eq!(
+        json["reviews"][0]["transition"]["confirmation"]["status"],
+        "confirmed"
+    );
+    assert!(json["reviews"][0].get("notes").is_none());
+
+    let forbidden_notes = serde_json::json!({
+        "schema": API_V1_SCHEMA,
+        "expected_revision": 4,
+        "action": {
+            "kind": "resolve",
+            "resolution": "no_action_required"
+        },
+        "notes": "unbounded target data"
+    });
+    assert!(serde_json::from_value::<TransitionReviewPatchRequest>(forbidden_notes).is_err());
+}
+
+#[test]
+fn organization_audit_contract_excludes_internal_details() {
+    let page = OrganizationAuditEventPage {
+        schema: ProtocolVersion::ApiV1,
+        events: vec![OrganizationAuditEventResource {
+            schema: ProtocolVersion::ApiV1,
+            audit_event_id: AuditEventId::new("audit_01").unwrap(),
+            actor: OrganizationAuditActor::ApiKey {
+                api_key_id: ApiKeyId::new("key_01").unwrap(),
+            },
+            action: "transition.review.resolved".to_owned(),
+            resource_kind: "transition_review".to_owned(),
+            resource_id: Some(AuditResourceId::new("review_01").unwrap()),
+            occurred_at_unix_ms: 2_200,
+        }],
+        next_cursor: None,
+    };
+    assert!(page.validate().is_ok());
+    let json = serde_json::to_value(page).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "events": [{
+                "schema": API_V1_SCHEMA,
+                "audit_event_id": "audit_01",
+                "actor": {
+                    "kind": "api_key",
+                    "api_key_id": "key_01"
+                },
+                "action": "transition.review.resolved",
+                "resource_kind": "transition_review",
+                "resource_id": "review_01",
+                "occurred_at_unix_ms": 2_200
+            }],
+            "next_cursor": null
+        })
+    );
+    assert!(json["events"][0].get("details").is_none());
 }
 
 #[test]

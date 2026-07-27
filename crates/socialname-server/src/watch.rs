@@ -166,6 +166,12 @@ async fn persist_watch(
         PlanCapabilityError::Required => WatchError::EntitlementRequired,
         PlanCapabilityError::Unavailable => WatchError::Unavailable,
     })?;
+    verify_organization_retention(
+        &mut transaction,
+        principal.workspace_id,
+        request.retention_days,
+    )
+    .await?;
     verify_watch_consent(&mut transaction, principal, consent_grant_id).await?;
     verify_known_sites(&mut transaction, request).await?;
     verify_active_endpoints(&mut transaction, principal.workspace_id, &endpoint_ids).await?;
@@ -342,6 +348,12 @@ async fn apply_watch_patch(
         .configuration
         .validate()
         .map_err(WatchError::Validation)?;
+    verify_organization_retention(
+        &mut transaction,
+        principal.workspace_id,
+        resource.configuration.retention_days,
+    )
+    .await?;
     let new_revision = patch
         .expected_revision
         .checked_add(1)
@@ -859,6 +871,39 @@ fn parse_watch_state(value: &str) -> Result<WatchState, WatchError> {
         "paused" => Ok(WatchState::Paused),
         "deleting" => Ok(WatchState::Deleting),
         _ => Err(WatchError::Unavailable),
+    }
+}
+
+async fn verify_organization_retention(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    retention_days: u16,
+) -> Result<(), WatchError> {
+    let policy: Option<(i16, i16)> = sqlx::query_as(
+        "SELECT minimum_watch_retention_days, maximum_watch_retention_days \
+         FROM organization_retention_policies \
+         WHERE tenant_id = $1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| WatchError::Unavailable)?;
+    let Some((minimum, maximum)) = policy else {
+        return Err(WatchError::Unavailable);
+    };
+    let retention_days = i16::try_from(retention_days).map_err(|_| {
+        WatchError::Validation(ValidationErrors::new(
+            "retention_days",
+            ValidationCode::OutOfRange,
+        ))
+    })?;
+    if (minimum..=maximum).contains(&retention_days) {
+        Ok(())
+    } else {
+        Err(WatchError::Validation(ValidationErrors::new(
+            "retention_days",
+            ValidationCode::OutOfRange,
+        )))
     }
 }
 

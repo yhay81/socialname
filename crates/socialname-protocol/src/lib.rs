@@ -14,19 +14,20 @@ mod publication;
 mod schema;
 mod search;
 mod search_webhook;
+mod team;
 mod transition;
 mod watch;
 mod workspace;
 
 pub use common::{
-    API_V1_SCHEMA, ApiKeyId, ConsentGrantId, ConsentSubjectId, DefinitiveVerdict,
-    DeletionRequestId, DeliveryErrorCode, EmailAddress, EventId, EvidenceCapsuleId, EvidenceClass,
-    EvidenceDigest, Freshness, FreshnessState, HttpsUrl, IdempotencyKey, IdentifierError,
-    InstallationId, NotificationDeliveryId, NotificationEndpointId, NotificationLogicalKey,
-    ObservationId, ProtocolVersion, RegionClass, RequestId, ResultSource, RuleHash,
-    RuleHealthStatus, SearchId, SearchMode, SiteId, SyncPolicy, Target, TargetSelection,
-    TransitionId, Username, Validate, ValidationCode, ValidationErrors, ValidationIssue, WatchId,
-    WorkspaceId,
+    API_V1_SCHEMA, ApiKeyId, AuditEventId, AuditResourceId, ConsentGrantId, ConsentSubjectId,
+    DefinitiveVerdict, DeletionRequestId, DeliveryErrorCode, EmailAddress, EventId,
+    EvidenceCapsuleId, EvidenceClass, EvidenceDigest, Freshness, FreshnessState, HttpsUrl,
+    IdempotencyKey, IdentifierError, InstallationId, MembershipId, NotificationDeliveryId,
+    NotificationEndpointId, NotificationLogicalKey, ObservationId, ProtocolVersion, RegionClass,
+    RequestId, ResultSource, RuleHash, RuleHealthStatus, SearchId, SearchMode, SiteId, SyncPolicy,
+    Target, TargetSelection, TransitionId, TransitionReviewId, Username, Validate, ValidationCode,
+    ValidationErrors, ValidationIssue, WatchId, WorkspaceId,
 };
 pub use consent::{
     ConsentCollectionProfileVersion, ConsentGrantCreateRequest, ConsentGrantListPage,
@@ -83,6 +84,16 @@ pub use search_webhook::{
     SearchCompletionDeliveryStatus, SearchCompletionOutcome, SearchCompletionWebhook,
     SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
     SearchCompletionWebhookSubscriptionState,
+};
+pub use team::{
+    MAX_TEAM_PAGE_ITEMS, MAXIMUM_WATCH_RETENTION_DAYS, MINIMUM_WATCH_RETENTION_DAYS,
+    OrganizationAuditActor, OrganizationAuditEventPage, OrganizationAuditEventResource,
+    OrganizationMemberAction, OrganizationMemberCreateRequest, OrganizationMemberPage,
+    OrganizationMemberPatchRequest, OrganizationMemberResource, OrganizationMemberState,
+    OrganizationResource, OrganizationRetentionPolicyPatchRequest,
+    OrganizationRetentionPolicyResource, OrganizationRole, OrganizationSubjectReference,
+    TransitionReviewAction, TransitionReviewPage, TransitionReviewPatchRequest,
+    TransitionReviewResolution, TransitionReviewResource, TransitionReviewState,
 };
 pub use transition::{
     AccountState, ConfirmationBasis, MeasurementState, PendingConfirmationReason,

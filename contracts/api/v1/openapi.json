@@ -66,6 +66,30 @@
       "operational_report_resource": {
         "$ref": "./schemas/operational_report_resource.schema.json"
       },
+      "organization_audit_event_page": {
+        "$ref": "./schemas/organization_audit_event_page.schema.json"
+      },
+      "organization_member_create_request": {
+        "$ref": "./schemas/organization_member_create_request.schema.json"
+      },
+      "organization_member_page": {
+        "$ref": "./schemas/organization_member_page.schema.json"
+      },
+      "organization_member_patch_request": {
+        "$ref": "./schemas/organization_member_patch_request.schema.json"
+      },
+      "organization_member_resource": {
+        "$ref": "./schemas/organization_member_resource.schema.json"
+      },
+      "organization_resource": {
+        "$ref": "./schemas/organization_resource.schema.json"
+      },
+      "organization_retention_policy_patch_request": {
+        "$ref": "./schemas/organization_retention_policy_patch_request.schema.json"
+      },
+      "organization_retention_policy_resource": {
+        "$ref": "./schemas/organization_retention_policy_resource.schema.json"
+      },
       "plan_entitlement_resource": {
         "$ref": "./schemas/plan_entitlement_resource.schema.json"
       },
@@ -95,6 +119,15 @@
       },
       "transition": {
         "$ref": "./schemas/transition.schema.json"
+      },
+      "transition_review_page": {
+        "$ref": "./schemas/transition_review_page.schema.json"
+      },
+      "transition_review_patch_request": {
+        "$ref": "./schemas/transition_review_patch_request.schema.json"
+      },
+      "transition_review_resource": {
+        "$ref": "./schemas/transition_review_resource.schema.json"
       },
       "watch_create_request": {
         "$ref": "./schemas/watch_create_request.schema.json"
@@ -1614,6 +1647,1043 @@
         ],
         "x-socialname-required-scope": "operations:read",
         "x-socialname-unknown-query-parameters": "forbidden"
+      }
+    },
+    "/v1/organization": {
+      "get": {
+        "operationId": "getOrganization",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/organization_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read the workspace-backed organization and current membership.",
+        "tags": [
+          "organization"
+        ],
+        "x-socialname-required-scope": "workspace:read"
+      }
+    },
+    "/v1/organization/audit-events": {
+      "get": {
+        "operationId": "listOrganizationAuditEvents",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/organization_audit_event_page.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List a bounded target-free organization audit page.",
+        "tags": [
+          "organization"
+        ],
+        "x-socialname-required-scope": "operations:read",
+        "x-socialname-unknown-query-parameters": "forbidden"
+      }
+    },
+    "/v1/organization/members": {
+      "get": {
+        "operationId": "listOrganizationMembers",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/organization_member_page.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List one bounded organization member page without subject references.",
+        "tags": [
+          "organization"
+        ],
+        "x-socialname-required-scope": "workspace:read",
+        "x-socialname-unknown-query-parameters": "forbidden"
+      },
+      "post": {
+        "operationId": "createOrganizationMember",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/organization_member_create_request.schema.json"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/organization_member_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/organization_member_resource.schema.json"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create or exactly replay one tenant-private organization membership.",
+        "tags": [
+          "organization"
+        ],
+        "x-socialname-required-scope": "workspace:read"
+      }
+    },
+    "/v1/organization/members/{membership_id}": {
+      "patch": {
+        "operationId": "updateOrganizationMember",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/organization_member_patch_request.schema.json"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/organization_member_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Apply one role- and revision-guarded membership action.",
+        "tags": [
+          "organization"
+        ],
+        "x-socialname-required-scope": "workspace:read"
+      }
+    },
+    "/v1/organization/retention-policy": {
+      "get": {
+        "operationId": "getOrganizationRetentionPolicy",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/organization_retention_policy_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read the organization-wide enforced watch-retention range.",
+        "tags": [
+          "organization"
+        ],
+        "x-socialname-required-scope": "workspace:read"
+      },
+      "patch": {
+        "operationId": "updateOrganizationRetentionPolicy",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/organization_retention_policy_patch_request.schema.json"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/organization_retention_policy_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Apply one revisioned organization watch-retention policy.",
+        "tags": [
+          "organization"
+        ],
+        "x-socialname-required-scope": "workspace:read"
+      }
+    },
+    "/v1/reviews": {
+      "get": {
+        "operationId": "listTransitionReviews",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/transition_review_page.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List confirmed account-transition reviews with evidence lineage.",
+        "tags": [
+          "reviews"
+        ],
+        "x-socialname-required-scope": "watch:read",
+        "x-socialname-unknown-query-parameters": "forbidden"
+      }
+    },
+    "/v1/reviews/{review_id}": {
+      "patch": {
+        "operationId": "updateTransitionReview",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/transition_review_patch_request.schema.json"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/transition_review_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Assign, acknowledge, or resolve one revisioned review.",
+        "tags": [
+          "reviews"
+        ],
+        "x-socialname-required-scope": "watch:write"
       }
     },
     "/v1/searches": {
@@ -3627,6 +4697,12 @@
   "tags": [
     {
       "name": "workspace"
+    },
+    {
+      "name": "organization"
+    },
+    {
+      "name": "reviews"
     },
     {
       "name": "searches"

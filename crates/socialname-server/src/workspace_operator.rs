@@ -3,7 +3,7 @@ use std::{
     io::{self, Write},
 };
 
-use socialname_protocol::ApiKeyScope;
+use socialname_protocol::{ApiKeyScope, OrganizationRole};
 use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
@@ -18,6 +18,7 @@ pub const WORKSPACE_DISPLAY_NAME_ENV: &str = "SOCIALNAME_WORKSPACE_DISPLAY_NAME"
 pub const MEMBERSHIP_SUBJECT_ENV: &str = "SOCIALNAME_MEMBERSHIP_SUBJECT";
 pub const WORKSPACE_ID_ENV: &str = "SOCIALNAME_WORKSPACE_ID";
 pub const MEMBERSHIP_ID_ENV: &str = "SOCIALNAME_MEMBERSHIP_ID";
+pub const TARGET_MEMBERSHIP_ID_ENV: &str = "SOCIALNAME_TARGET_MEMBERSHIP_ID";
 pub const API_KEY_ID_ENV: &str = "SOCIALNAME_API_KEY_ID";
 pub const API_KEY_SCOPES_ENV: &str = "SOCIALNAME_API_KEY_SCOPES";
 pub const API_KEY_EXPIRES_AT_ENV: &str = "SOCIALNAME_API_KEY_EXPIRES_AT_UNIX_MS";
@@ -140,15 +141,19 @@ impl BootstrapConfig {
 struct ExistingWorkspaceConfig {
     workspace_id: Uuid,
     membership_id: Uuid,
+    target_membership_id: Uuid,
     scopes: Vec<ApiKeyScope>,
     expires_at_unix_ms: Option<i64>,
 }
 
 impl ExistingWorkspaceConfig {
     fn from_env() -> Result<Self, WorkspaceOperatorError> {
+        let membership_id = uuid_from_env(MEMBERSHIP_ID_ENV)?;
         Ok(Self {
             workspace_id: uuid_from_env(WORKSPACE_ID_ENV)?,
-            membership_id: uuid_from_env(MEMBERSHIP_ID_ENV)?,
+            membership_id,
+            target_membership_id: optional_uuid_from_env(TARGET_MEMBERSHIP_ID_ENV)?
+                .unwrap_or(membership_id),
             scopes: scopes_from_env()?,
             expires_at_unix_ms: optional_expiry_from_env()?,
         })
@@ -223,8 +228,11 @@ async fn bootstrap_workspace(
     .map_err(map_database_operation)?;
     sqlx::query(
         "INSERT INTO memberships \
-         (id, tenant_id, subject_id, role, created_at, updated_at) \
-         VALUES ($1, $2, $3, 'owner', clock_timestamp(), clock_timestamp())",
+         (id, tenant_id, subject_id, display_name, role, created_at, updated_at) \
+         VALUES (\
+            $1, $2, $3, 'Workspace owner', 'owner', \
+            clock_timestamp(), clock_timestamp()\
+         )",
     )
     .bind(membership_id)
     .bind(workspace_id)
@@ -273,11 +281,32 @@ async fn issue_api_key(
     let secret_hash = token.secret_hash();
     let scopes = scope_values(&config.scopes);
     let mut transaction = begin_tenant_transaction(pool, config.workspace_id).await?;
-    require_active_operator(&mut transaction, config.workspace_id, config.membership_id).await?;
+    let operator_role =
+        require_active_operator(&mut transaction, config.workspace_id, config.membership_id)
+            .await?;
+    let target_role = require_active_key_target(
+        &mut transaction,
+        config.workspace_id,
+        config.target_membership_id,
+    )
+    .await?;
+    if (operator_role == OrganizationRole::Administrator
+        && config.target_membership_id != config.membership_id
+        && !matches!(
+            target_role,
+            OrganizationRole::Member | OrganizationRole::Viewer
+        ))
+        || config
+            .scopes
+            .iter()
+            .any(|scope| !target_role.permits_scope(*scope))
+    {
+        return Err(WorkspaceOperatorError::Forbidden);
+    }
     insert_api_key(
         &mut transaction,
         config.workspace_id,
-        config.membership_id,
+        config.target_membership_id,
         api_key_id,
         &token,
         &secret_hash,
@@ -299,7 +328,7 @@ async fn issue_api_key(
 
     Ok(IssuedApiKey {
         workspace_id: config.workspace_id,
-        membership_id: config.membership_id,
+        membership_id: config.target_membership_id,
         api_key_id,
         token,
     })
@@ -532,28 +561,41 @@ async fn require_active_operator(
     transaction: &mut Transaction<'_, Postgres>,
     workspace_id: Uuid,
     membership_id: Uuid,
-) -> Result<(), WorkspaceOperatorError> {
-    let active: bool = sqlx::query_scalar(
-        "SELECT EXISTS (\
-            SELECT 1 \
-            FROM memberships AS membership \
-            JOIN tenants AS tenant ON tenant.id = membership.tenant_id \
-            WHERE membership.tenant_id = $1 AND membership.id = $2 \
-              AND membership.state = 'active' \
-              AND membership.role IN ('owner', 'administrator') \
-              AND tenant.state = 'active'\
-         )",
+) -> Result<OrganizationRole, WorkspaceOperatorError> {
+    let role: Option<String> = sqlx::query_scalar(
+        "SELECT membership.role \
+         FROM memberships AS membership \
+         JOIN tenants AS tenant ON tenant.id = membership.tenant_id \
+         WHERE membership.tenant_id = $1 AND membership.id = $2 \
+           AND membership.state = 'active' \
+           AND membership.role IN ('owner', 'administrator') \
+           AND tenant.state = 'active'",
     )
     .bind(workspace_id)
     .bind(membership_id)
-    .fetch_one(&mut **transaction)
+    .fetch_optional(&mut **transaction)
     .await
     .map_err(map_database_operation)?;
-    if active {
-        Ok(())
-    } else {
-        Err(WorkspaceOperatorError::NotFound)
-    }
+    let role = role.ok_or(WorkspaceOperatorError::NotFound)?;
+    OrganizationRole::parse(&role).map_err(|_| WorkspaceOperatorError::DatabaseOperationFailed)
+}
+
+async fn require_active_key_target(
+    transaction: &mut Transaction<'_, Postgres>,
+    workspace_id: Uuid,
+    membership_id: Uuid,
+) -> Result<OrganizationRole, WorkspaceOperatorError> {
+    let role: Option<String> = sqlx::query_scalar(
+        "SELECT role FROM memberships \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'active'",
+    )
+    .bind(workspace_id)
+    .bind(membership_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(map_database_operation)?;
+    let role = role.ok_or(WorkspaceOperatorError::NotFound)?;
+    OrganizationRole::parse(&role).map_err(|_| WorkspaceOperatorError::DatabaseOperationFailed)
 }
 
 fn scopes_from_env() -> Result<Vec<ApiKeyScope>, WorkspaceOperatorError> {
@@ -586,6 +628,15 @@ fn positive_bounded_u32_from_env(variable: &'static str) -> Result<u32, Workspac
 fn uuid_from_env(variable: &'static str) -> Result<Uuid, WorkspaceOperatorError> {
     Uuid::parse_str(&required_env(variable)?)
         .map_err(|_| WorkspaceOperatorError::InvalidConfiguration(variable))
+}
+
+fn optional_uuid_from_env(variable: &'static str) -> Result<Option<Uuid>, WorkspaceOperatorError> {
+    optional_env(variable)?
+        .map(|value| {
+            Uuid::parse_str(&value)
+                .map_err(|_| WorkspaceOperatorError::InvalidConfiguration(variable))
+        })
+        .transpose()
 }
 
 fn required_env(variable: &'static str) -> Result<String, WorkspaceOperatorError> {
@@ -656,6 +707,8 @@ pub enum WorkspaceOperatorError {
     Conflict,
     #[error("workspace, membership, or API key was not found")]
     NotFound,
+    #[error("membership role does not permit the requested API key")]
+    Forbidden,
     #[error("developer quota cannot be lower than current UTC-period usage")]
     QuotaBelowCurrentUsage,
     #[error("workspace operator database operation failed")]
@@ -747,6 +800,7 @@ mod tests {
             ExistingWorkspaceConfig {
                 workspace_id: bootstrap.workspace_id,
                 membership_id: bootstrap.membership_id,
+                target_membership_id: bootstrap.membership_id,
                 scopes: vec![ApiKeyScope::SearchRead],
                 expires_at_unix_ms: None,
             },
@@ -830,11 +884,38 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        let viewer_key = issue_api_key(
+            &pool,
+            ExistingWorkspaceConfig {
+                workspace_id: bootstrap.workspace_id,
+                membership_id: bootstrap.membership_id,
+                target_membership_id: viewer_id,
+                scopes: vec![ApiKeyScope::WorkspaceRead],
+                expires_at_unix_ms: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(viewer_key.membership_id, viewer_id);
+        let viewer_write = issue_api_key(
+            &pool,
+            ExistingWorkspaceConfig {
+                workspace_id: bootstrap.workspace_id,
+                membership_id: bootstrap.membership_id,
+                target_membership_id: viewer_id,
+                scopes: vec![ApiKeyScope::WatchWrite],
+                expires_at_unix_ms: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(viewer_write, WorkspaceOperatorError::Forbidden));
         let viewer_issue = issue_api_key(
             &pool,
             ExistingWorkspaceConfig {
                 workspace_id: bootstrap.workspace_id,
                 membership_id: viewer_id,
+                target_membership_id: viewer_id,
                 scopes: vec![ApiKeyScope::WorkspaceRead],
                 expires_at_unix_ms: None,
             },

@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "expected_revision": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "maximum_watch_retention_days": {
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "minimum_watch_retention_days": {
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    }
+  },
+  "required": [
+    "schema",
+    "expected_revision",
+    "minimum_watch_retention_days",
+    "maximum_watch_retention_days"
+  ],
+  "title": "OrganizationRetentionPolicyPatchRequest",
+  "type": "object"
+}

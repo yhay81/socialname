@@ -37,15 +37,21 @@ use socialname_protocol::{
     DeletionStoreKind, DeletionStoreState, DeveloperReportResource, EventId, EvidenceCapsuleId,
     EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
     EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
-    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
+    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId, MembershipId,
     NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
     NotificationEndpointId, OperationalFailure, OperationalFailureKind, OperationalReportResource,
+    OrganizationAuditEventPage, OrganizationMemberAction, OrganizationMemberCreateRequest,
+    OrganizationMemberPage, OrganizationMemberPatchRequest, OrganizationMemberResource,
+    OrganizationMemberState, OrganizationResource, OrganizationRetentionPolicyPatchRequest,
+    OrganizationRetentionPolicyResource, OrganizationRole, OrganizationSubjectReference,
     PlanCapability, PlanCode, PlanEntitlementResource, PlanEntitlementState, ProbeBudget,
     ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCompletionWebhookCreateRequest,
     SearchCompletionWebhookResource, SearchCompletionWebhookSubscriptionState, SearchCreateRequest,
     SearchEvent, SearchEventData, SearchExportPage, SearchHistoryPage, SearchId, SearchMode,
     SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId, SloStatus,
-    SyncPolicy, Target, TargetSelection, Username, Validate, WatchCreateRequest, WatchListPage,
+    SyncPolicy, Target, TargetSelection, TransitionReviewAction, TransitionReviewPage,
+    TransitionReviewPatchRequest, TransitionReviewResolution, TransitionReviewResource,
+    TransitionReviewState, Username, Validate, WatchCreateRequest, WatchListPage,
     WatchPatchRequest, WatchResource, WatchSchedule, WatchState, WatchStateUpdate,
     WatchTransitionPage, WorkspaceResource,
 };
@@ -99,6 +105,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_transition_and_delivery_safety(&pool).await;
     assert_deletion_deadlines_and_receipts(&pool).await;
     assert_authenticated_workspace_boundary(&pool).await;
+    assert_team_workflow_boundary(&pool).await;
     assert_consent_grant_lifecycle_boundary(&pool).await;
     assert_private_search_and_event_stream_boundary(&pool).await;
     assert_search_history_export_boundary(&pool).await;
@@ -136,7 +143,8 @@ async fn reset_test_state(pool: &PgPool) {
             deletion_backup_verifications, deletion_restore_request_links,
             deletion_restore_runs, developer_quota_policies,
             developer_usage_records, tenant_plan_entitlements,
-            plan_entitlement_events
+            plan_entitlement_events, organization_retention_policies,
+            transition_reviews, transition_review_events
         CASCADE;
 
         DO $$
@@ -199,7 +207,9 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('deletion_backup_verifications'), ('deletion_restore_runs'),
                 ('deletion_restore_request_links'),
                 ('developer_quota_policies'), ('developer_usage_records'),
-                ('tenant_plan_entitlements'), ('plan_entitlement_events')
+                ('tenant_plan_entitlements'), ('plan_entitlement_events'),
+                ('organization_retention_policies'), ('transition_reviews'),
+                ('transition_review_events')
         )
         SELECT count(*)
         FROM required
@@ -209,7 +219,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 54);
+    assert_eq!(required_tables, 57);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -218,7 +228,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 42);
+    assert_eq!(tenant_policies, 45);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -228,7 +238,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 42);
+    assert_eq!(forced_rls_tables, 45);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -722,9 +732,14 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             LOGIN PASSWORD 'socialname-test-password'
             NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
         GRANT USAGE ON SCHEMA public TO socialname_migration_test_app;
-        GRANT SELECT, INSERT ON tenants, memberships TO socialname_migration_test_app;
+        GRANT SELECT ON tenants TO socialname_migration_test_app;
+        GRANT SELECT (
+            id, tenant_id, display_name, role, state, revision,
+            created_at, updated_at
+        ) ON memberships TO socialname_migration_test_app;
         GRANT SELECT ON api_keys TO socialname_migration_test_app;
-        GRANT UPDATE (last_used_at) ON api_keys TO socialname_migration_test_app;
+        GRANT UPDATE (last_used_at, state, revoked_at) ON api_keys
+            TO socialname_migration_test_app;
         GRANT SELECT ON
             sites, clients, consent_grants, consent_events,
             searches, search_targets, search_events,
@@ -737,8 +752,13 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             deletion_requests, deletion_tasks, deletion_receipts,
             deletion_resource_matches, observations,
             data_lineage_edges, probe_jobs, probe_job_consumers,
-            developer_quota_policies, developer_usage_records
+            developer_quota_policies, developer_usage_records,
+            organization_retention_policies, transition_reviews
             TO socialname_migration_test_app;
+        GRANT SELECT (
+            id, tenant_id, actor_membership_id, actor_api_key_id,
+            action, resource_kind, resource_id, occurred_at
+        ) ON audit_events TO socialname_migration_test_app;
         GRANT SELECT (
             tenant_id, plan_code, access_state, revision,
             effective_at, access_until, updated_at
@@ -750,10 +770,22 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             deletion_requests, deletion_tasks,
             suppression_tokens, deletion_resource_matches,
             notification_acknowledgements, audit_events,
-            developer_usage_records
+            developer_usage_records, transition_review_events
             TO socialname_migration_test_app;
         GRANT UPDATE (last_seen_at) ON clients
             TO socialname_migration_test_app;
+        GRANT UPDATE (role, state, revision, updated_at) ON memberships
+            TO socialname_migration_test_app;
+        GRANT UPDATE (
+            revision, minimum_watch_retention_days,
+            maximum_watch_retention_days, updated_by_membership_id, updated_at
+        ) ON organization_retention_policies
+            TO socialname_migration_test_app;
+        GRANT UPDATE (
+            state, revision, assigned_membership_id,
+            acknowledged_by_membership_id, acknowledged_at,
+            resolved_by_membership_id, resolved_at, resolution, updated_at
+        ) ON transition_reviews TO socialname_migration_test_app;
         GRANT UPDATE (withdrawn_at) ON consent_grants
             TO socialname_migration_test_app;
         GRANT UPDATE (
@@ -783,6 +815,9 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION socialname_has_plan_capability(uuid, text)
             TO socialname_migration_test_app;
+        GRANT EXECUTE ON FUNCTION socialname_provision_organization_member(
+            uuid, uuid, uuid, text, text, text
+        ) TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION
             socialname_redact_deletion_job_targets(uuid, uuid)
             TO socialname_migration_test_app;
@@ -871,6 +906,34 @@ async fn assert_tenant_isolation(pool: &PgPool) {
     .await
     .unwrap();
     assert!(!can_read_credentials);
+
+    let can_read_membership_subject: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'memberships', 'subject_id', 'SELECT'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let can_read_audit_details: bool = sqlx::query_scalar(
+        "SELECT has_column_privilege(\
+            'socialname_migration_test_app', 'audit_events', 'details', 'SELECT'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let can_read_review_history: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            'socialname_migration_test_app', 'transition_review_events', 'SELECT'\
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(!can_read_membership_subject);
+    assert!(!can_read_audit_details);
+    assert!(!can_read_review_history);
 
     let can_update_last_used: bool = sqlx::query_scalar(
         "SELECT has_column_privilege(\
@@ -1253,6 +1316,710 @@ async fn assert_authenticated_workspace_boundary(administrator_pool: &PgPool) {
     let not_ready = server_request(&closed_pool, "/health/ready", None).await;
     assert_eq!(not_ready.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(json_body(not_ready).await["status"], "not_ready");
+}
+
+async fn assert_team_workflow_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let owner_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+
+    let members = assert_team_members(administrator_pool, &application_pool, &owner_token).await;
+    assert_team_reviews(
+        administrator_pool,
+        &application_pool,
+        &owner_token,
+        &members,
+    )
+    .await;
+    assert_team_retention(
+        administrator_pool,
+        &application_pool,
+        &owner_token,
+        &members.viewer_token,
+    )
+    .await;
+    assert_team_audit_and_removal(&application_pool, &owner_token, &members).await;
+
+    application_pool.close().await;
+}
+
+struct TeamMembers {
+    member: OrganizationMemberResource,
+    administrator_token: String,
+    member_token: String,
+    viewer_token: String,
+    private_subjects: Vec<String>,
+}
+
+async fn assert_team_members(
+    administrator_pool: &PgPool,
+    application_pool: &PgPool,
+    owner_token: &str,
+) -> TeamMembers {
+    let last_owner = sqlx::query(
+        "UPDATE memberships \
+         SET state = 'suspended', revision = revision + 1, \
+             updated_at = clock_timestamp() \
+         WHERE tenant_id = '00000000-0000-0000-0000-000000000001' \
+           AND id = '00000000-0000-0000-0000-000000000011'",
+    )
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(last_owner, "23514");
+
+    let organization =
+        server_request(application_pool, "/v1/organization", Some(owner_token)).await;
+    assert_eq!(organization.status(), StatusCode::OK);
+    let organization: OrganizationResource =
+        serde_json::from_value(json_body(organization).await).unwrap();
+    assert!(organization.validate().is_ok());
+    assert_eq!(organization.slug, "tenant-one");
+    assert_eq!(
+        organization.authenticated_member.role,
+        OrganizationRole::Owner
+    );
+
+    let administrator_request = team_member_request(
+        "private-team-administrator",
+        "Team administrator",
+        OrganizationRole::Administrator,
+    );
+    let administrator =
+        post_team_member(application_pool, owner_token, &administrator_request).await;
+    assert_eq!(administrator.status(), StatusCode::CREATED);
+    let administrator_body = json_body(administrator).await;
+    assert!(
+        !administrator_body
+            .to_string()
+            .contains(administrator_request.subject_reference.as_str())
+    );
+    let administrator: OrganizationMemberResource =
+        serde_json::from_value(administrator_body).unwrap();
+    assert!(administrator.validate().is_ok());
+
+    let member_request = team_member_request(
+        "private-team-member",
+        "Team member",
+        OrganizationRole::Member,
+    );
+    let member = post_team_member(application_pool, owner_token, &member_request).await;
+    assert_eq!(member.status(), StatusCode::CREATED);
+    let member_body = json_body(member).await;
+    assert!(
+        !member_body
+            .to_string()
+            .contains(member_request.subject_reference.as_str())
+    );
+    let member: OrganizationMemberResource = serde_json::from_value(member_body).unwrap();
+    assert!(member.validate().is_ok());
+
+    let replay = post_team_member(application_pool, owner_token, &member_request).await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay: OrganizationMemberResource =
+        serde_json::from_value(json_body(replay).await).unwrap();
+    assert_eq!(replay.membership_id, member.membership_id);
+
+    let changed_replay = post_team_member(
+        application_pool,
+        owner_token,
+        &OrganizationMemberCreateRequest {
+            display_name: "Changed team member".to_owned(),
+            ..member_request.clone()
+        },
+    )
+    .await;
+    assert_eq!(changed_replay.status(), StatusCode::CONFLICT);
+    assert_api_error(changed_replay, ApiErrorCode::Conflict).await;
+
+    let viewer_request = team_member_request(
+        "private-team-viewer",
+        "Team viewer",
+        OrganizationRole::Viewer,
+    );
+    let viewer = post_team_member(application_pool, owner_token, &viewer_request).await;
+    assert_eq!(viewer.status(), StatusCode::CREATED);
+    let viewer: OrganizationMemberResource =
+        serde_json::from_value(json_body(viewer).await).unwrap();
+
+    let administrator_token = install_team_api_key(
+        administrator_pool,
+        &administrator.membership_id,
+        "1414141414141414",
+        0x14,
+        &[
+            "workspace:read",
+            "operations:read",
+            "watch:read",
+            "watch:write",
+        ],
+    )
+    .await;
+    let member_token = install_team_api_key(
+        administrator_pool,
+        &member.membership_id,
+        "1515151515151515",
+        0x15,
+        &[
+            "workspace:read",
+            "operations:read",
+            "watch:read",
+            "watch:write",
+        ],
+    )
+    .await;
+    let viewer_token = install_team_api_key(
+        administrator_pool,
+        &viewer.membership_id,
+        "1616161616161616",
+        0x16,
+        &[
+            "workspace:read",
+            "operations:read",
+            "watch:read",
+            "watch:write",
+        ],
+    )
+    .await;
+
+    let viewer_organization =
+        server_request(application_pool, "/v1/organization", Some(&viewer_token)).await;
+    assert_eq!(viewer_organization.status(), StatusCode::OK);
+    let viewer_organization: OrganizationResource =
+        serde_json::from_value(json_body(viewer_organization).await).unwrap();
+    assert_eq!(
+        viewer_organization.authenticated_member.membership_id,
+        viewer.membership_id
+    );
+    assert_eq!(
+        viewer_organization.authenticated_member.role,
+        OrganizationRole::Viewer
+    );
+
+    let viewer_create = post_team_member(application_pool, &viewer_token, &member_request).await;
+    assert_eq!(viewer_create.status(), StatusCode::FORBIDDEN);
+    assert_api_error(viewer_create, ApiErrorCode::Forbidden).await;
+    let administrator_create_owner = post_team_member(
+        application_pool,
+        &administrator_token,
+        &team_member_request(
+            "private-team-owner",
+            "Another owner",
+            OrganizationRole::Owner,
+        ),
+    )
+    .await;
+    assert_eq!(administrator_create_owner.status(), StatusCode::FORBIDDEN);
+    assert_api_error(administrator_create_owner, ApiErrorCode::Forbidden).await;
+
+    let first_member_page = server_request(
+        application_pool,
+        "/v1/organization/members?limit=2",
+        Some(&viewer_token),
+    )
+    .await;
+    assert_eq!(first_member_page.status(), StatusCode::OK);
+    let first_member_page_body = json_body(first_member_page).await;
+    let private_subjects = vec![
+        administrator_request.subject_reference.as_str().to_owned(),
+        member_request.subject_reference.as_str().to_owned(),
+        viewer_request.subject_reference.as_str().to_owned(),
+    ];
+    for subject in &private_subjects {
+        assert!(!first_member_page_body.to_string().contains(subject));
+    }
+    let first_member_page: OrganizationMemberPage =
+        serde_json::from_value(first_member_page_body).unwrap();
+    assert!(first_member_page.validate().is_ok());
+    assert_eq!(first_member_page.members.len(), 2);
+    let member_cursor = first_member_page.next_cursor.unwrap();
+    let second_member_page = server_request(
+        application_pool,
+        &format!(
+            "/v1/organization/members?limit=2&after={}",
+            member_cursor.as_str()
+        ),
+        Some(&viewer_token),
+    )
+    .await;
+    assert_eq!(second_member_page.status(), StatusCode::OK);
+    let second_member_page: OrganizationMemberPage =
+        serde_json::from_value(json_body(second_member_page).await).unwrap();
+    assert!(second_member_page.validate().is_ok());
+    assert_eq!(second_member_page.members.len(), 2);
+
+    let member_audit = server_request(
+        application_pool,
+        "/v1/organization/audit-events",
+        Some(&member_token),
+    )
+    .await;
+    assert_eq!(member_audit.status(), StatusCode::FORBIDDEN);
+    assert_api_error(member_audit, ApiErrorCode::Forbidden).await;
+
+    TeamMembers {
+        member,
+        administrator_token,
+        member_token,
+        viewer_token,
+        private_subjects,
+    }
+}
+
+async fn assert_team_reviews(
+    administrator_pool: &PgPool,
+    application_pool: &PgPool,
+    owner_token: &str,
+    members: &TeamMembers,
+) {
+    let reviews = server_request(application_pool, "/v1/reviews", Some(owner_token)).await;
+    assert_eq!(reviews.status(), StatusCode::OK);
+    let reviews: TransitionReviewPage = serde_json::from_value(json_body(reviews).await).unwrap();
+    assert!(reviews.validate().is_ok());
+    assert_eq!(reviews.reviews.len(), 1);
+    let review = reviews.reviews.into_iter().next().unwrap();
+    assert_eq!(review.state, TransitionReviewState::Open);
+    assert_eq!(review.revision, 1);
+
+    let viewer_reviews =
+        server_request(application_pool, "/v1/reviews", Some(&members.viewer_token)).await;
+    assert_eq!(viewer_reviews.status(), StatusCode::OK);
+    let viewer_reviews: TransitionReviewPage =
+        serde_json::from_value(json_body(viewer_reviews).await).unwrap();
+    assert_eq!(viewer_reviews.reviews[0].review_id, review.review_id);
+
+    let assign_request = TransitionReviewPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: review.revision,
+        action: TransitionReviewAction::Assign {
+            membership_id: members.member.membership_id.clone(),
+        },
+    };
+    let viewer_assign = patch_review(
+        application_pool,
+        &members.viewer_token,
+        review.review_id.as_str(),
+        &assign_request,
+    )
+    .await;
+    assert_eq!(viewer_assign.status(), StatusCode::FORBIDDEN);
+    assert_api_error(viewer_assign, ApiErrorCode::Forbidden).await;
+
+    let assigned = patch_review(
+        application_pool,
+        owner_token,
+        review.review_id.as_str(),
+        &assign_request,
+    )
+    .await;
+    assert_eq!(assigned.status(), StatusCode::OK);
+    let assigned: TransitionReviewResource =
+        serde_json::from_value(json_body(assigned).await).unwrap();
+    assert_eq!(assigned.revision, 2);
+    assert_eq!(
+        assigned.assigned_membership_id.as_ref(),
+        Some(&members.member.membership_id)
+    );
+
+    let remove_assigned = patch_team_member(
+        application_pool,
+        owner_token,
+        &members.member.membership_id,
+        &OrganizationMemberPatchRequest {
+            schema: ProtocolVersion::ApiV1,
+            expected_revision: members.member.revision,
+            action: OrganizationMemberAction::Remove,
+        },
+    )
+    .await;
+    assert_eq!(remove_assigned.status(), StatusCode::CONFLICT);
+    assert_api_error(remove_assigned, ApiErrorCode::Conflict).await;
+
+    let owner_acknowledge = patch_review(
+        application_pool,
+        owner_token,
+        review.review_id.as_str(),
+        &TransitionReviewPatchRequest {
+            schema: ProtocolVersion::ApiV1,
+            expected_revision: assigned.revision,
+            action: TransitionReviewAction::Acknowledge,
+        },
+    )
+    .await;
+    assert_eq!(owner_acknowledge.status(), StatusCode::CONFLICT);
+    assert_api_error(owner_acknowledge, ApiErrorCode::Conflict).await;
+
+    let acknowledged = patch_review(
+        application_pool,
+        &members.member_token,
+        review.review_id.as_str(),
+        &TransitionReviewPatchRequest {
+            schema: ProtocolVersion::ApiV1,
+            expected_revision: assigned.revision,
+            action: TransitionReviewAction::Acknowledge,
+        },
+    )
+    .await;
+    assert_eq!(acknowledged.status(), StatusCode::OK);
+    let acknowledged: TransitionReviewResource =
+        serde_json::from_value(json_body(acknowledged).await).unwrap();
+    assert_eq!(acknowledged.state, TransitionReviewState::Acknowledged);
+    assert_eq!(acknowledged.revision, 3);
+
+    let resolution_request = TransitionReviewPatchRequest {
+        schema: ProtocolVersion::ApiV1,
+        expected_revision: acknowledged.revision,
+        action: TransitionReviewAction::Resolve {
+            resolution: TransitionReviewResolution::MeasurementFollowUp,
+        },
+    };
+    let resolved = patch_review(
+        application_pool,
+        &members.member_token,
+        review.review_id.as_str(),
+        &resolution_request,
+    )
+    .await;
+    assert_eq!(resolved.status(), StatusCode::OK);
+    let resolved: TransitionReviewResource =
+        serde_json::from_value(json_body(resolved).await).unwrap();
+    assert!(resolved.validate().is_ok());
+    assert_eq!(resolved.state, TransitionReviewState::Resolved);
+    assert_eq!(
+        resolved.resolution,
+        Some(TransitionReviewResolution::MeasurementFollowUp)
+    );
+
+    let stale_resolution = patch_review(
+        application_pool,
+        &members.member_token,
+        review.review_id.as_str(),
+        &resolution_request,
+    )
+    .await;
+    assert_eq!(stale_resolution.status(), StatusCode::CONFLICT);
+    assert_api_error(stale_resolution, ApiErrorCode::Conflict).await;
+
+    let review_id = Uuid::parse_str(review.review_id.as_str()).unwrap();
+    let review_event_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM transition_review_events \
+         WHERE tenant_id = '00000000-0000-0000-0000-000000000001' \
+           AND review_id = $1",
+    )
+    .bind(review_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(review_event_count, 4);
+    let invalid_assignment_event = sqlx::query(
+        "INSERT INTO transition_review_events (\
+            id, tenant_id, review_id, actor_membership_id, actor_api_key_id, \
+            action, from_state, to_state, occurred_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', $2, \
+            '00000000-0000-0000-0000-000000000011', \
+            '00000000-0000-0000-0000-0000000000b1', \
+            'assigned', 'open', 'open', clock_timestamp()\
+         )",
+    )
+    .bind(Uuid::new_v4())
+    .bind(review_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(invalid_assignment_event, "23514");
+}
+
+async fn assert_team_retention(
+    administrator_pool: &PgPool,
+    application_pool: &PgPool,
+    owner_token: &str,
+    viewer_token: &str,
+) {
+    let default_retention = server_request(
+        application_pool,
+        "/v1/organization/retention-policy",
+        Some(viewer_token),
+    )
+    .await;
+    assert_eq!(default_retention.status(), StatusCode::OK);
+    let default_retention: OrganizationRetentionPolicyResource =
+        serde_json::from_value(json_body(default_retention).await).unwrap();
+    assert!(default_retention.validate().is_ok());
+    assert_eq!(default_retention.minimum_watch_retention_days, 30);
+    assert_eq!(default_retention.maximum_watch_retention_days, 730);
+
+    let viewer_retention_update = patch_retention(
+        application_pool,
+        viewer_token,
+        &OrganizationRetentionPolicyPatchRequest {
+            schema: ProtocolVersion::ApiV1,
+            expected_revision: default_retention.revision,
+            minimum_watch_retention_days: 30,
+            maximum_watch_retention_days: 500,
+        },
+    )
+    .await;
+    assert_eq!(viewer_retention_update.status(), StatusCode::FORBIDDEN);
+    assert_api_error(viewer_retention_update, ApiErrorCode::Forbidden).await;
+
+    let conflicting_retention = patch_retention(
+        application_pool,
+        owner_token,
+        &OrganizationRetentionPolicyPatchRequest {
+            schema: ProtocolVersion::ApiV1,
+            expected_revision: default_retention.revision,
+            minimum_watch_retention_days: 31,
+            maximum_watch_retention_days: 730,
+        },
+    )
+    .await;
+    assert_eq!(conflicting_retention.status(), StatusCode::CONFLICT);
+    assert_api_error(conflicting_retention, ApiErrorCode::Conflict).await;
+
+    let retention = patch_retention(
+        application_pool,
+        owner_token,
+        &OrganizationRetentionPolicyPatchRequest {
+            schema: ProtocolVersion::ApiV1,
+            expected_revision: default_retention.revision,
+            minimum_watch_retention_days: 30,
+            maximum_watch_retention_days: 500,
+        },
+    )
+    .await;
+    assert_eq!(retention.status(), StatusCode::OK);
+    let retention: OrganizationRetentionPolicyResource =
+        serde_json::from_value(json_body(retention).await).unwrap();
+    assert_eq!(retention.revision, 2);
+    assert_eq!(retention.maximum_watch_retention_days, 500);
+
+    let invalid_watch_retention = server_request_with(
+        application_pool,
+        Method::POST,
+        "/v1/watches",
+        Some(owner_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&WatchCreateRequest {
+            schema: ProtocolVersion::ApiV1,
+            targets: TargetSelection {
+                usernames: vec![Username::new("retention-boundary").unwrap()],
+                site_ids: vec![SiteId::new("github").unwrap()],
+            },
+            region_classes: vec![RegionClass::new("jp").unwrap()],
+            maximum_age_ms: 3_600_000,
+            schedule: WatchSchedule {
+                interval_seconds: 3_600,
+                jitter_percent: 10,
+            },
+            probe_budget: ProbeBudget {
+                maximum_probes_per_run: 1,
+                maximum_bytes_per_run: 1_048_576,
+            },
+            notification_endpoint_ids: Vec::new(),
+            private_history_consent_grant_id: ConsentGrantId::new(
+                "00000000-0000-0000-0000-000000000031",
+            )
+            .unwrap(),
+            retention_days: 501,
+        })
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(invalid_watch_retention.status(), StatusCode::BAD_REQUEST);
+    assert_api_error(invalid_watch_retention, ApiErrorCode::InvalidRequest).await;
+
+    let database_retention_guard = sqlx::query(
+        "UPDATE watches \
+         SET retention_days = 501, revision = revision + 1, \
+             updated_at = clock_timestamp() \
+         WHERE tenant_id = '00000000-0000-0000-0000-000000000001' \
+           AND id = '00000000-0000-0000-0000-000000000051'",
+    )
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(database_retention_guard, "23514");
+}
+
+async fn assert_team_audit_and_removal(
+    application_pool: &PgPool,
+    owner_token: &str,
+    members: &TeamMembers,
+) {
+    let audit = server_request(
+        application_pool,
+        "/v1/organization/audit-events?limit=20",
+        Some(&members.administrator_token),
+    )
+    .await;
+    assert_eq!(audit.status(), StatusCode::OK);
+    let audit_body = json_body(audit).await;
+    for subject in &members.private_subjects {
+        assert!(!audit_body.to_string().contains(subject));
+    }
+    assert!(!audit_body.to_string().contains("\"details\""));
+    let audit: OrganizationAuditEventPage = serde_json::from_value(audit_body).unwrap();
+    assert!(audit.validate().is_ok());
+    assert!(
+        audit
+            .events
+            .iter()
+            .any(|event| event.action == "transition.review.resolved")
+    );
+
+    let removed = patch_team_member(
+        application_pool,
+        owner_token,
+        &members.member.membership_id,
+        &OrganizationMemberPatchRequest {
+            schema: ProtocolVersion::ApiV1,
+            expected_revision: members.member.revision,
+            action: OrganizationMemberAction::Remove,
+        },
+    )
+    .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    let removed: OrganizationMemberResource =
+        serde_json::from_value(json_body(removed).await).unwrap();
+    assert_eq!(removed.state, OrganizationMemberState::Removed);
+    let revoked_member = server_request(
+        application_pool,
+        "/v1/organization",
+        Some(&members.member_token),
+    )
+    .await;
+    assert_eq!(revoked_member.status(), StatusCode::UNAUTHORIZED);
+    assert_api_error(revoked_member, ApiErrorCode::Unauthenticated).await;
+}
+
+fn team_member_request(
+    subject_reference: &str,
+    display_name: &str,
+    role: OrganizationRole,
+) -> OrganizationMemberCreateRequest {
+    OrganizationMemberCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        subject_reference: OrganizationSubjectReference::new(subject_reference).unwrap(),
+        display_name: display_name.to_owned(),
+        role,
+    }
+}
+
+async fn post_team_member(
+    pool: &PgPool,
+    token: &str,
+    request: &OrganizationMemberCreateRequest,
+) -> Response {
+    server_request_with(
+        pool,
+        Method::POST,
+        "/v1/organization/members",
+        Some(token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(request).unwrap(),
+    )
+    .await
+}
+
+async fn patch_team_member(
+    pool: &PgPool,
+    token: &str,
+    membership_id: &MembershipId,
+    request: &OrganizationMemberPatchRequest,
+) -> Response {
+    server_request_with(
+        pool,
+        Method::PATCH,
+        &format!("/v1/organization/members/{}", membership_id.as_str()),
+        Some(token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(request).unwrap(),
+    )
+    .await
+}
+
+async fn patch_review(
+    pool: &PgPool,
+    token: &str,
+    review_id: &str,
+    request: &TransitionReviewPatchRequest,
+) -> Response {
+    server_request_with(
+        pool,
+        Method::PATCH,
+        &format!("/v1/reviews/{review_id}"),
+        Some(token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(request).unwrap(),
+    )
+    .await
+}
+
+async fn patch_retention(
+    pool: &PgPool,
+    token: &str,
+    request: &OrganizationRetentionPolicyPatchRequest,
+) -> Response {
+    server_request_with(
+        pool,
+        Method::PATCH,
+        "/v1/organization/retention-policy",
+        Some(token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(request).unwrap(),
+    )
+    .await
+}
+
+async fn install_team_api_key(
+    pool: &PgPool,
+    membership_id: &MembershipId,
+    prefix: &str,
+    secret_byte: u8,
+    scopes: &[&str],
+) -> String {
+    let membership_id = Uuid::parse_str(membership_id.as_str()).unwrap();
+    let api_key_id = Uuid::new_v4();
+    let scopes = scopes
+        .iter()
+        .map(|scope| (*scope).to_owned())
+        .collect::<Vec<_>>();
+    sqlx::query(
+        "INSERT INTO api_keys (\
+            id, tenant_id, created_by_membership_id, scopes, state, created_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', $2, $3, \
+            'active', clock_timestamp()\
+         )",
+    )
+    .bind(api_key_id)
+    .bind(membership_id)
+    .bind(scopes)
+    .execute(pool)
+    .await
+    .unwrap();
+    let hash = Sha256::digest([secret_byte; 32]);
+    sqlx::query(
+        "INSERT INTO api_key_credentials (\
+            key_prefix, tenant_id, api_key_id, secret_hash, created_at\
+         ) VALUES (\
+            $1, '00000000-0000-0000-0000-000000000001', $2, $3, \
+            clock_timestamp()\
+         )",
+    )
+    .bind(prefix)
+    .bind(api_key_id)
+    .bind(&hash[..])
+    .execute(pool)
+    .await
+    .unwrap();
+    api_key_token(prefix, secret_byte)
 }
 
 async fn assert_consent_grant_lifecycle_boundary(administrator_pool: &PgPool) {

@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "OrganizationRole": {
+      "enum": [
+        "owner",
+        "administrator",
+        "member",
+        "viewer"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "display_name": {
+      "type": "string"
+    },
+    "role": {
+      "$ref": "#/$defs/OrganizationRole"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "subject_reference": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "subject_reference",
+    "display_name",
+    "role"
+  ],
+  "title": "OrganizationMemberCreateRequest",
+  "type": "object"
+}

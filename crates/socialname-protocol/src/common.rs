@@ -193,6 +193,10 @@ opaque_id!(EvidenceCapsuleId, "evidence_capsule_id");
 opaque_id!(DeletionRequestId, "deletion_request_id");
 opaque_id!(WorkspaceId, "workspace_id");
 opaque_id!(ApiKeyId, "api_key_id");
+opaque_id!(MembershipId, "membership_id");
+opaque_id!(TransitionReviewId, "review_id");
+opaque_id!(AuditEventId, "audit_event_id");
+opaque_id!(AuditResourceId, "audit_resource_id");
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, JsonSchema)]
 #[serde(transparent)]

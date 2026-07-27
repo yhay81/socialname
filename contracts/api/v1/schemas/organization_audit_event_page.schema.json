@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "OrganizationAuditActor": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "system",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "membership",
+              "type": "string"
+            },
+            "membership_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "membership_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "api_key_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "api_key",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "api_key_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OrganizationAuditEventResource": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "actor": {
+          "$ref": "#/$defs/OrganizationAuditActor"
+        },
+        "audit_event_id": {
+          "type": "string"
+        },
+        "occurred_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "resource_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resource_kind": {
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/$defs/ProtocolVersion"
+        }
+      },
+      "required": [
+        "schema",
+        "audit_event_id",
+        "actor",
+        "action",
+        "resource_kind",
+        "occurred_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "events": {
+      "items": {
+        "$ref": "#/$defs/OrganizationAuditEventResource"
+      },
+      "type": "array"
+    },
+    "next_cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    }
+  },
+  "required": [
+    "schema",
+    "events"
+  ],
+  "title": "OrganizationAuditEventPage",
+  "type": "object"
+}

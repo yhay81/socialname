@@ -314,7 +314,7 @@ async fn ensure_transition_cursor(
     }
 }
 
-async fn load_transition_entry(
+pub(crate) async fn load_transition_entry(
     transaction: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     watch_id: Uuid,
@@ -670,7 +670,7 @@ struct StoredDelivery {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum MonitoringError {
+pub(crate) enum MonitoringError {
     #[error("monitoring request is invalid")]
     InvalidRequest(&'static str, ValidationCode),
     #[error("monitoring resource was not found")]

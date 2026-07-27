@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "openapi.json",
-      "sha256": "52672c1a380edc61b780ff4e9797c58ad46dc6ede816cd2f427620a3fccf2888"
+      "sha256": "1093bbc2446972cb90ab690518d261cf7c855a12cd1f901c56d1974c65144eac"
     },
     {
       "path": "schemas/api_error_response.schema.json",
@@ -75,6 +75,38 @@
       "sha256": "c239c0c003f613c441b3d17ed8fc094b63508c4719daf1b6b78ab966919c7187"
     },
     {
+      "path": "schemas/organization_audit_event_page.schema.json",
+      "sha256": "061e09a5ee3e16ff426f11fa3e2031adae2e974ac35695c2d26218a80487cac7"
+    },
+    {
+      "path": "schemas/organization_member_create_request.schema.json",
+      "sha256": "1c46372f8d3723475d3cc996c11f2f5c9558896f1c235a338fb32718849ad836"
+    },
+    {
+      "path": "schemas/organization_member_page.schema.json",
+      "sha256": "f3df95a513828da474abd21c653632c5c6450fa89340e10f907c211843ccc51b"
+    },
+    {
+      "path": "schemas/organization_member_patch_request.schema.json",
+      "sha256": "42a40c91b8999c739fb9821d95f20017fad06ac5d611c73523f03a8a84c511da"
+    },
+    {
+      "path": "schemas/organization_member_resource.schema.json",
+      "sha256": "a4c4959e3c3cfdb53cab7d4a436e094b41c7af3044463e9e7afd70c304e9605a"
+    },
+    {
+      "path": "schemas/organization_resource.schema.json",
+      "sha256": "317769eb04714d32ea5318a4e26b61933f50be0cb4e7edcdd0a11d7eeba564aa"
+    },
+    {
+      "path": "schemas/organization_retention_policy_patch_request.schema.json",
+      "sha256": "3a42a834c0ca24ab9b51bf08cf3f1e76a0910d16a94c2ba5890f894a0b940a79"
+    },
+    {
+      "path": "schemas/organization_retention_policy_resource.schema.json",
+      "sha256": "42f44971ee184aec36ad1d27f9a17c5c6d90451acaf5c895cda6d577c79094c8"
+    },
+    {
       "path": "schemas/plan_entitlement_resource.schema.json",
       "sha256": "e7d7e122b1108a1b9b48a813b03b1e04e3821d898d27dc205903ae8ea92ad17d"
     },
@@ -113,6 +145,18 @@
     {
       "path": "schemas/transition.schema.json",
       "sha256": "40865bf24599b6e7220e36cc09df2d356a5b9cc7b793e4309df85a6afd62df49"
+    },
+    {
+      "path": "schemas/transition_review_page.schema.json",
+      "sha256": "28f56d08498f2f83f5e50fb33fe0a586368d11da7416f756682d373c81366031"
+    },
+    {
+      "path": "schemas/transition_review_patch_request.schema.json",
+      "sha256": "cfbf3c7bce64e408056dae0c90102fc4aeefe5f3dd6241d539a3fa00fcf62fb5"
+    },
+    {
+      "path": "schemas/transition_review_resource.schema.json",
+      "sha256": "b03a9c03eb43699e8bcbf5ea8b75741b6a97ef384b6c7f2c96090ccd0d986e3c"
     },
     {
       "path": "schemas/watch_create_request.schema.json",

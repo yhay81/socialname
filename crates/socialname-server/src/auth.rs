@@ -1,5 +1,5 @@
 use axum::http::{HeaderMap, header::AUTHORIZATION};
-use socialname_protocol::ApiKeyScope;
+use socialname_protocol::{ApiKeyScope, OrganizationRole};
 use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
@@ -10,6 +10,7 @@ use crate::api_key::ApiKeyToken;
 pub(crate) struct AuthenticatedPrincipal {
     pub(crate) workspace_id: Uuid,
     pub(crate) membership_id: Uuid,
+    pub(crate) role: OrganizationRole,
     pub(crate) api_key_id: Uuid,
     pub(crate) key_prefix: String,
     pub(crate) scopes: Vec<ApiKeyScope>,
@@ -36,7 +37,7 @@ pub(crate) async fn authenticate(
         return Err(AuthenticationError::InvalidCredential);
     };
 
-    let (mut transaction, membership_id, scopes, expires_at_unix_ms) =
+    let (mut transaction, membership_id, role, scopes, expires_at_unix_ms) =
         begin_authorized_transaction_for_ids(pool, workspace_id, api_key_id, required_scope)
             .await?;
 
@@ -60,6 +61,7 @@ pub(crate) async fn authenticate(
     Ok(AuthenticatedPrincipal {
         workspace_id,
         membership_id,
+        role,
         api_key_id,
         key_prefix: token.key_prefix().to_owned(),
         scopes,
@@ -72,7 +74,7 @@ pub(crate) async fn begin_authorized_transaction<'a>(
     principal: &AuthenticatedPrincipal,
     required_scope: ApiKeyScope,
 ) -> Result<Transaction<'a, Postgres>, AuthenticationError> {
-    let (transaction, _, _, _) = begin_authorized_transaction_for_ids(
+    let (transaction, _, _, _, _) = begin_authorized_transaction_for_ids(
         pool,
         principal.workspace_id,
         principal.api_key_id,
@@ -91,6 +93,7 @@ async fn begin_authorized_transaction_for_ids<'a>(
     (
         Transaction<'a, Postgres>,
         Uuid,
+        OrganizationRole,
         Vec<ApiKeyScope>,
         Option<i64>,
     ),
@@ -105,8 +108,8 @@ async fn begin_authorized_transaction_for_ids<'a>(
         .execute(&mut *transaction)
         .await
         .map_err(|_| AuthenticationError::Unavailable)?;
-    let key: Option<(Uuid, Vec<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT key.created_by_membership_id, key.scopes, \
+    let key: Option<(Uuid, String, Vec<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT key.created_by_membership_id, membership.role, key.scopes, \
                 (EXTRACT(EPOCH FROM key.expires_at) * 1000)::bigint \
          FROM api_keys AS key \
          JOIN tenants AS tenant ON tenant.id = key.tenant_id \
@@ -123,18 +126,20 @@ async fn begin_authorized_transaction_for_ids<'a>(
     .fetch_optional(&mut *transaction)
     .await
     .map_err(|_| AuthenticationError::Unavailable)?;
-    let Some((membership_id, stored_scopes, expires_at_unix_ms)) = key else {
+    let Some((membership_id, stored_role, stored_scopes, expires_at_unix_ms)) = key else {
         return Err(AuthenticationError::InvalidCredential);
     };
+    let role =
+        OrganizationRole::parse(&stored_role).map_err(|_| AuthenticationError::Unavailable)?;
     let scopes = stored_scopes
         .iter()
         .map(|scope| ApiKeyScope::parse(scope))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AuthenticationError::Unavailable)?;
-    if !scopes.contains(&required_scope) {
+    if !scopes.contains(&required_scope) || !role.permits_scope(required_scope) {
         return Err(AuthenticationError::Forbidden);
     }
-    Ok((transaction, membership_id, scopes, expires_at_unix_ms))
+    Ok((transaction, membership_id, role, scopes, expires_at_unix_ms))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<ApiKeyToken, AuthenticationError> {
