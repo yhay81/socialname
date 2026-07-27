@@ -18,8 +18,8 @@ use socialname_worker::{
     ContributionValidationStore, DeletionProcessOutcome, DeletionStore, DeliveryProcessConfig,
     DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, DeveloperUsageRetentionStore,
     EmailGatewayConfig, ExpandOutcome, JobDisposition, JobExecutionError, JobStore,
-    ManagedEmailGatewayTransport, ManagedRule, ManagedWebhookTransport, WatchPlanOutcome,
-    WorkerError, process_one_delivery, process_one_email_delivery,
+    ManagedEmailGatewayTransport, ManagedRule, ManagedWebhookTransport, SharedAssertionStore,
+    WatchPlanOutcome, WorkerError, process_one_delivery, process_one_email_delivery,
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -53,6 +53,9 @@ enum Command {
     /// Validate one bounded batch of shared contributions against managed truth
     /// and re-evaluate contributor reputation tiers.
     ValidateContributions(ValidateContributionsArgs),
+    /// Derive one bounded batch of shared quorum assertions and raise
+    /// already-budgeted managed verification for differing watch targets.
+    DeriveSharedAssertions(DeriveSharedAssertionsArgs),
     /// Withdraw support and purge primary data for at most one deletion request.
     ProcessDeletion(ProcessDeletionArgs),
 }
@@ -139,6 +142,15 @@ struct ValidateContributionsArgs {
 }
 
 #[derive(Debug, Args)]
+struct DeriveSharedAssertionsArgs {
+    #[arg(long, default_value_t = 128)]
+    batch_limit: u32,
+    /// Acknowledge database mutation of shared assertions and job priorities.
+    #[arg(long)]
+    allow_live: bool,
+}
+
+#[derive(Debug, Args)]
 struct ProcessDeletionArgs {
     /// Closed lowercase label recorded as the fenced deletion lease owner.
     #[arg(long)]
@@ -211,6 +223,16 @@ struct ValidateContributionsOutput {
 }
 
 #[derive(Serialize)]
+struct DeriveSharedAssertionsOutput {
+    schema: &'static str,
+    scanned_keys: u32,
+    corroborated: u32,
+    conflicted: u32,
+    withdrawn: u32,
+    escalated_jobs: u32,
+}
+
+#[derive(Serialize)]
 struct ProcessDeletionOutput {
     schema: &'static str,
     status: &'static str,
@@ -237,8 +259,34 @@ async fn run() -> Result<()> {
         Command::EnforceRetention(args) => enforce_retention(args).await,
         Command::EnforceUsageRetention(args) => enforce_usage_retention(args).await,
         Command::ValidateContributions(args) => validate_contributions(args).await,
+        Command::DeriveSharedAssertions(args) => derive_shared_assertions(args).await,
         Command::ProcessDeletion(args) => process_deletion(args).await,
     }
+}
+
+async fn derive_shared_assertions(args: DeriveSharedAssertionsArgs) -> Result<()> {
+    if !args.allow_live {
+        bail!("shared assertion derivation requires --allow-live");
+    }
+    if !(1..=1_000).contains(&args.batch_limit) {
+        bail!("shared assertion batch limit must be between 1 and 1000");
+    }
+    let store = SharedAssertionStore::connect_from_env().await?;
+    let outcome = store.derive(args.batch_limit).await;
+    store.close().await;
+    let outcome = outcome?;
+    println!(
+        "{}",
+        serde_json::to_string(&DeriveSharedAssertionsOutput {
+            schema: "socialname.dev/shared-assertion-run/v1",
+            scanned_keys: outcome.scanned_keys,
+            corroborated: outcome.corroborated,
+            conflicted: outcome.conflicted,
+            withdrawn: outcome.withdrawn,
+            escalated_jobs: outcome.escalated_jobs,
+        })?
+    );
+    Ok(())
 }
 
 async fn validate_contributions(args: ValidateContributionsArgs) -> Result<()> {

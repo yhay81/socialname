@@ -1,7 +1,7 @@
 # Shared contribution ingestion v1
 
-Status: **Implemented acceptance and calibration boundary; corroboration
-pending**
+Status: **Implemented acceptance, calibration, and quorum-corroboration
+boundary**
 
 This document defines the `socialname.dev/shared-contribution/v1` acceptance
 boundary: how an explicitly consented client installation submits one
@@ -149,6 +149,47 @@ labeled canary history before production:
   suspends with `agreement_collapse`. Tier changes and suspensions append
   target-free audit events.
 
+## Shared quorum assertions
+
+The bounded worker command `derive-shared-assertions --batch-limit N
+--allow-live` turns calibrated contributions into cross-tenant shared-pool
+knowledge in `shared_assertions` plus its per-contribution support. These
+tables carry no tenant column, are forced-RLS with no policy (deny-all), and
+are reachable only through the narrow definer functions; the application role
+cannot read them at all. Nothing here writes `assertion_support`, a watch
+account baseline, a transition, or a notification.
+
+Eligible votes are unexpired `current`-influence definitive `E3`/`E4`
+contributions on the newest contributing rule version whose site-family
+reputation is `calibrated` or `trusted`. A deterministic greedy pass —
+strongest evidence first, then oldest observation — counts **at most one vote
+per tenant, per installation, and per network group**, so many submissions
+from one workspace, one client, or one population bucket cannot manufacture
+diversity.
+
+| Outcome | Votes | Network groups | Regions | Extra |
+| --- | ---: | ---: | ---: | --- |
+| `found` | 3 | 2 | 2 | — |
+| `not_found` | 5 | 3 | 2 | ≥10 minutes between first and last counted observation |
+
+Every counted region must be currently healthy for that exact rule version.
+The result is always `corroborated`, never `verified`. Any fresh opposing
+strong eligible vote makes the key `conflicted` with no outcome. Fresh strong
+shared-visibility managed evidence supersedes shared derivation entirely:
+the shared row is withdrawn and the managed path owns the key. Assertions
+expire with their earliest supporting contribution and are re-derived from
+whatever evidence remains.
+
+## Managed verification escalation
+
+A derived `corroborated` or `conflicted` key raises already-budgeted
+`queued`/`retry_wait` probe jobs of watch targets on the same site and
+normalized username to the `shared_quorum` priority (25), below
+`account_confirmation` (50) and `regional_conflict` (100). Only targets whose
+account baseline is unset or differs from the shared outcome are raised;
+matching baselines gain no information and are left alone. Escalation never
+creates a probe, a region, a budget, or a deployment claim.
+
 ## Deletion and lineage
 
 - Contributor deletion (`data:delete`) selected by the owning grant matches
@@ -160,6 +201,13 @@ labeled canary history before production:
   recomputes the affected non-suspended reputation counters from the
   remaining rows before the inputs are purged. Later evaluation passes demote
   tiers whose windowed support has shrunk.
+- Shared assertions are derived shared-pool knowledge with no independent
+  retention: the deletion worker withdraws every assertion supported by a
+  matched contribution before purge, verified target-person deletion drops
+  the assertions for its exact keys in the hiding transaction, and
+  restore-ledger replay withdraws both suppressed keys and
+  suppressed-contribution-backed assertions. Remaining eligible evidence
+  re-derives them on the next bounded pass.
 - Verified target-person deletion matches shared contributions by exact
   `(site, normalized username)` selectors across tenants, counts them in the
   operator output, installs the suppression tokens that block future
@@ -172,9 +220,10 @@ labeled canary history before production:
 
 ## Explicit non-goals of this boundary
 
-- No contribution can create or support an assertion, transition, or
-  notification yet; the quorum `corroborated` path is separate ordered work
-  that will admit only `calibrated` and `trusted` validated evidence.
+- Shared quorum knowledge never becomes `verified`, never enters
+  `assertion_support`, and never moves a watch account baseline, transition,
+  or notification. Publishing it through a public API resource is separate
+  later work.
 - No client signature envelope exists yet; source continuity relies on the
   authenticated API key, the tenant-separated installation digest, and the
   monotonic sequence. A signed envelope may be added later without changing
@@ -203,3 +252,14 @@ ascent to `calibrated` and `trusted` including the activity-day and
 site-family requirements, truth-deletion validation removal with counter
 recomputation, rolling-agreement collapse suspension, and the tier-change and
 suspension audit trail.
+
+The quorum section proves both below-threshold refusals, that a second
+installation inside an already-counted tenant cannot supply an independent
+vote, that a `new`-tier installation is ineligible, exact `found` and
+`not_found` quorum establishment with their recorded vote, group, and region
+counts, idempotent re-derivation, opposing-evidence conflict with no outcome,
+managed supersession and withdrawal, escalation of an already-budgeted queued
+job to `shared_quorum` for an unset baseline, no escalation for a matching
+baseline, support withdrawal on contribution deletion, and that the
+application role cannot read either shared-pool table while the worker role
+cannot write them directly.

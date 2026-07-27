@@ -1819,6 +1819,68 @@ impl ContributionValidationStore {
     }
 }
 
+/// Bounded derivation of cross-tenant shared quorum assertions plus the
+/// already-budgeted managed-verification escalation, performed by one narrow
+/// database function under the non-owner worker credential.
+pub struct SharedAssertionStore {
+    pool: PgPool,
+}
+
+impl fmt::Debug for SharedAssertionStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SharedAssertionStore([REDACTED DATABASE])")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SharedAssertionOutcome {
+    pub scanned_keys: u32,
+    pub corroborated: u32,
+    pub conflicted: u32,
+    pub withdrawn: u32,
+    pub escalated_jobs: u32,
+}
+
+impl SharedAssertionStore {
+    pub async fn connect_from_env() -> Result<Self, JobError> {
+        Ok(Self {
+            pool: connect_worker_pool_from_env().await?,
+        })
+    }
+
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn close(&self) {
+        self.pool.close().await;
+    }
+
+    pub async fn derive(&self, batch_limit: u32) -> Result<SharedAssertionOutcome, JobError> {
+        if !(1..=MAXIMUM_RETENTION_BATCH).contains(&batch_limit) {
+            return Err(JobError::InvalidConfiguration);
+        }
+        let row: (i32, i32, i32, i32, i32) = sqlx::query_as(
+            "SELECT scanned_keys, corroborated, conflicted, withdrawn, \
+                    escalated_jobs \
+             FROM socialname_worker_derive_shared_assertions($1)",
+        )
+        .bind(i32::try_from(batch_limit).map_err(|_| JobError::InvalidConfiguration)?)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+        let convert = |value: i32| u32::try_from(value).map_err(|_| JobError::StorageInvariant);
+        Ok(SharedAssertionOutcome {
+            scanned_keys: convert(row.0)?,
+            corroborated: convert(row.1)?,
+            conflicted: convert(row.2)?,
+            withdrawn: convert(row.3)?,
+            escalated_jobs: convert(row.4)?,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuleBinding {
     rule_version_id: Uuid,

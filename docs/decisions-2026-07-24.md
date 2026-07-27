@@ -301,7 +301,26 @@ so status does not diverge across design records.
   ten validations. Cached reputation counters are recomputable projections so
   lineage-backed deletion can rebuild them from remaining validations; every
   threshold is an initial calibration parameter requiring labeled-canary
-  replay before production. Quorum corroboration remains later ordered work.
+  replay before production.
+- Shared quorum knowledge is cross-tenant shared-pool derivation stored
+  outside every tenant boundary: `shared_assertions` and its support carry no
+  tenant column, are forced-RLS with no policy, and are reachable only
+  through narrow definer functions, so no HTTP role can read or write them.
+  Eligible votes are unexpired current-influence definitive E3/E4
+  contributions of calibrated or trusted reputations on the newest
+  contributing rule version, and a deterministic greedy pass counts at most
+  one vote per tenant, per installation, and per network group. Found needs
+  3 votes / 2 network groups / 2 regions; shared-only absence needs 5 / 3 / 2
+  plus a ten-minute counted span; every counted region must be currently
+  healthy. The result is always `corroborated`, never `verified`; fresh
+  opposing strong evidence yields `conflicted` with no outcome; fresh strong
+  shared managed evidence supersedes and withdraws shared derivation. Shared
+  assertions have no independent retention and are withdrawn by contributor
+  deletion, verified target deletion, and restore replay. Managed
+  verification escalation raises only already-budgeted queued/retry jobs of
+  differing or unset watch baselines to the `shared_quorum` priority, which
+  ranks below account confirmation and regional conflict and can never
+  create a probe, region, or deployment claim.
 
 ## Detailed records
 
@@ -459,7 +478,13 @@ so status does not diverge across design records.
     definitive contributions against exact managed truth, append-only
     validation lineage, windowed threshold ascent/demotion through the closed
     tier matrix, rolling-agreement collapse suspension, and deletion-driven
-    counter recomputation. Quorum corroboration remains ordered later work.
+    counter recomputation.
+34. **Done:** Add strict quorum-based `corroborated` shared assertions in a
+    policy-free cross-tenant store with one-vote-per-tenant/installation/
+    network-group independence, asymmetric found and absence thresholds,
+    regional health gating, conflict and managed supersession, complete
+    deletion/restore withdrawal, and already-budgeted managed verification
+    escalation at a priority below account confirmation.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -477,8 +502,9 @@ adoption-focused examples, and provider-neutral plan entitlements. Payment
 provider integration and hosted commercial evidence remain external.
 Milestone 5 has its repository-complete Team organization workflow and the
 complete shared-contribution software boundary: acceptance with replay,
-quota, anomaly, diversity, and reputation controls plus managed-truth
-calibration. Collaboration integrations wait for demonstrated customer
-workflow demand; labeled-canary threshold replay is an external calibration
-gate; quorum corroboration and any community daemon remain ordered later
-work.
+quota, anomaly, diversity, and reputation controls, managed-truth
+calibration, and strict quorum `corroborated` derivation with managed
+verification escalation. Collaboration integrations wait for demonstrated
+customer workflow demand; labeled-canary threshold replay and multi-region
+managed operation remain external gates; a community measurement daemon
+stays deferred until managed regions are proven.

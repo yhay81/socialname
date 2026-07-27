@@ -65,7 +65,12 @@ observation, makes the cached reputation counters recomputable for
 lineage-backed deletion, and installs the bounded
 `socialname_worker_validate_contributions` definer function that matches
 truth, appends validations, and walks the closed tier matrix one legal step
-per evaluation.
+per evaluation. Migration `0024_shared_quorum_assertions.sql` adds the
+cross-tenant `shared_assertions` and `shared_assertion_support` tables —
+forced-RLS with no policy, so only definer functions and the schema owner
+reach them — the `shared_quorum` probe-job priority tier, the bounded
+`socialname_worker_derive_shared_assertions` quorum/escalation function, and
+`socialname_worker_withdraw_shared_support` for deletion traversal.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -94,7 +99,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 62 product tables:
+The migrations create 64 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -108,6 +113,7 @@ The migrations create 62 product tables:
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
 | Shared contributions | `shared_contributions`, `contribution_sequences`, `contribution_quota_counters`, `contributor_reputation`, `contribution_validations` |
+| Shared-pool knowledge | `shared_assertions`, `shared_assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `search_completion_webhooks`, `notification_deliveries`, `notification_delivery_attempts`, `notification_acknowledgements` |
 | Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `deletion_resource_matches`, `deletion_backup_verifications`, `deletion_restore_runs`, `deletion_restore_request_links`, `suppression_tokens` |
 
@@ -339,8 +345,10 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 62 tables and 50
-forced-RLS policies, and verifies restricted credential privileges, closed
+It applies the embedded migrations twice, inventories all 64 tables, 50
+tenant-isolation policies, and 52 forced-RLS tables (the two cross-tenant
+shared-pool tables are forced with no policy), and verifies restricted
+credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
 foreign keys, immutable observations, transition confirmation bases,

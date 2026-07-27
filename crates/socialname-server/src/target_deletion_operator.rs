@@ -313,6 +313,23 @@ pub async fn request_verified_target_deletion(
         deletion_request_ids.push(deletion_request_id);
     }
 
+    // Shared quorum assertions are account-independent derived knowledge for
+    // the selected keys; withdraw them in the same hiding transaction.
+    sqlx::query(
+        "DELETE FROM shared_assertions AS assertion \
+         WHERE EXISTS (\
+             SELECT 1 FROM unnest($1::text[], $2::text[]) \
+                 AS selector(site_id, normalized_username) \
+             WHERE selector.site_id = assertion.site_id \
+               AND selector.normalized_username = assertion.normalized_username\
+         )",
+    )
+    .bind(&site_ids)
+    .bind(&usernames)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| TargetDeletionOperatorError::DatabaseUnavailable)?;
+
     transaction
         .commit()
         .await

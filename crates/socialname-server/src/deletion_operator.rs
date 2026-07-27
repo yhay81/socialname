@@ -527,9 +527,17 @@ pub async fn replay_restore_ledger(
         .fetch_all(&mut *transaction)
         .await
         .map_err(|_| DeletionOperatorError::DatabaseUnavailable)?;
+        let shared_rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT id, site_id, normalized_username \
+             FROM shared_assertions ORDER BY id",
+        )
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(|_| DeletionOperatorError::DatabaseUnavailable)?;
         scanned_observations = scanned_observations
             .saturating_add(observations.len())
-            .saturating_add(contributions.len());
+            .saturating_add(contributions.len())
+            .saturating_add(shared_rows.len());
         if scanned_observations > MAXIMUM_REPLAY_OBSERVATIONS {
             return Err(DeletionOperatorError::BoundExceeded);
         }
@@ -542,6 +550,7 @@ pub async fn replay_restore_ledger(
             let mut observation_ids = Vec::new();
             let mut probe_job_ids = Vec::new();
             let mut contribution_ids = Vec::new();
+            let mut shared_assertion_ids = Vec::new();
             match entry.purpose.as_str() {
                 "contributor_reingestion" => {
                     for grant in &contributor_grants {
@@ -598,6 +607,18 @@ pub async fn replay_restore_ledger(
                             contribution_ids.push(contribution.id);
                         }
                     }
+                    for (shared_id, site_id, normalized_username) in &shared_rows {
+                        let candidate = target_suppression_token(
+                            suppression_key,
+                            *tenant_id,
+                            site_id,
+                            normalized_username,
+                        )
+                        .ok_or(DeletionOperatorError::CryptographicFailure)?;
+                        if candidate == token {
+                            shared_assertion_ids.push(*shared_id);
+                        }
+                    }
                 }
                 _ => return Err(DeletionOperatorError::InvalidInput),
             }
@@ -609,6 +630,7 @@ pub async fn replay_restore_ledger(
                 observation_ids,
                 probe_job_ids,
                 contribution_ids,
+                shared_assertion_ids,
             });
         }
     }
@@ -671,6 +693,25 @@ pub async fn replay_restore_ledger(
         if imported.rows_affected() != 1 {
             return Err(DeletionOperatorError::KeyMismatch);
         }
+        // Withdraw restored shared quorum assertions for suppressed targets
+        // and any assertion supported by a suppressed contribution; they are
+        // derived knowledge and re-derive only from non-suppressed evidence.
+        sqlx::query(
+            "DELETE FROM shared_assertions AS assertion \
+             WHERE assertion.id = ANY($1::uuid[]) \
+                OR EXISTS (\
+                    SELECT 1 FROM shared_assertion_support AS support \
+                    WHERE support.shared_assertion_id = assertion.id \
+                      AND support.tenant_id = $2 \
+                      AND support.contribution_id = ANY($3::uuid[])\
+                )",
+        )
+        .bind(&plan.shared_assertion_ids)
+        .bind(plan.tenant_id)
+        .bind(&plan.contribution_ids)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| DeletionOperatorError::StorageInvariant)?;
         if plan.observation_ids.is_empty() && plan.contribution_ids.is_empty() {
             continue;
         }
@@ -1096,6 +1137,7 @@ struct ReplayPlan {
     observation_ids: Vec<Uuid>,
     probe_job_ids: Vec<Uuid>,
     contribution_ids: Vec<Uuid>,
+    shared_assertion_ids: Vec<Uuid>,
 }
 
 #[derive(FromRow)]

@@ -1740,7 +1740,7 @@ Status: **Current**
       customer workflow demand.
 - [x] Accept minimized, explicitly consented shared observations with replay,
       quota, anomaly, diversity, and reputation controls.
-- [ ] Implement strict quorum-based `corroborated` assertions and managed
+- [x] Implement strict quorum-based `corroborated` assertions and managed
       verification escalation.
 - [ ] Evaluate a separately installed community measurement daemon only after
       managed regional workers are proven.
@@ -1942,6 +1942,69 @@ one second of the managed section's last watch update — which commit
 `c5a3b96` fixed with an explicit past database timestamp; Quality run
 [`30307764479`](https://github.com/yhay81/socialname/actions/runs/30307764479)
 passed the complete matrix for that fix.
+
+Quorum `corroborated` and escalation software evidence:
+
+```console
+cargo fmt --all -- --check
+# passed
+cargo test --locked --workspace --all-targets
+# passed against disposable PostgreSQL 18.4, including the shared-quorum
+# boundary; server 49 library + 2 binary + 1 full integration
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified committed API v1 contracts without drift (41 operations unchanged)
+node --test examples/api-v1/client.test.mjs
+# 5 passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cargo run --locked -p socialname-worker -- derive-shared-assertions --help
+# bounded batch plus explicit --allow-live acknowledgement
+cd apps/desktop && npm run check && npm run build
+cd ../console && npm test && npm run check && npm run build
+# all passed
+```
+
+Migration `0024` brings the schema to 64 product tables, 50 tenant-isolation
+policies, and 52 forced-RLS tables: `shared_assertions` and
+`shared_assertion_support` are deliberately cross-tenant, carry no tenant
+column, and are forced-RLS with no policy, so only the narrow definer
+functions and the schema owner reach them. The bounded
+`derive-shared-assertions` worker command counts at most one vote per
+tenant, per installation, and per network group through a deterministic
+greedy pass over unexpired current-influence definitive `E3`/`E4`
+contributions of `calibrated` or `trusted` reputations on the newest
+contributing rule version. Found requires 3 votes, 2 network groups, and 2
+regions; shared-only absence requires 5, 3, 2 plus a ten-minute counted span;
+every counted region must be currently healthy. The derived quality is always
+`corroborated`, opposing fresh strong evidence yields `conflicted` with no
+outcome, and fresh strong shared managed evidence supersedes and withdraws
+shared derivation.
+
+Escalation raises only already-budgeted queued or retry probe jobs of watch
+targets whose baseline is unset or differs from the shared outcome to the new
+`shared_quorum` priority (25), below `account_confirmation` (50) and
+`regional_conflict` (100). Shared assertions have no independent retention:
+contributor deletion withdraws supported assertions before purge, verified
+target deletion drops the exact keys in its hiding transaction, and restore
+replay withdraws both suppressed keys and suppressed-contribution-backed
+assertions.
+
+The real PostgreSQL 18 gate proves both below-threshold refusals, same-tenant
+and `new`-tier vote ineligibility, exact found and absence establishment with
+recorded counts, idempotent re-derivation, conflict, managed supersession,
+escalation for an unset baseline, no escalation for a matching baseline,
+deletion-driven support withdrawal, and that the application role cannot read
+either shared-pool table while the worker role cannot write them directly.
+No contribution reaches `assertion_support`, `verified` truth, a watch
+baseline, a transition, or a notification. Publishing shared knowledge
+through a public API resource, labeled-canary threshold replay, and
+multi-region managed operation remain later or external work and are not
+claimed.
 
 Acceptance gate:
 
@@ -2178,6 +2241,15 @@ Choose these only when their trigger is measured:
   recomputation, and an operable bounded worker command. Kept labeled-canary
   threshold replay and scheduled production operation as external calibration
   gates and selected quorum-based `corroborated` assertions next.
+- **2026-07-28:** Added strict quorum `corroborated` shared assertions in a
+  policy-free cross-tenant store with one-vote-per-tenant/installation/
+  network-group independence, asymmetric found and absence thresholds,
+  regional health gating, conflict and managed supersession, complete
+  deletion and restore withdrawal, and already-budgeted managed verification
+  escalation ranked below account confirmation. Kept public publication of
+  shared knowledge, labeled-canary calibration, and multi-region operation
+  outside this software claim; the community measurement daemon remains
+  deferred until managed regions are proven.
 - **2026-07-27:** Added the first Milestone 5 Team workflow: one-workspace
   organizations, role-and-scope authorization, private replay-safe member
   provisioning and safe lifecycle/key invalidation, confirmed-transition

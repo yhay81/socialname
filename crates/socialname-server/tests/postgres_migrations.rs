@@ -71,8 +71,9 @@ use socialname_worker::{
     DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets, DeliveryStore,
     DeveloperUsageRetentionStore, EmailGatewayConfig, EmailGatewayTransport, EmailRequest,
     EmailSendError, EvidenceRetentionOutcome, ExpandOutcome, JobDisposition, JobError,
-    JobExecutionError, JobStore, ManagedRule, WatchPlanOutcome, WebhookRequest, WebhookSendError,
-    WebhookTransport, process_one_delivery, process_one_email_delivery,
+    JobExecutionError, JobStore, ManagedRule, SharedAssertionStore, WatchPlanOutcome,
+    WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
+    process_one_email_delivery,
 };
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -122,6 +123,9 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_monitoring_console_boundary(&pool).await;
     assert_operational_reporting_boundary(&pool).await;
     assert_lineage_backed_deletion_boundary(&pool).await;
+    // Runs last: the quorum fixtures add independent tenants, which earlier
+    // sections deliberately count.
+    assert_shared_quorum_boundary(&pool).await;
 
     pool.close().await;
 }
@@ -150,7 +154,8 @@ async fn reset_test_state(pool: &PgPool) {
             plan_entitlement_events, organization_retention_policies,
             transition_reviews, transition_review_events, shared_contributions,
             contribution_sequences, contribution_quota_counters,
-            contributor_reputation, contribution_validations
+            contributor_reputation, contribution_validations,
+            shared_assertions, shared_assertion_support
         CASCADE;
 
         DO $$
@@ -217,7 +222,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('organization_retention_policies'), ('transition_reviews'),
                 ('transition_review_events'), ('shared_contributions'),
                 ('contribution_sequences'), ('contribution_quota_counters'),
-                ('contributor_reputation'), ('contribution_validations')
+                ('contributor_reputation'), ('contribution_validations'),
+                ('shared_assertions'), ('shared_assertion_support')
         )
         SELECT count(*)
         FROM required
@@ -227,7 +233,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 62);
+    assert_eq!(required_tables, 64);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -238,6 +244,9 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .unwrap();
     assert_eq!(tenant_policies, 50);
 
+    // The two cross-tenant shared-quorum tables are forced-RLS with no
+    // policy (deny-all outside definer functions), so the forced count
+    // exceeds the tenant-policy count by exactly two.
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
          WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' \
@@ -246,7 +255,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 50);
+    assert_eq!(forced_rls_tables, 52);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -3493,6 +3502,783 @@ async fn install_truth_observation(
     .unwrap();
 }
 
+struct QuorumVote {
+    client_index: u8,
+    tenant_id: Uuid,
+    network_group_byte: &'static str,
+    region_class: &'static str,
+    verdict: &'static str,
+    observed_offset_seconds: i64,
+}
+
+/// Inserts one eligible shared contribution for a synthetic calibrated
+/// installation. Derivation reads the stored contribution rows plus their
+/// reputation tier, so the seeds exercise the closed quorum thresholds
+/// without needing hundreds of HTTP submissions from distinct clients.
+async fn seed_quorum_vote(
+    pool: &PgPool,
+    site_id: &str,
+    normalized_username: &str,
+    rule_version_id: Uuid,
+    vote: &QuorumVote,
+    tier: &str,
+) {
+    let client_id: Uuid = sqlx::query_scalar(
+        "WITH existing AS (\
+            SELECT id FROM clients \
+            WHERE tenant_id = $1 AND installation_hash = decode(repeat($2, 32), 'hex')\
+         ), inserted AS (\
+            INSERT INTO clients (\
+                id, tenant_id, installation_hash, state, created_at, last_seen_at\
+             ) \
+             SELECT gen_random_uuid(), $1, decode(repeat($2, 32), 'hex'), 'active', \
+                    clock_timestamp() - interval '3 hours', \
+                    clock_timestamp() - interval '3 hours' \
+             WHERE NOT EXISTS (SELECT 1 FROM existing) \
+             RETURNING id\
+         ) \
+         SELECT id FROM existing UNION ALL SELECT id FROM inserted",
+    )
+    .bind(vote.tenant_id)
+    .bind(format!("{:02x}", 0xa0 + u32::from(vote.client_index)))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let grant_id: Uuid = sqlx::query_scalar(
+        "WITH existing AS (\
+            SELECT id FROM consent_grants \
+            WHERE tenant_id = $1 AND client_id = $2 \
+              AND purpose = 'shared_observation'\
+         ), inserted AS (\
+            INSERT INTO consent_grants (\
+                id, tenant_id, client_id, subject_kind, purpose, \
+                collection_profile_version, notice_version, source, granted_at\
+             ) \
+             SELECT gen_random_uuid(), $1, $2, 'installation', \
+                    'shared_observation', 'profile-v1', 'notice-v1', 'api', \
+                    clock_timestamp() - interval '3 hours' \
+             WHERE NOT EXISTS (SELECT 1 FROM existing) \
+             RETURNING id\
+         ) \
+         SELECT id FROM existing UNION ALL SELECT id FROM inserted",
+    )
+    .bind(vote.tenant_id)
+    .bind(client_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO contributor_reputation (\
+            id, tenant_id, client_id, site_family, tier, revision, \
+            validated_overlaps, agreement_hits, active_days, \
+            created_at, updated_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, $2, $3, $4, 1, 40, 40, 10, \
+            clock_timestamp() - interval '3 hours', \
+            clock_timestamp() - interval '3 hours'\
+         ) ON CONFLICT (tenant_id, client_id, site_family) DO NOTHING",
+    )
+    .bind(vote.tenant_id)
+    .bind(client_id)
+    .bind(site_id)
+    .bind(tier)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shared_contributions (\
+            id, tenant_id, client_id, consent_grant_id, sequence_number, \
+            content_digest, normalized_username, site_id, rule_version_id, \
+            engine_hash, outcome_kind, verdict, evidence_class, \
+            evidence_digest, region_class, network_class, network_group, \
+            influence_scope, observed_at, received_at, expires_at, created_at\
+         ) \
+         SELECT \
+            gen_random_uuid(), $1, $2, $3, \
+            COALESCE((\
+                SELECT max(sequence_number) FROM shared_contributions \
+                WHERE tenant_id = $1 AND client_id = $2\
+            ), 0) + 1, \
+            decode(md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text), 'hex'), $4, $5, $6, decode(repeat('ab', 32), 'hex'), \
+            'definitive', $7, 'e4_structured_identity', \
+            decode(repeat('ee', 32), 'hex'), $8, 'residential', \
+            decode(repeat($9, 32), 'hex'), 'current', \
+            clock_timestamp() - make_interval(secs => $10::double precision), \
+            clock_timestamp(), clock_timestamp() + interval '12 hours', \
+            clock_timestamp()",
+    )
+    .bind(vote.tenant_id)
+    .bind(client_id)
+    .bind(grant_id)
+    .bind(normalized_username)
+    .bind(site_id)
+    .bind(rule_version_id)
+    .bind(vote.verdict)
+    .bind(vote.region_class)
+    .bind(vote.network_group_byte)
+    .bind(vote.observed_offset_seconds)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn assert_shared_quorum_boundary(administrator_pool: &PgPool) {
+    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
+        .expect("worker database URL must accompany the PostgreSQL integration test");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&worker_database_url)
+        .await
+        .unwrap();
+    let store = SharedAssertionStore::new(worker_pool.clone());
+    let tenant_one = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let tenant_two = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+    // Independence counts at most one vote per tenant, so a found quorum
+    // needs three distinct tenants and shared-only absence needs five.
+    let mut quorum_tenants = vec![tenant_one, tenant_two];
+    for index in 3..=6_u32 {
+        let tenant_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO tenants (id, slug, display_name, state, created_at, updated_at) \
+             VALUES (\
+                gen_random_uuid(), $1, 'Quorum tenant', 'active', \
+                clock_timestamp() - interval '3 hours', \
+                clock_timestamp() - interval '3 hours'\
+             ) RETURNING id",
+        )
+        .bind(format!("quorum-tenant-{index}"))
+        .fetch_one(administrator_pool)
+        .await
+        .unwrap();
+        quorum_tenants.push(tenant_id);
+    }
+    let tenant_three = quorum_tenants[2];
+    let tenant_four = quorum_tenants[3];
+    let tenant_five = quorum_tenants[4];
+    let tenant_six = quorum_tenants[5];
+    let rule_version_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM rule_versions WHERE site_id = 'contrib-test'")
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    // Every counted region must be currently healthy for the exact rule
+    // version; the acceptance section installed `jp` only.
+    for region in ["us", "de"] {
+        sqlx::query(
+            "INSERT INTO rule_health_records (\
+                id, rule_version_id, region_class, state, evidence_id, \
+                evidence_expires_at, summary, recorded_at\
+             ) VALUES (\
+                gen_random_uuid(), $1, $2, 'healthy', gen_random_uuid(), \
+                clock_timestamp() + interval '10 minutes', '{}', clock_timestamp()\
+             )",
+        )
+        .bind(rule_version_id)
+        .bind(region)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    }
+
+    // Two independent votes cannot reach the three-vote found quorum.
+    for vote in [
+        QuorumVote {
+            client_index: 1,
+            tenant_id: tenant_one,
+            network_group_byte: "11",
+            region_class: "jp",
+            verdict: "found",
+            observed_offset_seconds: 60,
+        },
+        QuorumVote {
+            client_index: 2,
+            tenant_id: tenant_two,
+            network_group_byte: "22",
+            region_class: "us",
+            verdict: "found",
+            observed_offset_seconds: 50,
+        },
+    ] {
+        seed_quorum_vote(
+            administrator_pool,
+            "contrib-test",
+            "quorum-found",
+            rule_version_id,
+            &vote,
+            "calibrated",
+        )
+        .await;
+    }
+    let below_quorum = store.derive(64).await.unwrap();
+    assert!(below_quorum.scanned_keys >= 1);
+    assert_eq!(below_quorum.corroborated, 0);
+
+    // A second installation inside an already-counted tenant cannot
+    // manufacture the third independent vote.
+    seed_quorum_vote(
+        administrator_pool,
+        "contrib-test",
+        "quorum-found",
+        rule_version_id,
+        &QuorumVote {
+            client_index: 3,
+            tenant_id: tenant_one,
+            network_group_byte: "33",
+            region_class: "de",
+            verdict: "found",
+            observed_offset_seconds: 40,
+        },
+        "calibrated",
+    )
+    .await;
+    let same_tenant = store.derive(64).await.unwrap();
+    assert_eq!(same_tenant.corroborated, 0);
+
+    // A `new`-tier installation is ineligible regardless of independence.
+    seed_quorum_vote(
+        administrator_pool,
+        "contrib-test",
+        "quorum-found",
+        rule_version_id,
+        &QuorumVote {
+            client_index: 4,
+            tenant_id: tenant_three,
+            network_group_byte: "44",
+            region_class: "jp",
+            verdict: "found",
+            observed_offset_seconds: 30,
+        },
+        "new",
+    )
+    .await;
+    let ineligible_tier = store.derive(64).await.unwrap();
+    assert_eq!(ineligible_tier.corroborated, 0);
+
+    // Three votes across three tenants, three network groups, and two
+    // regions establish `corroborated` found.
+    seed_quorum_vote(
+        administrator_pool,
+        "contrib-test",
+        "quorum-found",
+        rule_version_id,
+        &QuorumVote {
+            client_index: 5,
+            tenant_id: tenant_four,
+            network_group_byte: "55",
+            region_class: "us",
+            verdict: "found",
+            observed_offset_seconds: 20,
+        },
+        "trusted",
+    )
+    .await;
+    let corroborated = store.derive(64).await.unwrap();
+    assert_eq!(corroborated.corroborated, 1);
+    let found: (String, Option<String>, i32, i32, i32, Vec<String>, i64) = sqlx::query_as(
+        "SELECT assertion.quality, assertion.outcome, assertion.vote_count, \
+                assertion.network_group_count, assertion.region_count, \
+                assertion.regions, \
+                (SELECT count(*) FROM shared_assertion_support AS support \
+                 WHERE support.shared_assertion_id = assertion.id) \
+         FROM shared_assertions AS assertion \
+         WHERE assertion.site_id = 'contrib-test' \
+           AND assertion.normalized_username = 'quorum-found'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(found.0, "corroborated");
+    assert_eq!(found.1.as_deref(), Some("found"));
+    assert_eq!(found.2, 3);
+    assert_eq!(found.3, 3);
+    assert_eq!(found.4, 2);
+    assert_eq!(found.5, vec!["jp".to_owned(), "us".to_owned()]);
+    assert_eq!(found.6, 3);
+    // Shared quorum knowledge stays account-independent: it creates no
+    // assertion support, transition, or notification delivery.
+    let account_state_untouched: (i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+            (SELECT count(*) FROM assertions \
+             WHERE normalized_username = 'quorum-found'), \
+            (SELECT count(*) FROM transitions AS transition \
+             JOIN watch_targets AS target \
+               ON target.tenant_id = transition.tenant_id \
+              AND target.id = transition.watch_target_id \
+             WHERE target.normalized_username = 'quorum-found'), \
+            (SELECT count(*) FROM shared_assertions \
+             WHERE quality = 'corroborated' AND outcome IS NULL)",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(account_state_untouched, (0, 0, 0));
+
+    // Idempotent re-derivation makes no change without fresh evidence.
+    let replay = store.derive(64).await.unwrap();
+    assert_eq!((replay.corroborated, replay.conflicted), (0, 0));
+
+    // Shared-only absence needs five independent votes, three network
+    // groups, two regions, and a ten-minute span; four stay below quorum.
+    for (index, tenant, group, region, offset) in [
+        (10_u8, tenant_one, "aa", "jp", 1_200_i64),
+        (11, tenant_two, "bb", "us", 1_100),
+        (12, tenant_three, "cc", "de", 1_000),
+        (13, tenant_four, "dd", "jp", 900),
+    ] {
+        seed_quorum_vote(
+            administrator_pool,
+            "contrib-test",
+            "quorum-absent",
+            rule_version_id,
+            &QuorumVote {
+                client_index: index,
+                tenant_id: tenant,
+                network_group_byte: group,
+                region_class: region,
+                verdict: "not_found",
+                observed_offset_seconds: offset,
+            },
+            "calibrated",
+        )
+        .await;
+    }
+    let absence_below = store.derive(64).await.unwrap();
+    assert_eq!(absence_below.corroborated, 0);
+
+    // The fifth independent vote closes the quorum, and the counted span
+    // exceeds ten minutes.
+    seed_quorum_vote(
+        administrator_pool,
+        "contrib-test",
+        "quorum-absent",
+        rule_version_id,
+        &QuorumVote {
+            client_index: 15,
+            tenant_id: tenant_five,
+            network_group_byte: "ff",
+            region_class: "us",
+            verdict: "not_found",
+            observed_offset_seconds: 60,
+        },
+        "trusted",
+    )
+    .await;
+    let absence_quorum = store.derive(64).await.unwrap();
+    assert_eq!(absence_quorum.corroborated, 1);
+    let absence: (String, Option<String>, i32, i32, i32) = sqlx::query_as(
+        "SELECT quality, outcome, vote_count, network_group_count, region_count \
+         FROM shared_assertions \
+         WHERE site_id = 'contrib-test' AND normalized_username = 'quorum-absent'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(absence.0, "corroborated");
+    assert_eq!(absence.1.as_deref(), Some("not_found"));
+    assert_eq!((absence.2, absence.3, absence.4), (5, 5, 3));
+
+    // A fresh opposing strong vote conflicts the key instead of counting.
+    seed_quorum_vote(
+        administrator_pool,
+        "contrib-test",
+        "quorum-absent",
+        rule_version_id,
+        &QuorumVote {
+            client_index: 14,
+            tenant_id: tenant_one,
+            network_group_byte: "ee",
+            region_class: "us",
+            verdict: "found",
+            observed_offset_seconds: 60,
+        },
+        "trusted",
+    )
+    .await;
+    let conflicted = store.derive(64).await.unwrap();
+    assert_eq!(conflicted.conflicted, 1);
+    let conflicted_row: (String, Option<String>, i32) = sqlx::query_as(
+        "SELECT quality, outcome, vote_count FROM shared_assertions \
+         WHERE site_id = 'contrib-test' AND normalized_username = 'quorum-absent'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(conflicted_row, ("conflicted".to_owned(), None, 0));
+
+    // Fresh strong shared managed evidence supersedes and withdraws shared
+    // derivation for that key.
+    let managed_grant: Uuid = sqlx::query_scalar(
+        "INSERT INTO consent_grants (\
+            id, tenant_id, membership_id, subject_kind, purpose, \
+            collection_profile_version, notice_version, source, granted_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, '00000000-0000-0000-0000-000000000011', \
+            'account', 'shared_observation', 'profile-v1', 'notice-v1', \
+            'api', clock_timestamp() - interval '1 hour'\
+         ) RETURNING id",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let managed_job: Uuid = sqlx::query_scalar(
+        "INSERT INTO probe_jobs (\
+            id, tenant_id, normalized_username, site_id, rule_version_id, \
+            region_class, work_key_hash, consent_grant_id, visibility, state, \
+            available_at, created_at, updated_at, completed_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, 'quorum-found', 'contrib-test', $2, 'jp', \
+            decode(md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text), 'hex'), $3, 'shared', 'succeeded', \
+            clock_timestamp(), clock_timestamp(), clock_timestamp(), \
+            clock_timestamp()\
+         ) RETURNING id",
+    )
+    .bind(tenant_one)
+    .bind(rule_version_id)
+    .bind(managed_grant)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO observations (\
+            id, tenant_id, probe_job_id, consent_grant_id, \
+            normalized_username, site_id, rule_version_id, outcome_kind, \
+            verdict, evidence_class, evidence_digest, source, producer_kind, \
+            visibility, region_class, rule_health_green, observed_at, \
+            expires_at, created_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, $2, $3, 'quorum-found', 'contrib-test', $4, \
+            'definitive', 'found', 'e4_structured_identity', \
+            decode(md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text), 'hex'), 'managed_probe', 'managed_worker', \
+            'shared', 'jp', true, clock_timestamp(), \
+            clock_timestamp() + interval '6 hours', clock_timestamp()\
+         )",
+    )
+    .bind(tenant_one)
+    .bind(managed_job)
+    .bind(managed_grant)
+    .bind(rule_version_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    seed_quorum_vote(
+        administrator_pool,
+        "contrib-test",
+        "quorum-found",
+        rule_version_id,
+        &QuorumVote {
+            client_index: 6,
+            tenant_id: tenant_two,
+            network_group_byte: "66",
+            region_class: "de",
+            verdict: "found",
+            observed_offset_seconds: 10,
+        },
+        "calibrated",
+    )
+    .await;
+    let superseded = store.derive(64).await.unwrap();
+    assert_eq!(superseded.withdrawn, 1);
+    let superseded_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM shared_assertions \
+         WHERE site_id = 'contrib-test' AND normalized_username = 'quorum-found'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(superseded_rows, 0);
+
+    // Escalation raises only already-budgeted queued jobs of differing watch
+    // targets to the shared-quorum priority, never above account or conflict.
+    let escalation_username = "quorum-escalate";
+    for (index, tenant, region, group) in [
+        (20_u8, tenant_one, "jp", "f1"),
+        (21, tenant_two, "us", "f2"),
+        (22, tenant_six, "de", "f3"),
+    ] {
+        seed_quorum_vote(
+            administrator_pool,
+            "contrib-test",
+            escalation_username,
+            rule_version_id,
+            &QuorumVote {
+                client_index: index,
+                tenant_id: tenant,
+                network_group_byte: group,
+                region_class: region,
+                verdict: "found",
+                observed_offset_seconds: 90 - i64::from(index),
+            },
+            "calibrated",
+        )
+        .await;
+    }
+    let watch_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM watches WHERE tenant_id = $1 ORDER BY created_at LIMIT 1",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    // The target has no account baseline yet, which is exactly the state
+    // that benefits from managed verification.
+    let watch_target: Uuid = sqlx::query_scalar(
+        "INSERT INTO watch_targets (\
+            id, tenant_id, watch_id, requested_username, normalized_username, \
+            site_id, ordinal, created_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, $2, $3, $3, 'contrib-test', 90, \
+            clock_timestamp()\
+         ) RETURNING id",
+    )
+    .bind(tenant_one)
+    .bind(watch_id)
+    .bind(escalation_username)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let escalation_grant: Uuid =
+        sqlx::query_scalar("SELECT consent_grant_id FROM watches WHERE tenant_id = $1 AND id = $2")
+            .bind(tenant_one)
+            .bind(watch_id)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    let queued_job: Uuid = sqlx::query_scalar(
+        "INSERT INTO probe_jobs (\
+            id, tenant_id, normalized_username, site_id, rule_version_id, \
+            region_class, work_key_hash, consent_grant_id, visibility, state, \
+            priority, available_at, created_at, updated_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, $2, 'contrib-test', $3, 'jp', \
+            decode(md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text), 'hex'), $4, 'private', 'queued', 0, \
+            clock_timestamp(), clock_timestamp(), clock_timestamp()\
+         ) RETURNING id",
+    )
+    .bind(tenant_one)
+    .bind(escalation_username)
+    .bind(rule_version_id)
+    .bind(escalation_grant)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    // A watch consumer is always anchored to its own run target, exactly as
+    // the worker's due-run expansion writes it.
+    let watch_run: Uuid = sqlx::query_scalar(
+        "INSERT INTO watch_runs (\
+            id, tenant_id, watch_id, watch_revision, scheduled_for, state, \
+            maximum_probes, maximum_bytes, created_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, $2, 1, clock_timestamp(), 'running', \
+            4, 1048576, clock_timestamp()\
+         ) RETURNING id",
+    )
+    .bind(tenant_one)
+    .bind(watch_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let watch_run_target: Uuid = sqlx::query_scalar(
+        "INSERT INTO watch_run_targets (\
+            id, tenant_id, watch_run_id, watch_target_id, region_class, \
+            state, probe_job_id, created_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, $2, $3, 'jp', 'queued', $4, clock_timestamp()\
+         ) RETURNING id",
+    )
+    .bind(tenant_one)
+    .bind(watch_run)
+    .bind(watch_target)
+    .bind(queued_job)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO probe_job_consumers (\
+            id, tenant_id, probe_job_id, search_target_id, watch_target_id, \
+            watch_run_target_id, created_at\
+         ) VALUES (gen_random_uuid(), $1, $2, NULL, $3, $4, clock_timestamp())",
+    )
+    .bind(tenant_one)
+    .bind(queued_job)
+    .bind(watch_target)
+    .bind(watch_run_target)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let escalated = store.derive(64).await.unwrap();
+    assert_eq!(escalated.corroborated, 1);
+    assert!(escalated.escalated_jobs >= 1);
+    let escalated_priority: (i16, String) =
+        sqlx::query_as("SELECT priority, priority_reason FROM probe_jobs WHERE id = $1")
+            .bind(queued_job)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(escalated_priority, (25, "shared_quorum".to_owned()));
+
+    // A watch target whose account baseline already matches the shared
+    // outcome gains no information from another managed probe.
+    let baseline_assertion: Uuid = sqlx::query_scalar(
+        "INSERT INTO assertions (\
+            id, tenant_id, normalized_username, site_id, outcome_kind, \
+            verdict, quality, evidence_class, observed_at, expires_at, \
+            derivation_version, is_current, created_at\
+         ) VALUES (\
+            gen_random_uuid(), $1, $2, 'contrib-test', 'definitive', 'found', \
+            'verified', 'e4_structured_identity', clock_timestamp(), \
+            clock_timestamp() + interval '6 hours', 'assertion-v1', true, \
+            clock_timestamp()\
+         ) RETURNING id",
+    )
+    .bind(tenant_one)
+    .bind(escalation_username)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE watch_targets \
+         SET account_state = 'found', account_assertion_id = $3, \
+             account_state_since = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_one)
+    .bind(watch_target)
+    .bind(baseline_assertion)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE probe_jobs SET priority = 0, updated_at = clock_timestamp() WHERE id = $1")
+        .bind(queued_job)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    seed_quorum_vote(
+        administrator_pool,
+        "contrib-test",
+        escalation_username,
+        rule_version_id,
+        &QuorumVote {
+            client_index: 23,
+            tenant_id: tenant_five,
+            network_group_byte: "f4",
+            region_class: "jp",
+            verdict: "found",
+            observed_offset_seconds: 5,
+        },
+        "trusted",
+    )
+    .await;
+    let matched_state = store.derive(64).await.unwrap();
+    assert_eq!(matched_state.escalated_jobs, 0);
+    let unchanged_priority: i16 =
+        sqlx::query_scalar("SELECT priority FROM probe_jobs WHERE id = $1")
+            .bind(queued_job)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(unchanged_priority, 0);
+
+    // Deletion of one supporting contribution withdraws the shared assertion
+    // before the fenced worker purges the row.
+    let supporting: (Uuid, Uuid) = sqlx::query_as(
+        "SELECT support.tenant_id, support.contribution_id \
+         FROM shared_assertion_support AS support \
+         JOIN shared_assertions AS assertion \
+           ON assertion.id = support.shared_assertion_id \
+         WHERE assertion.normalized_username = $1 \
+         ORDER BY support.contribution_id LIMIT 1",
+    )
+    .bind(escalation_username)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let deletion_request_id = Uuid::new_v4();
+    sqlx::query(
+        "WITH moment AS (SELECT clock_timestamp() AS now) \
+         INSERT INTO deletion_requests (\
+            id, tenant_id, scope_kind, selector_token, state, requested_at, \
+            hide_by, support_withdrawal_by, primary_delete_by, \
+            derived_rebuild_by, backup_expiry_by, request_origin, \
+            request_group_id, verification_reference_digest\
+         ) \
+         SELECT $1, $2, 'target', decode(md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text), 'hex'), 'hidden', now, \
+                now + interval '5 minutes', now + interval '1 hour', \
+                now + interval '24 hours', now + interval '7 days', \
+                now + interval '35 days', 'verified_target_operator', \
+                gen_random_uuid(), decode(md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text), 'hex') \
+         FROM moment",
+    )
+    .bind(deletion_request_id)
+    .bind(supporting.0)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deletion_resource_matches (\
+            tenant_id, deletion_request_id, resource_kind, resource_id, hidden_at\
+         ) VALUES ($1, $2, 'shared_contribution', $3, clock_timestamp())",
+    )
+    .bind(supporting.0)
+    .bind(deletion_request_id)
+    .bind(supporting.1)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let withdrawn: i32 =
+        sqlx::query_scalar("SELECT socialname_worker_withdraw_shared_support($1, $2)")
+            .bind(supporting.0)
+            .bind(deletion_request_id)
+            .fetch_one(&worker_pool)
+            .await
+            .unwrap();
+    assert_eq!(withdrawn, 1);
+    let after_withdrawal: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM shared_assertions WHERE normalized_username = $1")
+            .bind(escalation_username)
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    assert_eq!(after_withdrawal, 0);
+    // Remove the synthetic request so the later deletion section still owns
+    // the only claimable work in the fenced queue.
+    sqlx::query("DELETE FROM deletion_resource_matches WHERE deletion_request_id = $1")
+        .bind(deletion_request_id)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM deletion_requests WHERE id = $1")
+        .bind(deletion_request_id)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+
+    // The application role can neither read nor write shared-pool knowledge.
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    for statement in [
+        "SELECT count(*) FROM shared_assertions",
+        "SELECT count(*) FROM shared_assertion_support",
+    ] {
+        let denied = sqlx::query(statement)
+            .execute(&application_pool)
+            .await
+            .unwrap_err();
+        assert_database_code(denied, "42501");
+    }
+    let worker_write_denied = sqlx::query("DELETE FROM shared_assertions")
+        .execute(&worker_pool)
+        .await
+        .unwrap_err();
+    assert_database_code(worker_write_denied, "42501");
+    application_pool.close().await;
+    worker_pool.close().await;
+}
+
 /// Seeds one bounded batch of synthetic calibration inputs: direct
 /// contribution rows for the installation plus their derived validation rows
 /// against one retained truth observation. The evaluation logic reads the
@@ -6226,12 +7012,17 @@ async fn assert_plan_entitlement_boundary(administrator_pool: &PgPool) {
         create_managed_watch(&application_pool, "plan-watch", plan_consent_grant_id).await;
     let watch_id = Uuid::parse_str(existing_watch.watch_id.as_str()).unwrap();
     let watch_path = format!("/v1/watches/{watch_id}");
-    // Force the earlier watches due by database time; deriving the due time
-    // from `updated_at + 1 second` was a latent race because a fast run can
-    // reach this point less than one second after the managed section's last
-    // watch update, leaving no due watch at all.
+    // Force the earlier watches due while satisfying every relation at once:
+    // `updated_at >= created_at`, the database `next_run_at > updated_at`,
+    // the protocol's millisecond-resolution form of the same rule, and
+    // `next_run_at <= clock_timestamp()` for the scheduler. Backdating both
+    // columns (clamped to `created_at`) keeps all four true regardless of how
+    // fast the surrounding sections ran.
     sqlx::query(
-        "UPDATE watches SET next_run_at = clock_timestamp() - interval '1 second' \
+        "UPDATE watches \
+         SET updated_at = GREATEST(created_at, clock_timestamp() - interval '2 seconds'), \
+             next_run_at = GREATEST(created_at, clock_timestamp() - interval '2 seconds') \
+                 + interval '1 millisecond' \
          WHERE tenant_id = $1 AND id <> $2 AND state = 'active'",
     )
     .bind(workspace_id)
@@ -10344,6 +11135,8 @@ async fn install_worker_role(pool: &PgPool) {
             socialname_worker_enforce_evidence_retention(integer),
             socialname_worker_enforce_developer_usage_retention(integer),
             socialname_worker_validate_contributions(integer),
+            socialname_worker_derive_shared_assertions(integer),
+            socialname_worker_withdraw_shared_support(uuid, uuid),
             socialname_worker_claim_deletion(text, integer)
             TO socialname_migration_test_worker;
         "#,

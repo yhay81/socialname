@@ -502,6 +502,7 @@ async fn delete_primary_resources(
                  AND matched.resource_kind = 'observation' \
                  AND matched.resource_id = target.observation_id\
            )",
+        "SELECT socialname_worker_withdraw_shared_support($1, $2)",
         "DELETE FROM contribution_validations AS validation \
          WHERE validation.tenant_id = $1 AND (\
              EXISTS (\
