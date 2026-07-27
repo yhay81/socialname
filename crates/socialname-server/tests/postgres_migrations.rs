@@ -6226,8 +6226,12 @@ async fn assert_plan_entitlement_boundary(administrator_pool: &PgPool) {
         create_managed_watch(&application_pool, "plan-watch", plan_consent_grant_id).await;
     let watch_id = Uuid::parse_str(existing_watch.watch_id.as_str()).unwrap();
     let watch_path = format!("/v1/watches/{watch_id}");
+    // Force the earlier watches due by database time; deriving the due time
+    // from `updated_at + 1 second` was a latent race because a fast run can
+    // reach this point less than one second after the managed section's last
+    // watch update, leaving no due watch at all.
     sqlx::query(
-        "UPDATE watches SET next_run_at = updated_at + interval '1 second' \
+        "UPDATE watches SET next_run_at = clock_timestamp() - interval '1 second' \
          WHERE tenant_id = $1 AND id <> $2 AND state = 'active'",
     )
     .bind(workspace_id)
