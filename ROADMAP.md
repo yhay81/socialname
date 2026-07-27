@@ -1371,6 +1371,11 @@ the remaining production-evidence boundary are documented in
 multi-region, mail-provider, retained time-series, alert ownership, and elapsed
 SLA evidence remain external and are not claimed by this report.
 
+Quality run
+[`30230264948`](https://github.com/yhay81/socialname/actions/runs/30230264948)
+passed Rust core with PostgreSQL 18 migrations/tests, Windows/macOS desktop,
+monitoring console, and managed-worker OCI for commit `c976038`.
+
 Acceptance gate:
 
 - Multi-region disagreement is represented, not overwritten.
