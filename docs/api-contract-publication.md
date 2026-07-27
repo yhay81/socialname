@@ -10,7 +10,7 @@ destination ownership, live-rule eligibility, or availability claim.
 The authoritative package is
 [`contracts/api/v1`](../contracts/api/v1/README.md). It contains:
 
-- `openapi.json`: OpenAPI 3.1.2 for all 23 implemented authenticated
+- `openapi.json`: OpenAPI 3.1.2 for all 26 implemented authenticated
   REST/JSON and SSE operations;
 - `schemas/*.schema.json`: every independent
   `socialname-protocol::api_v1_schemas()` Draft 2020-12 root;
@@ -134,7 +134,7 @@ deduplication, source/freshness/provenance interpretation, or consent policy.
 No SDK is committed until it reduces measured adoption friction.
 
 Hosted documentation, a production origin, release signing, package
-distribution, quotas, usage records, service-level reporting, and production
-compatibility observations remain later software or external evidence gates.
-The next ordered Milestone 4 slice is the batch/quotas/usage/reporting item;
-this publication does not pre-claim it.
+distribution, retained service-level history, and production compatibility
+observations remain external evidence gates. Quota, usage reporting, and
+search-completion webhook contracts are now included in this publication;
+their presence still makes no hosted-service or availability claim.

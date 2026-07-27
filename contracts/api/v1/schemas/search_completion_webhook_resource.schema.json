@@ -1,0 +1,135 @@
+{
+  "$defs": {
+    "NotificationDeliveryState": {
+      "enum": [
+        "queued",
+        "delivering",
+        "retry_scheduled",
+        "delivered",
+        "permanently_failed",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "SearchCompletionDeliveryStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delivered_at_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "delivery_id": {
+          "type": "string"
+        },
+        "last_error_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next_attempt_at_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "queued_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/NotificationDeliveryState"
+        }
+      },
+      "required": [
+        "delivery_id",
+        "state",
+        "attempt_count",
+        "queued_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "SearchCompletionWebhookSubscriptionState": {
+      "enum": [
+        "active",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "SearchState": {
+      "enum": [
+        "accepted",
+        "running",
+        "completed",
+        "cancelled",
+        "failed"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cancelled_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "created_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "delivery": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SearchCompletionDeliveryStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "endpoint_id": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "search_id": {
+      "type": "string"
+    },
+    "search_state": {
+      "$ref": "#/$defs/SearchState"
+    },
+    "subscription_state": {
+      "$ref": "#/$defs/SearchCompletionWebhookSubscriptionState"
+    }
+  },
+  "required": [
+    "schema",
+    "search_id",
+    "endpoint_id",
+    "search_state",
+    "subscription_state",
+    "created_at_unix_ms"
+  ],
+  "title": "SearchCompletionWebhookResource",
+  "type": "object"
+}

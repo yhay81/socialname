@@ -41,6 +41,10 @@ cohorts. It adds no product table or RLS policy. Migration
 `0017_developer_usage_reporting.sql` adds the closed `usage:read` scope,
 tenant and API-key quota policies, immutable target-free usage records,
 tenant-checked admission locking, and bounded 400-day physical expiry.
+Migration `0018_search_completion_webhooks.sql` adds one tenant-RLS binding per
+search, generalizes delivery origin to a closed transition/search kind, and
+converges terminal-search and binding-insert order through one deduplicating
+enqueue function.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -69,7 +73,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 51 product tables:
+The migrations create 52 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -80,7 +84,7 @@ The migrations create 51 product tables:
 | Developer capacity | `developer_quota_policies`, `developer_usage_records` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
-| Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts`, `notification_acknowledgements` |
+| Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `search_completion_webhooks`, `notification_deliveries`, `notification_delivery_attempts`, `notification_acknowledgements` |
 | Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `deletion_resource_matches`, `deletion_backup_verifications`, `deletion_restore_runs`, `deletion_restore_request_links`, `suppression_tokens` |
 
 Time partitioning is intentionally absent. PostgreSQL remains the source of
@@ -89,7 +93,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Thirty-nine tenant-owned tables have row-level security both enabled and
+Forty tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -308,7 +312,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 51 tables and 39
+It applies the embedded migrations twice, inventories all 52 tables and 40
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant

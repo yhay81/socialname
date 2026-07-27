@@ -2,19 +2,21 @@
 
 ## Scope and delivery guarantee
 
-Migration `0007_webhook_delivery.sql`, the managed worker, and the public
-`WebhookNotification` DTO connect confirmed transitions to an auditable
-webhook attempt. A transition is enqueued in the same tenant transaction that
+Migrations `0007_webhook_delivery.sql` and
+`0018_search_completion_webhooks.sql`, the managed worker, and the two public
+webhook DTOs connect confirmed transitions or terminal searches to auditable
+webhook attempts. A transition is enqueued in the same tenant transaction that
 confirms it. Pending or suppressed transitions, including shared-only absence,
-cannot cross this boundary.
+cannot cross that boundary. A search-completion binding similarly enqueues only
+`completed` or `failed`; cancellation does not masquerade as completion.
 
 The database guarantees one logical delivery for each
-`(tenant, transition, endpoint)` tuple. Its SHA-256 logical key is unique and
-the stable delivery ID is reused across attempts. HTTP delivery is necessarily
-**at least once**, not exactly once: a receiver can accept a request while the
-worker loses the response. Receivers must therefore deduplicate on
-`socialname-webhook-id`. SocialName does not create a second logical delivery
-to hide an ambiguous attempt.
+`(tenant, transition, endpoint)` or `(tenant, search, endpoint)` tuple. Its
+SHA-256 logical key is unique and the stable delivery ID is reused across
+attempts. HTTP delivery is necessarily **at least once**, not exactly once: a
+receiver can accept a request while the worker loses the response. Receivers
+must therefore deduplicate on `socialname-webhook-id`. SocialName does not
+create a second logical delivery to hide an ambiguous attempt.
 
 ## Payload and signature
 
@@ -50,6 +52,22 @@ The bounded JSON body is `socialname.dev/api/v1` `WebhookNotification`:
 Measurement-health notifications use the alternate closed `change` variant
 from [Public protocol v1](protocol-v1.md). The serialized body is limited to
 32 KiB.
+
+Search completion uses a separate target-free DTO:
+
+```json
+{
+  "schema": "socialname.dev/api/v1",
+  "delivery_id": "opaque-stable-delivery-id",
+  "search_id": "opaque-search-id",
+  "outcome": "completed",
+  "completed_at_unix_ms": 1000
+}
+```
+
+This body is only a signal to poll the authenticated search. It contains no
+target, site, result, verdict, uncertainty, endpoint, consent, or API-key
+data. See [Search-completion webhooks](search-completion-webhooks.md).
 
 Each POST has these headers:
 
@@ -119,6 +137,11 @@ cancellation has append-only attempt history. Completed attempts store only a
 SHA-256 digest of the body, a bounded status/error classification, the worker
 label, and time. Delivery-to-attempt and transition-to-delivery lineage plus
 closed audit actions make retry and withdrawal ancestry explicit.
+Search-completion deliveries instead carry lineage from the search and each
+search target to the delivery. The
+worker needs tenant-RLS `SELECT` on `search_completion_webhooks` so the shared
+delivery-state trigger can validate a search-completion update; it receives no
+binding mutation privilege.
 
 ## Operator boundary
 
@@ -169,6 +192,9 @@ uses a real non-owner worker and injected bounded transport to prove:
 - final lease-expiry dead letter;
 - append-only attempts, audit, and complete lineage;
 - absence of destination and body material from attempt and audit records.
+- registration-before-terminal and terminal-before-registration convergence;
+- target-free search-completion body, cancellation, endpoint-disable handling,
+  and search-to-delivery lineage.
 
 The test does not claim that an external receiver is owned, reachable, or
 correctly verifies signatures.

@@ -215,6 +215,7 @@ async fn load_operational_report(
             FROM bounds
             LEFT JOIN notification_deliveries AS delivery
               ON delivery.tenant_id = $1
+             AND delivery.delivery_kind = 'watch_transition'
             LEFT JOIN notification_endpoints AS endpoint
               ON endpoint.tenant_id = delivery.tenant_id
              AND endpoint.id = delivery.endpoint_id

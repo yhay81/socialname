@@ -1389,7 +1389,7 @@ Acceptance gate:
 Status: **In progress**
 
 - [x] Publish stable versioned REST/JSON and SSE contracts.
-- [ ] Add batch search, polling, webhooks, idempotency, quotas, usage records,
+- [x] Add batch search, polling, webhooks, idempotency, quotas, usage records,
       and service-level reporting.
 - [ ] Implement `remote` and remote-assisted source combinations in CLI and
       desktop with visible, independent sync policies.
@@ -1487,6 +1487,62 @@ Quality run
 passed Rust core including API contract drift and PostgreSQL 18 quota/report
 tests, Windows/macOS desktop, monitoring console, and managed-worker OCI for
 commit `7d02608`.
+Follow-up Quality run
+[`30233865400`](https://github.com/yhay81/socialname/actions/runs/30233865400)
+passed the same matrix after recording that evidence in commit `85e1d87`.
+
+Search-completion webhook and combined-item software evidence:
+
+```console
+cargo fmt --all -- --check
+# passed
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified exact committed OpenAPI with 26 operations, 31 JSON Schema roots,
+# SSE, and manifest
+cargo test --locked --workspace --all-targets
+# passed, including protocol 56 unit + 15 wire + 1 publication;
+# server 42 library + 2 binary + 1 PostgreSQL 18 integration;
+# worker 22 library + 7 binary + 3 deployment-contract tests
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# passed
+```
+
+Migration `0018` and three stable API operations add one immutable active
+webhook-endpoint binding per search without changing `SearchCreateRequest`.
+Binding-first and terminal-first transactions converge through narrow
+database triggers on one logical `search_completion` delivery; only
+`completed` and `failed` enqueue. Exact registration replay is idempotent,
+different endpoints conflict, caller/search cancellation is explicit, and an
+endpoint disabled before completion produces a visible cancelled delivery.
+
+The existing fenced webhook worker now emits a separate signed wake-up body
+containing only delivery ID, search ID, terminal outcome, and completion time.
+It preserves retry/dead-letter behavior while email claims remain transition
+only. Search and per-target lineage make deletion traversal reach shared
+completion deliveries. The watch operational report explicitly retains its
+transition-only cohort. Forced RLS protects the new binding, bringing the
+schema inventory to 52 product tables and 40 tenant policies.
+
+The PostgreSQL 18 test proves exact/conflicting replay, read/write scope
+separation, two-tenant hiding, both registration/terminal commit orders,
+deduplication under a repeated terminal update, search/subscription
+cancellation, endpoint-disable behavior, real signed worker delivery, minimal
+target-free payload/audit, and search plus target lineage. Exact public shapes
+and remaining external gates are documented in
+[`docs/search-completion-webhooks.md`](docs/search-completion-webhooks.md).
+Production endpoint ownership, DNS/TLS operation, hosted availability,
+retained successful-delivery/SLA evidence, plans, and billing remain external
+or later gates and are not implied by this software completion.
 
 Acceptance gate:
 
@@ -1700,3 +1756,10 @@ Choose these only when their trigger is measured:
   least privilege under PostgreSQL 18. Kept the combined roadmap item open for
   search-completion webhooks and kept hosted availability, historical SLA,
   plans, and billing outside this software claim.
+- **2026-07-27:** Completed the combined Developer search item with a separate
+  per-search completion-webhook resource, both-order terminal enqueue,
+  deduplicated signed target-free delivery, cancellation and endpoint-disable
+  states, and search/target deletion lineage. Published 26 operations and 31
+  schema roots and proved the boundary under PostgreSQL 18. Selected remote
+  and remote-assisted CLI/desktop source combinations next while keeping
+  hosted delivery/availability evidence external.

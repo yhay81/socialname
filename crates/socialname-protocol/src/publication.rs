@@ -82,7 +82,7 @@ const IDEMPOTENCY: &[PublishedParameter] = &[PublishedParameter::IdempotencyKey]
 const RESUMABLE_STREAM: &[PublishedParameter] = &[PublishedParameter::LastEventId];
 const WINDOW: &[PublishedParameter] = &[PublishedParameter::Window];
 
-static OPERATIONS: [PublishedApiOperation; 23] = [
+static OPERATIONS: [PublishedApiOperation; 26] = [
     PublishedApiOperation {
         method: PublishedHttpMethod::Get,
         path: "/v1/workspace",
@@ -146,6 +146,45 @@ static OPERATIONS: [PublishedApiOperation; 23] = [
         parameters: RESUMABLE_STREAM,
         success_statuses: OK,
         response: PublishedResponseKind::SearchEventStream,
+        returns_location: false,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Post,
+        path: "/v1/searches/{search_id}/completion-webhook",
+        operation_id: "createSearchCompletionWebhook",
+        required_scope: ApiKeyScope::SearchWrite,
+        tag: "searches",
+        summary: "Bind one active webhook endpoint to search completion.",
+        request_schema: Some("search_completion_webhook_create_request"),
+        parameters: NONE,
+        success_statuses: REPLAYABLE_CREATED,
+        response: PublishedResponseKind::Json("search_completion_webhook_resource"),
+        returns_location: true,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Get,
+        path: "/v1/searches/{search_id}/completion-webhook",
+        operation_id: "getSearchCompletionWebhook",
+        required_scope: ApiKeyScope::SearchRead,
+        tag: "searches",
+        summary: "Read one target-free search-completion webhook status.",
+        request_schema: None,
+        parameters: NONE,
+        success_statuses: OK,
+        response: PublishedResponseKind::Json("search_completion_webhook_resource"),
+        returns_location: false,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Delete,
+        path: "/v1/searches/{search_id}/completion-webhook",
+        operation_id: "cancelSearchCompletionWebhook",
+        required_scope: ApiKeyScope::SearchWrite,
+        tag: "searches",
+        summary: "Cancel one search-completion webhook subscription.",
+        request_schema: None,
+        parameters: NONE,
+        success_statuses: OK,
+        response: PublishedResponseKind::Json("search_completion_webhook_resource"),
         returns_location: false,
     },
     PublishedApiOperation {
@@ -839,7 +878,7 @@ mod tests {
 
     #[test]
     fn publication_has_one_unique_operation_for_every_current_route() {
-        assert_eq!(published_api_v1_operations().len(), 23);
+        assert_eq!(published_api_v1_operations().len(), 26);
         let identities = published_api_v1_operations()
             .iter()
             .map(|operation| (operation.method, operation.path))

@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "openapi.json",
-      "sha256": "fc8e962aeee235489bc333a9912a0559559f07ae69be23018ef2ea653c3337f8"
+      "sha256": "6ea55c85124f5f8c0198bf25241bc4a79807a558dc48c43aef0936f095747226"
     },
     {
       "path": "schemas/api_error_response.schema.json",
@@ -73,6 +73,18 @@
     {
       "path": "schemas/operational_report_resource.schema.json",
       "sha256": "c239c0c003f613c441b3d17ed8fc094b63508c4719daf1b6b78ab966919c7187"
+    },
+    {
+      "path": "schemas/search_completion_webhook.schema.json",
+      "sha256": "c81f63a20bf51b40704a0244885a21f1f3a10b9c053ddec3b39da8ceacc51b09"
+    },
+    {
+      "path": "schemas/search_completion_webhook_create_request.schema.json",
+      "sha256": "eaba704e6f881201fe4029f508699dea10a692392133ac5f15e3c95878bf9e61"
+    },
+    {
+      "path": "schemas/search_completion_webhook_resource.schema.json",
+      "sha256": "6c3da9cc20fe5128a4b046b30eb1327d137fc13bc501f2053089b7f56c800fb8"
     },
     {
       "path": "schemas/search_create_request.schema.json",

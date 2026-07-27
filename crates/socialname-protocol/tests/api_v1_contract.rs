@@ -14,10 +14,12 @@ use socialname_protocol::{
     NotificationLogicalKey, ObservationId, OperationalBacklog, OperationalFailure,
     OperationalFailureKind, OperationalObjectives, OperationalReportResource,
     OperationalReportWindow, ProbeBudget, ProtocolVersion, RatioSlo, RegionClass, ResultSource,
-    RuleHash, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
-    SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy,
-    TRANSITION_TO_DELIVERY_P95_TARGET_MS, Target, TargetSelection, Transition, TransitionChange,
-    TransitionConfirmation, TransitionId, Username, Validate,
+    RuleHash, SearchCompletionDeliveryStatus, SearchCompletionOutcome, SearchCompletionWebhook,
+    SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
+    SearchCompletionWebhookSubscriptionState, SearchCreateRequest, SearchEvent, SearchEventData,
+    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason,
+    SyncPolicy, TRANSITION_TO_DELIVERY_P95_TARGET_MS, Target, TargetSelection, Transition,
+    TransitionChange, TransitionConfirmation, TransitionId, Username, Validate,
     WATCH_RUN_SUCCESS_TARGET_BASIS_POINTS, WatchCreateRequest, WatchId, WatchListPage,
     WatchResource, WatchSchedule, WatchState, WatchTransitionEntry, WatchTransitionPage,
     WebhookNotification,
@@ -434,6 +436,85 @@ fn search_event_keeps_operational_failure_outside_verdicts() {
     assert_eq!(json["data"]["failure"]["kind"], "timeout");
     assert!(json["data"]["failure"].get("verdict").is_none());
     assert!(json["data"]["failure"].get("uncertainty_reason").is_none());
+}
+
+#[test]
+fn search_completion_webhook_has_exact_target_free_v1_wire_shapes() {
+    let request = SearchCompletionWebhookCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        endpoint_id: NotificationEndpointId::new("endpoint_01").unwrap(),
+    };
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "endpoint_id": "endpoint_01"
+        })
+    );
+
+    let resource = SearchCompletionWebhookResource {
+        schema: ProtocolVersion::ApiV1,
+        search_id: SearchId::new("search_01").unwrap(),
+        endpoint_id: NotificationEndpointId::new("endpoint_01").unwrap(),
+        search_state: SearchState::Completed,
+        subscription_state: SearchCompletionWebhookSubscriptionState::Active,
+        created_at_unix_ms: 1_000,
+        cancelled_at_unix_ms: None,
+        delivery: Some(SearchCompletionDeliveryStatus {
+            delivery_id: NotificationDeliveryId::new("delivery_01").unwrap(),
+            state: socialname_protocol::NotificationDeliveryState::Queued,
+            attempt_count: 0,
+            queued_at_unix_ms: 2_000,
+            next_attempt_at_unix_ms: None,
+            delivered_at_unix_ms: None,
+            last_error_code: None,
+        }),
+    };
+    assert!(resource.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(resource).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "search_id": "search_01",
+            "endpoint_id": "endpoint_01",
+            "search_state": "completed",
+            "subscription_state": "active",
+            "created_at_unix_ms": 1_000,
+            "cancelled_at_unix_ms": null,
+            "delivery": {
+                "delivery_id": "delivery_01",
+                "state": "queued",
+                "attempt_count": 0,
+                "queued_at_unix_ms": 2_000,
+                "next_attempt_at_unix_ms": null,
+                "delivered_at_unix_ms": null,
+                "last_error_code": null
+            }
+        })
+    );
+
+    let payload = SearchCompletionWebhook::new(
+        NotificationDeliveryId::new("delivery_01").unwrap(),
+        SearchId::new("search_01").unwrap(),
+        SearchCompletionOutcome::Completed,
+        3_000,
+    )
+    .unwrap();
+    let payload_json = serde_json::to_value(payload).unwrap();
+    assert_eq!(
+        payload_json,
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "delivery_id": "delivery_01",
+            "search_id": "search_01",
+            "outcome": "completed",
+            "completed_at_unix_ms": 3_000
+        })
+    );
+    let serialized = payload_json.to_string();
+    assert!(!serialized.contains("username"));
+    assert!(!serialized.contains("site"));
+    assert!(!serialized.contains("result"));
 }
 
 #[test]

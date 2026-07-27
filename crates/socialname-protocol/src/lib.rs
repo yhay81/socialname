@@ -12,6 +12,7 @@ mod operations;
 mod publication;
 mod schema;
 mod search;
+mod search_webhook;
 mod transition;
 mod watch;
 mod workspace;
@@ -74,6 +75,11 @@ pub use search::{
     OperationalFailureKind, RegionalAssertion, SearchCreateRequest, SearchEvent, SearchEventData,
     SearchProgress, SearchResource, SearchState, SearchTerminalState, UncertainResult,
     UncertaintyReason,
+};
+pub use search_webhook::{
+    SearchCompletionDeliveryStatus, SearchCompletionOutcome, SearchCompletionWebhook,
+    SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
+    SearchCompletionWebhookSubscriptionState,
 };
 pub use transition::{
     AccountState, ConfirmationBasis, MeasurementState, PendingConfirmationReason,

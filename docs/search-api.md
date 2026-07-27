@@ -164,6 +164,17 @@ one unpersisted named `stream_error` containing the closed
 cannot deserialize as `not_found`. A client may consult readiness, renew
 credentials when appropriate, and resume from its last persisted event ID.
 
+## Completion webhooks
+
+Clients may bind one existing active webhook endpoint through
+`POST /v1/searches/{search_id}/completion-webhook`, inspect it with `GET`, and
+cancel it with `DELETE`. This leaves `SearchCreateRequest` stable and keeps
+destination provisioning outside the search body. Completed and failed
+searches enqueue one target-free signed wake-up signal; cancelled searches do
+not. Registration and terminal updates converge in either commit order. See
+[Search-completion webhooks](search-completion-webhooks.md) for payload,
+retry, cancellation, and external ownership gates.
+
 ## Runtime database privileges
 
 In addition to the authenticated-workspace grants, the API role needs:
@@ -171,15 +182,24 @@ In addition to the authenticated-workspace grants, the API role needs:
 ```sql
 GRANT SELECT ON
     sites, consent_grants, searches, search_targets, search_events,
-    developer_quota_policies, developer_usage_records
+    developer_quota_policies, developer_usage_records,
+    notification_endpoints, notification_deliveries,
+    search_completion_webhooks
     TO socialname_app;
 GRANT INSERT ON
-    searches, search_targets, search_events, developer_usage_records
+    searches, search_targets, search_events, developer_usage_records,
+    search_completion_webhooks
     TO socialname_app;
 GRANT UPDATE (state, updated_at, completed_at) ON searches
     TO socialname_app;
 GRANT UPDATE (state, completed_at) ON search_targets
     TO socialname_app;
+GRANT UPDATE (state, cancelled_at) ON search_completion_webhooks
+    TO socialname_app;
+GRANT UPDATE (
+    state, next_attempt_at, delivered_at, last_error_code,
+    lease_owner, lease_started_at, lease_expires_at
+) ON notification_deliveries TO socialname_app;
 GRANT EXECUTE ON FUNCTION socialname_lock_developer_quota(uuid)
     TO socialname_app;
 ```
@@ -192,7 +212,7 @@ retention-function permission.
 ## Verification and remaining gate
 
 The PostgreSQL 18 integration test resets its disposable fixture database so
-back-to-back runs cover replay-safe migrations, 51 product tables, 39
+back-to-back runs cover replay-safe migrations, 52 product tables, 40
 forced-RLS policies, exact and conflicting idempotency replay,
 read-only/write scope separation, required consent purpose, unknown sites,
 target-free errors, two-tenant isolation, digest-only idempotency storage,
@@ -205,7 +225,11 @@ global/regional assertion support and lineage, regional event projection,
 invalid-target handling, and cancellation, consent-withdrawal, and rule-health
 races. It additionally proves exact replay is charged once, concurrent
 same-tenant admission is serialized, quota rejection is whole-batch and
-target-free, and rejected work leaves no search row.
+target-free, and rejected work leaves no search row. Search-completion coverage
+also proves exact/conflicting registration replay, read/write scope separation,
+two-tenant hiding, both terminal/registration commit orders, one logical
+delivery under repeated updates, cancellation and endpoint-disable behavior,
+target-free signed worker output, and search-to-delivery lineage.
 
 The API process still initiates no network request and cannot normalize a
 target. A separate signed worker performs those operations only for an exact

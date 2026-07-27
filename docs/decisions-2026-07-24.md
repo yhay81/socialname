@@ -214,7 +214,7 @@ so status does not diverge across design records.
   compliance claim; production SLA history remains external evidence.
 - API v1 publication is generator-owned and committed as OpenAPI 3.1.2,
   independent Draft 2020-12 roots, an exact SocialName SSE contract, and a
-  SHA-256 drift manifest. One closed registry owns the 23 published
+  SHA-256 drift manifest. One closed registry owns the 26 published
   method/path/schema/scope descriptions; Axum keeps an independent
   operation-to-scope mapping and tests route registration plus exact scope
   agreement. The publication declares no production origin or availability.
@@ -232,6 +232,12 @@ so status does not diverge across design records.
   exposes only forced-RLS aggregates. Its service report keeps current
   unfinished work separate from terminal success and latency cohorts, keeps
   `no_data` distinct from success, and makes no hosted SLA claim.
+- Stable API v1 search-completion webhooks use a separate one-endpoint-per-
+  search binding rather than extending `SearchCreateRequest`. Only
+  `completed`/`failed` enqueue; cancellation remains caller/privacy intent.
+  Search terminal and binding-insert triggers converge both registration races
+  on one logical delivery, while the payload contains only delivery/search
+  IDs, terminal outcome, and completion time.
 - Global and regional `assertion/v1` interpretations are derived from the same
   eligible exact-rule observations and evaluation time. Cross-region
   disagreement preserves definitive regional projections behind one global
@@ -272,6 +278,7 @@ so status does not diverge across design records.
 - [Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md)
 - [Lineage-backed deletion workflows](deletion-workflows.md)
 - [Developer quota, usage, and service reporting](developer-usage-reporting.md)
+- [Search-completion webhooks](search-completion-webhooks.md)
 
 ## Implementation baseline
 
@@ -375,6 +382,7 @@ Evidence Capsule retention, lineage-backed deletion and restore drills,
 notification acknowledgement, email delivery, and operational reporting are
 repository-complete, while actual multi-region deployment, retained production
 SLO history, and mail-provider evidence remain external gates. Milestone 4 has
-started with stable REST/JSON and SSE publication. The next ordered
-repository-completable work is its batch-search, quota, usage-record, and
-service-reporting boundary.
+stable REST/JSON and SSE publication plus its bounded batch, polling,
+idempotency, quota, usage-report, and search-completion webhook boundary. The
+next ordered repository-completable work is remote and remote-assisted
+CLI/desktop source combinations with independent sync policy.

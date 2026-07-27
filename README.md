@@ -89,7 +89,9 @@ person.
 - UTC-day tenant/API-key target-pair quotas, immutable target-free usage
   records, and a scoped Developer report with current quota, usage, backlog,
   and fixed search-service objectives.
-- Deterministic API v1 publication with 23 scoped operations, OpenAPI 3.1.2,
+- Target-free search-completion webhooks with idempotent per-search binding,
+  terminal-state enqueue, signed delivery, cancellation, and deletion lineage.
+- Deterministic API v1 publication with 26 scoped operations, OpenAPI 3.1.2,
   all Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
   SHA-256 drift manifest.
 - Ten representative site rules and 30 minimized offline fixture cases.
@@ -99,10 +101,11 @@ person.
 
 Milestone 3's repository-completable software is implemented, and Milestone 4
 now has stable REST/JSON and SSE publication plus batch admission, quota,
-usage, and service reporting. Real regional deployment, retained production
-SLO history, production notification evidence, and a hosted Developer API
-remain external gates. Search-completion webhooks are the next ordered
-repository slice without changing the local-first engine semantics.
+usage, service reporting, and search-completion webhooks. Real regional
+deployment, retained production SLO history, production notification evidence,
+and a hosted Developer API remain external gates. The next ordered repository
+slice adds remote and remote-assisted client source combinations without
+changing the local-first engine semantics.
 
 ## Build and verify
 

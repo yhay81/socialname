@@ -1,0 +1,46 @@
+{
+  "$defs": {
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "SearchCompletionOutcome": {
+      "enum": [
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "completed_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "delivery_id": {
+      "type": "string"
+    },
+    "outcome": {
+      "$ref": "#/$defs/SearchCompletionOutcome"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "search_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "delivery_id",
+    "search_id",
+    "outcome",
+    "completed_at_unix_ms"
+  ],
+  "title": "SearchCompletionWebhook",
+  "type": "object"
+}

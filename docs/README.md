@@ -191,6 +191,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Developer quota, usage, and service reporting](developer-usage-reporting.md)
   — atomic UTC-day target-pair admission, immutable target-free usage,
   independent aggregate scope, fixed search objectives, and bounded expiry.
+- [Search-completion webhooks](search-completion-webhooks.md) — idempotent
+  per-search binding, terminal-state convergence, minimal signed payload,
+  cancellation, and deletion lineage.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native
@@ -228,8 +231,9 @@ evidence remain external.
 The current roadmap milestone is **Developer platform**. Stable versioned
 REST/JSON and SSE publication plus the existing bounded batch, exact polling
 and idempotency, atomic quota, immutable usage, and service-reporting boundary
-are repository-complete. Search-completion webhooks are next; none of these
-software boundaries makes a hosted-service claim.
+and target-free search-completion webhooks are repository-complete. Remote and
+remote-assisted client source combinations are next; none of these software
+boundaries makes a hosted-service claim.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

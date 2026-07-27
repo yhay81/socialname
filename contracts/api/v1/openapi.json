@@ -66,6 +66,15 @@
       "operational_report_resource": {
         "$ref": "./schemas/operational_report_resource.schema.json"
       },
+      "search_completion_webhook": {
+        "$ref": "./schemas/search_completion_webhook.schema.json"
+      },
+      "search_completion_webhook_create_request": {
+        "$ref": "./schemas/search_completion_webhook_create_request.schema.json"
+      },
+      "search_completion_webhook_resource": {
+        "$ref": "./schemas/search_completion_webhook_resource.schema.json"
+      },
       "search_create_request": {
         "$ref": "./schemas/search_create_request.schema.json"
       },
@@ -1979,6 +1988,385 @@
           "searches"
         ],
         "x-socialname-required-scope": "search:read"
+      }
+    },
+    "/v1/searches/{search_id}/completion-webhook": {
+      "delete": {
+        "operationId": "cancelSearchCompletionWebhook",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "path",
+            "name": "search_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/search_completion_webhook_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Cancel one search-completion webhook subscription.",
+        "tags": [
+          "searches"
+        ],
+        "x-socialname-required-scope": "search:write"
+      },
+      "get": {
+        "operationId": "getSearchCompletionWebhook",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "path",
+            "name": "search_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/search_completion_webhook_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read one target-free search-completion webhook status.",
+        "tags": [
+          "searches"
+        ],
+        "x-socialname-required-scope": "search:read"
+      },
+      "post": {
+        "operationId": "createSearchCompletionWebhook",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "path",
+            "name": "search_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/search_completion_webhook_create_request.schema.json"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/search_completion_webhook_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Relative path of the created or replayed resource.",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/search_completion_webhook_resource.schema.json"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Relative path of the created or replayed resource.",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Bind one active webhook endpoint to search completion.",
+        "tags": [
+          "searches"
+        ],
+        "x-socialname-required-scope": "search:write"
       }
     },
     "/v1/searches/{search_id}/events": {

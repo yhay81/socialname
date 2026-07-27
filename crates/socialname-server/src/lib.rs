@@ -14,6 +14,7 @@ mod notification;
 mod operations;
 mod rule_registry_operator;
 mod search;
+mod search_webhook;
 mod target_deletion_operator;
 mod watch;
 mod workspace;
@@ -138,8 +139,13 @@ struct ProtectedRouteState {
 fn server_required_scope(operation_id: &str) -> ApiKeyScope {
     match operation_id {
         "getWorkspace" => ApiKeyScope::WorkspaceRead,
-        "createSearch" | "cancelSearch" => ApiKeyScope::SearchWrite,
-        "getSearch" | "streamSearchEvents" => ApiKeyScope::SearchRead,
+        "createSearch"
+        | "cancelSearch"
+        | "createSearchCompletionWebhook"
+        | "cancelSearchCompletionWebhook" => ApiKeyScope::SearchWrite,
+        "getSearch" | "streamSearchEvents" | "getSearchCompletionWebhook" => {
+            ApiKeyScope::SearchRead
+        }
         "createWatch" | "updateWatch" | "deleteWatch" => ApiKeyScope::WatchWrite,
         "listWatches" | "getWatch" | "listWatchTransitions" => ApiKeyScope::WatchRead,
         "createConsentGrant" | "withdrawConsentGrant" => ApiKeyScope::ConsentWrite,
@@ -198,6 +204,31 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             ProtectedRouteState {
                 server: state.clone(),
                 required_scope: server_required_scope("cancelSearch"),
+            },
+            authenticate_request,
+        ));
+    let search_webhook_write_routes = Router::new()
+        .route(
+            "/v1/searches/{search_id}/completion-webhook",
+            axum::routing::post(search_webhook::create_search_completion_webhook)
+                .delete(search_webhook::cancel_search_completion_webhook),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("createSearchCompletionWebhook"),
+            },
+            authenticate_request,
+        ));
+    let search_webhook_read_routes = Router::new()
+        .route(
+            "/v1/searches/{search_id}/completion-webhook",
+            get(search_webhook::get_search_completion_webhook),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("getSearchCompletionWebhook"),
             },
             authenticate_request,
         ));
@@ -338,6 +369,8 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(search_create_routes)
         .merge(search_read_routes)
         .merge(search_cancel_routes)
+        .merge(search_webhook_write_routes)
+        .merge(search_webhook_read_routes)
         .merge(watch_write_routes)
         .merge(watch_read_routes)
         .merge(consent_write_routes)

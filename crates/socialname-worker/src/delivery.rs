@@ -16,8 +16,9 @@ use socialname_engine::{
 use socialname_protocol::{
     AccountState, ConfirmationBasis, EmailAddress, EmailNotification, HttpsUrl, MeasurementState,
     NotificationChannel, NotificationDeliveryId, ObservationId, ProtocolVersion, RegionClass,
-    RuleHash, SiteId, Target, Transition, TransitionChange, TransitionConfirmation, TransitionId,
-    Username, Validate, WatchId, WebhookNotification,
+    RuleHash, SearchCompletionOutcome, SearchCompletionWebhook, SearchId, SiteId, Target,
+    Transition, TransitionChange, TransitionConfirmation, TransitionId, Username, Validate,
+    WatchId, WebhookNotification,
 };
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tokio_util::sync::CancellationToken;
@@ -461,38 +462,12 @@ impl DeliveryStore {
         set_tenant(&mut transaction, coordinate.tenant_id)
             .await
             .map_err(DeliveryError::from_job)?;
-        let row: ClaimedDeliveryRow = sqlx::query_as(
-            "SELECT delivery.id, delivery.endpoint_id, endpoint.channel AS endpoint_channel, \
-                    endpoint.destination_ciphertext, endpoint.encryption_key_id, \
-                    transition.id AS transition_id, watch.id AS watch_id, \
-                    target.normalized_username, target.site_id, \
-                    transition.transition_class, transition.from_state, \
-                    transition.to_state, transition.region_class, \
-                    CASE WHEN version.rule_hash IS NULL THEN NULL \
-                         ELSE encode(version.rule_hash, 'hex') END AS rule_hash, \
-                    transition.confirmation_basis, \
-                    (extract(epoch FROM transition.detected_at) * 1000)::bigint \
-                        AS detected_at_unix_ms \
-             FROM notification_deliveries AS delivery \
-             JOIN notification_endpoints AS endpoint \
-               ON endpoint.tenant_id = delivery.tenant_id \
-              AND endpoint.id = delivery.endpoint_id \
-             JOIN transitions AS transition \
-               ON transition.tenant_id = delivery.tenant_id \
-              AND transition.id = delivery.transition_id \
-             JOIN watch_targets AS target \
-               ON target.tenant_id = transition.tenant_id \
-              AND target.id = transition.watch_target_id \
-             JOIN watches AS watch \
-               ON watch.tenant_id = target.tenant_id \
-              AND watch.id = target.watch_id \
-             LEFT JOIN rule_versions AS version \
-               ON version.id = transition.rule_version_id \
-             WHERE delivery.tenant_id = $1 AND delivery.id = $2 \
-               AND delivery.state = 'delivering' \
-               AND delivery.attempt_count = $3 \
-               AND delivery.lease_owner = $4 \
-               AND delivery.lease_expires_at > clock_timestamp()",
+        let delivery_kind: String = sqlx::query_scalar(
+            "SELECT delivery_kind FROM notification_deliveries \
+             WHERE tenant_id = $1 AND id = $2 \
+               AND state = 'delivering' AND attempt_count = $3 \
+               AND lease_owner = $4 \
+               AND lease_expires_at > clock_timestamp()",
         )
         .bind(coordinate.tenant_id)
         .bind(coordinate.notification_delivery_id)
@@ -501,20 +476,158 @@ impl DeliveryStore {
         .fetch_one(&mut *transaction)
         .await
         .map_err(|_| DeliveryError::StorageInvariant)?;
-        if notification_channel(&row.endpoint_channel)? != channel {
+        let (
+            delivery_id,
+            endpoint_id,
+            endpoint_channel,
+            destination_ciphertext,
+            encryption_key_id,
+            body,
+        ) = match delivery_kind.as_str() {
+            "watch_transition" => {
+                let row: ClaimedDeliveryRow = sqlx::query_as(
+                    "SELECT delivery.id, delivery.endpoint_id, \
+                            endpoint.channel AS endpoint_channel, \
+                            endpoint.destination_ciphertext, endpoint.encryption_key_id, \
+                            transition.id AS transition_id, watch.id AS watch_id, \
+                            target.normalized_username, target.site_id, \
+                            transition.transition_class, transition.from_state, \
+                            transition.to_state, transition.region_class, \
+                            CASE WHEN version.rule_hash IS NULL THEN NULL \
+                                 ELSE encode(version.rule_hash, 'hex') END AS rule_hash, \
+                            transition.confirmation_basis, \
+                            (extract(epoch FROM transition.detected_at) * 1000)::bigint \
+                                AS detected_at_unix_ms \
+                     FROM notification_deliveries AS delivery \
+                     JOIN notification_endpoints AS endpoint \
+                       ON endpoint.tenant_id = delivery.tenant_id \
+                      AND endpoint.id = delivery.endpoint_id \
+                     JOIN transitions AS transition \
+                       ON transition.tenant_id = delivery.tenant_id \
+                      AND transition.id = delivery.transition_id \
+                     JOIN watch_targets AS target \
+                       ON target.tenant_id = transition.tenant_id \
+                      AND target.id = transition.watch_target_id \
+                     JOIN watches AS watch \
+                       ON watch.tenant_id = target.tenant_id \
+                      AND watch.id = target.watch_id \
+                     LEFT JOIN rule_versions AS version \
+                       ON version.id = transition.rule_version_id \
+                     WHERE delivery.tenant_id = $1 AND delivery.id = $2 \
+                       AND delivery.delivery_kind = 'watch_transition' \
+                       AND delivery.state = 'delivering' \
+                       AND delivery.attempt_count = $3 \
+                       AND delivery.lease_owner = $4 \
+                       AND delivery.lease_expires_at > clock_timestamp()",
+                )
+                .bind(coordinate.tenant_id)
+                .bind(coordinate.notification_delivery_id)
+                .bind(coordinate.attempt_count)
+                .bind(worker_id)
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(|_| DeliveryError::StorageInvariant)?;
+                let supporting_observation_ids: Vec<Uuid> = sqlx::query_scalar(
+                    "SELECT observation_id \
+                     FROM transition_basis \
+                     WHERE tenant_id = $1 AND transition_id = $2 \
+                     ORDER BY observation_id",
+                )
+                .bind(coordinate.tenant_id)
+                .bind(row.transition_id)
+                .fetch_all(&mut *transaction)
+                .await
+                .map_err(|_| DeliveryError::StorageInvariant)?;
+                let transition = protocol_transition(&row, supporting_observation_ids)?;
+                let protocol_delivery_id = NotificationDeliveryId::new(row.id.to_string())
+                    .map_err(|_| DeliveryError::StorageInvariant)?;
+                let body = match channel {
+                    NotificationChannel::Webhook => serde_json::to_vec(
+                        &WebhookNotification::for_confirmed_transition(
+                            protocol_delivery_id,
+                            transition,
+                        )
+                        .map_err(|_| DeliveryError::StorageInvariant)?,
+                    ),
+                    NotificationChannel::Email => serde_json::to_vec(
+                        &EmailNotification::for_confirmed_transition(
+                            protocol_delivery_id,
+                            transition,
+                        )
+                        .map_err(|_| DeliveryError::StorageInvariant)?,
+                    ),
+                }
+                .map_err(|_| DeliveryError::StorageInvariant)?;
+                (
+                    row.id,
+                    row.endpoint_id,
+                    row.endpoint_channel,
+                    row.destination_ciphertext,
+                    row.encryption_key_id,
+                    body,
+                )
+            }
+            "search_completion" if channel == NotificationChannel::Webhook => {
+                let row: ClaimedSearchCompletionRow = sqlx::query_as(
+                    "SELECT delivery.id, delivery.endpoint_id, \
+                            endpoint.channel AS endpoint_channel, \
+                            endpoint.destination_ciphertext, endpoint.encryption_key_id, \
+                            search.id AS search_id, search.state AS search_state, \
+                            (extract(epoch FROM search.completed_at) * 1000)::bigint \
+                                AS completed_at_unix_ms \
+                     FROM notification_deliveries AS delivery \
+                     JOIN notification_endpoints AS endpoint \
+                       ON endpoint.tenant_id = delivery.tenant_id \
+                      AND endpoint.id = delivery.endpoint_id \
+                     JOIN searches AS search \
+                       ON search.tenant_id = delivery.tenant_id \
+                      AND search.id = delivery.search_id \
+                     WHERE delivery.tenant_id = $1 AND delivery.id = $2 \
+                       AND delivery.delivery_kind = 'search_completion' \
+                       AND delivery.state = 'delivering' \
+                       AND delivery.attempt_count = $3 \
+                       AND delivery.lease_owner = $4 \
+                       AND delivery.lease_expires_at > clock_timestamp() \
+                       AND search.state IN ('completed', 'failed')",
+                )
+                .bind(coordinate.tenant_id)
+                .bind(coordinate.notification_delivery_id)
+                .bind(coordinate.attempt_count)
+                .bind(worker_id)
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(|_| DeliveryError::StorageInvariant)?;
+                let outcome = match row.search_state.as_str() {
+                    "completed" => SearchCompletionOutcome::Completed,
+                    "failed" => SearchCompletionOutcome::Failed,
+                    _ => return Err(DeliveryError::StorageInvariant),
+                };
+                let body = serde_json::to_vec(
+                    &SearchCompletionWebhook::new(
+                        NotificationDeliveryId::new(row.id.to_string())
+                            .map_err(|_| DeliveryError::StorageInvariant)?,
+                        SearchId::new(row.search_id.to_string())
+                            .map_err(|_| DeliveryError::StorageInvariant)?,
+                        outcome,
+                        row.completed_at_unix_ms,
+                    )
+                    .map_err(|_| DeliveryError::StorageInvariant)?,
+                )
+                .map_err(|_| DeliveryError::StorageInvariant)?;
+                (
+                    row.id,
+                    row.endpoint_id,
+                    row.endpoint_channel,
+                    row.destination_ciphertext,
+                    row.encryption_key_id,
+                    body,
+                )
+            }
+            _ => return Err(DeliveryError::StorageInvariant),
+        };
+        if notification_channel(&endpoint_channel)? != channel {
             return Err(DeliveryError::StorageInvariant);
         }
-        let supporting_observation_ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT observation_id \
-             FROM transition_basis \
-             WHERE tenant_id = $1 AND transition_id = $2 \
-             ORDER BY observation_id",
-        )
-        .bind(coordinate.tenant_id)
-        .bind(row.transition_id)
-        .fetch_all(&mut *transaction)
-        .await
-        .map_err(|_| DeliveryError::StorageInvariant)?;
         attach_attempt_lineage(
             &mut transaction,
             coordinate.tenant_id,
@@ -522,20 +635,6 @@ impl DeliveryStore {
             channel,
         )
         .await?;
-        let transition = protocol_transition(&row, supporting_observation_ids)?;
-        let delivery_id = NotificationDeliveryId::new(row.id.to_string())
-            .map_err(|_| DeliveryError::StorageInvariant)?;
-        let body = match channel {
-            NotificationChannel::Webhook => serde_json::to_vec(
-                &WebhookNotification::for_confirmed_transition(delivery_id, transition)
-                    .map_err(|_| DeliveryError::StorageInvariant)?,
-            ),
-            NotificationChannel::Email => serde_json::to_vec(
-                &EmailNotification::for_confirmed_transition(delivery_id, transition)
-                    .map_err(|_| DeliveryError::StorageInvariant)?,
-            ),
-        }
-        .map_err(|_| DeliveryError::StorageInvariant)?;
         let maximum_body_bytes = match channel {
             NotificationChannel::Webhook => MAXIMUM_WEBHOOK_BODY_BYTES,
             NotificationChannel::Email => MAXIMUM_EMAIL_BODY_BYTES,
@@ -549,14 +648,14 @@ impl DeliveryStore {
             .map_err(|_| DeliveryError::DatabaseUnavailable)?;
         Ok(Some(DeliveryClaim {
             tenant_id: coordinate.tenant_id,
-            delivery_id: row.id,
-            endpoint_id: row.endpoint_id,
+            delivery_id,
+            endpoint_id,
             channel,
             attempt_count: u32::try_from(coordinate.attempt_count)
                 .map_err(|_| DeliveryError::StorageInvariant)?,
             worker_id: worker_id.to_owned(),
-            destination_ciphertext: row.destination_ciphertext,
-            encryption_key_id: row.encryption_key_id,
+            destination_ciphertext,
+            encryption_key_id,
             body,
         }))
     }
@@ -1315,6 +1414,18 @@ struct ClaimedDeliveryRow {
     rule_hash: Option<String>,
     confirmation_basis: Option<String>,
     detected_at_unix_ms: i64,
+}
+
+#[derive(FromRow)]
+struct ClaimedSearchCompletionRow {
+    id: Uuid,
+    endpoint_id: Uuid,
+    endpoint_channel: String,
+    destination_ciphertext: Vec<u8>,
+    encryption_key_id: String,
+    search_id: Uuid,
+    search_state: String,
+    completed_at_unix_ms: i64,
 }
 
 #[derive(FromRow)]

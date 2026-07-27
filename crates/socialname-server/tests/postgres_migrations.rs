@@ -40,11 +40,13 @@ use socialname_protocol::{
     EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
     NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
     NotificationEndpointId, OperationalFailure, OperationalFailureKind, OperationalReportResource,
-    ProbeBudget, ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest,
-    SearchEvent, SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource,
-    SearchState, SearchTerminalState, SiteId, SloStatus, SyncPolicy, Target, TargetSelection,
-    Username, Validate, WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource,
-    WatchSchedule, WatchState, WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
+    ProbeBudget, ProtocolVersion, RegionClass, ResultSource, RuleHash,
+    SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
+    SearchCompletionWebhookSubscriptionState, SearchCreateRequest, SearchEvent, SearchEventData,
+    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId,
+    SloStatus, SyncPolicy, Target, TargetSelection, Username, Validate, WatchCreateRequest,
+    WatchListPage, WatchPatchRequest, WatchResource, WatchSchedule, WatchState, WatchStateUpdate,
+    WatchTransitionPage, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
@@ -118,7 +120,7 @@ async fn reset_test_state(pool: &PgPool) {
             rule_pack_trust_roots, rule_pack_metadata, rule_pack_promotions,
             rule_pack_registry, rule_site_promotion_high_water, consent_grants,
             consent_events, searches, search_targets, search_events, watches,
-            watch_targets, watch_notification_endpoints, watch_runs,
+            watch_targets, watch_notification_endpoints, search_completion_webhooks, watch_runs,
             watch_run_targets, probe_jobs, probe_job_consumers, observations,
             assertions, assertion_support, regional_assertions,
             regional_assertion_support, transitions, transition_basis,
@@ -178,6 +180,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('consent_grants'), ('consent_events'), ('searches'), ('search_targets'),
                 ('search_events'),
                 ('watches'), ('watch_targets'), ('watch_notification_endpoints'),
+                ('search_completion_webhooks'),
                 ('watch_runs'), ('watch_run_targets'), ('probe_jobs'), ('probe_job_consumers'),
                 ('observations'), ('assertions'), ('assertion_support'),
                 ('regional_assertions'), ('regional_assertion_support'), ('transitions'),
@@ -200,7 +203,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 51);
+    assert_eq!(required_tables, 52);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -209,7 +212,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 39);
+    assert_eq!(tenant_policies, 40);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -219,7 +222,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 39);
+    assert_eq!(forced_rls_tables, 40);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -678,6 +681,7 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             sites, clients, consent_grants, consent_events,
             searches, search_targets, search_events,
             watches, watch_targets, watch_notification_endpoints,
+            search_completion_webhooks,
             notification_endpoints, watch_runs, watch_run_targets,
             transitions, transition_basis, notification_deliveries,
             notification_acknowledgements,
@@ -690,7 +694,8 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT INSERT ON
             clients, consent_grants, consent_events,
             searches, search_targets, search_events, watches, watch_targets,
-            watch_notification_endpoints, deletion_requests, deletion_tasks,
+            watch_notification_endpoints, search_completion_webhooks,
+            deletion_requests, deletion_tasks,
             suppression_tokens, deletion_resource_matches,
             notification_acknowledgements, audit_events,
             developer_usage_records
@@ -703,6 +708,8 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             state, next_attempt_at, delivered_at, last_error_code,
             lease_owner, lease_started_at, lease_expires_at
         ) ON notification_deliveries TO socialname_migration_test_app;
+        GRANT UPDATE (state, cancelled_at) ON search_completion_webhooks
+            TO socialname_migration_test_app;
         GRANT UPDATE (state, updated_at, completed_at) ON searches
             TO socialname_migration_test_app;
         GRANT UPDATE (state, completed_at) ON search_targets
@@ -3877,6 +3884,12 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     .await;
     assert_webhook_delivery_boundary(administrator_pool, worker_pool.clone()).await;
     assert_email_delivery_boundary(administrator_pool, worker_pool.clone()).await;
+    assert_search_completion_webhook_boundary(
+        administrator_pool,
+        &application_pool,
+        worker_pool.clone(),
+    )
+    .await;
     application_pool.close().await;
     store.close().await;
 }
@@ -6024,6 +6037,423 @@ async fn assert_webhook_delivery_boundary(administrator_pool: &PgPool, worker_po
     assert_eq!(leaked_audit_details, 0);
 }
 
+async fn assert_search_completion_webhook_boundary(
+    administrator_pool: &PgPool,
+    application_pool: &PgPool,
+    worker_pool: PgPool,
+) {
+    let writer_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let reader_token = api_key_token("cccccccccccccccc", 0x33);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let primary_endpoint_id =
+        NotificationEndpointId::new("00000000-0000-0000-0000-000000000071").unwrap();
+    let alternate_endpoint_id =
+        NotificationEndpointId::new("00000000-0000-0000-0000-000000000073").unwrap();
+    let tenant_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let alternate_endpoint_uuid = Uuid::parse_str(alternate_endpoint_id.as_str()).unwrap();
+    let alternate_destination = "https://hooks.example.test/socialname-alternate";
+    let alternate_ciphertext = delivery_secrets()
+        .seal_destination(tenant_id, alternate_endpoint_uuid, alternate_destination)
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO notification_endpoints (\
+            id, tenant_id, channel, destination_ciphertext, destination_hash, \
+            encryption_key_id, state, created_at, verified_at\
+         ) VALUES (\
+            $1, $2, 'webhook', $3, $4, 'endpoint-key-1', 'active', \
+            clock_timestamp(), clock_timestamp()\
+         )",
+    )
+    .bind(alternate_endpoint_uuid)
+    .bind(tenant_id)
+    .bind(alternate_ciphertext)
+    .bind(Sha256::digest(alternate_destination.as_bytes()).to_vec())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    let search =
+        create_private_search(application_pool, "completion-webhook-before-terminal").await;
+    let search_id = Uuid::parse_str(search.search_id.as_str()).unwrap();
+    let path = format!("/v1/searches/{search_id}/completion-webhook");
+    let request = SearchCompletionWebhookCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        endpoint_id: primary_endpoint_id.clone(),
+    };
+
+    let wrong_scope = server_request_with(
+        application_pool,
+        Method::POST,
+        &path,
+        Some(&reader_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_scope, ApiErrorCode::Forbidden).await;
+
+    let created = server_request_with(
+        application_pool,
+        Method::POST,
+        &path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    assert_eq!(created.headers()[LOCATION], path);
+    let waiting: SearchCompletionWebhookResource =
+        serde_json::from_value(json_body(created).await).unwrap();
+    assert!(waiting.validate().is_ok());
+    assert_eq!(
+        waiting.subscription_state,
+        SearchCompletionWebhookSubscriptionState::Active
+    );
+    assert_eq!(waiting.search_state, SearchState::Accepted);
+    assert!(waiting.delivery.is_none());
+
+    let replay = server_request_with(
+        application_pool,
+        Method::POST,
+        &path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replayed: SearchCompletionWebhookResource =
+        serde_json::from_value(json_body(replay).await).unwrap();
+    assert_eq!(replayed, waiting);
+
+    let conflicting_request = SearchCompletionWebhookCreateRequest {
+        schema: ProtocolVersion::ApiV1,
+        endpoint_id: alternate_endpoint_id,
+    };
+    let conflict = server_request_with(
+        application_pool,
+        Method::POST,
+        &path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&conflicting_request).unwrap(),
+    )
+    .await;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_api_error(conflict, ApiErrorCode::Conflict).await;
+
+    let reader_view = server_request(application_pool, &path, Some(&reader_token)).await;
+    assert_eq!(reader_view.status(), StatusCode::OK);
+    let reader_resource: SearchCompletionWebhookResource =
+        serde_json::from_value(json_body(reader_view).await).unwrap();
+    assert_eq!(reader_resource, waiting);
+    let cross_tenant = server_request(application_pool, &path, Some(&other_tenant_token)).await;
+    assert_eq!(cross_tenant.status(), StatusCode::NOT_FOUND);
+    assert_api_error(cross_tenant, ApiErrorCode::NotFound).await;
+
+    complete_search_with_operational_failure(administrator_pool, search_id).await;
+    let queued_response = server_request(application_pool, &path, Some(&reader_token)).await;
+    assert_eq!(queued_response.status(), StatusCode::OK);
+    let queued: SearchCompletionWebhookResource =
+        serde_json::from_value(json_body(queued_response).await).unwrap();
+    assert!(queued.validate().is_ok());
+    assert_eq!(queued.search_state, SearchState::Completed);
+    let queued_delivery = queued.delivery.as_ref().unwrap();
+    assert_eq!(
+        queued_delivery.state,
+        socialname_protocol::NotificationDeliveryState::Queued
+    );
+    let delivery_id = Uuid::parse_str(queued_delivery.delivery_id.as_str()).unwrap();
+
+    sqlx::query(
+        "UPDATE searches SET state = 'completed', updated_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(search_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let logical_delivery_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notification_deliveries \
+         WHERE tenant_id = $1 AND search_id = $2 \
+           AND delivery_kind = 'search_completion'",
+    )
+    .bind(tenant_id)
+    .bind(search_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(logical_delivery_count, 1);
+
+    let transport = ScriptedWebhookTransport::new([Ok(204)]);
+    let outcome = process_one_delivery(
+        &DeliveryStore::new(worker_pool),
+        &delivery_secrets(),
+        &transport,
+        DeliveryProcessConfig {
+            worker_id: "search-completion-worker",
+            lease: Duration::from_secs(10),
+            maximum_attempts: 3,
+            timestamp_unix_ms: current_unix_ms(),
+            cancellation: &tokio_util::sync::CancellationToken::new(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        outcome,
+        DeliveryProcessOutcome::Delivered {
+            delivery_id,
+            attempt_count: 1,
+        }
+    );
+    {
+        let requests = transport.requests();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].destination_matches);
+        assert_eq!(requests[0].signing_key_id, "signing-key-1");
+        assert!(requests[0].signature.starts_with("v1="));
+        let payload: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(payload.as_object().unwrap().len(), 5);
+        assert_eq!(payload["schema"], "socialname.dev/api/v1");
+        assert_eq!(payload["delivery_id"], delivery_id.to_string());
+        assert_eq!(payload["search_id"], search_id.to_string());
+        assert_eq!(payload["outcome"], "completed");
+        assert!(payload["completed_at_unix_ms"].as_i64().is_some());
+        let serialized = payload.to_string();
+        assert!(!serialized.contains("private-search-target"));
+        assert!(!serialized.contains("username"));
+        assert!(!serialized.contains("site"));
+        assert!(!serialized.contains("result"));
+    }
+
+    let delivered_response = server_request(application_pool, &path, Some(&reader_token)).await;
+    let delivered: SearchCompletionWebhookResource =
+        serde_json::from_value(json_body(delivered_response).await).unwrap();
+    assert!(delivered.validate().is_ok());
+    assert_eq!(
+        delivered.delivery.as_ref().unwrap().state,
+        socialname_protocol::NotificationDeliveryState::Delivered
+    );
+    let delivery_lineage: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM data_lineage_edges \
+         WHERE tenant_id = $1 \
+           AND parent_kind = 'search' AND parent_id = $2 \
+           AND child_kind = 'notification_delivery' AND child_id = $3 \
+           AND purpose = 'search_completion_webhook'",
+    )
+    .bind(tenant_id)
+    .bind(search_id)
+    .bind(delivery_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(delivery_lineage, 1);
+    let target_delivery_lineage: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM data_lineage_edges \
+         WHERE tenant_id = $1 \
+           AND parent_kind = 'search_target' \
+           AND child_kind = 'notification_delivery' AND child_id = $2 \
+           AND purpose = 'search_completion_webhook'",
+    )
+    .bind(tenant_id)
+    .bind(delivery_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(target_delivery_lineage, 1);
+
+    let terminal_first =
+        create_private_search(application_pool, "completion-webhook-terminal-first").await;
+    let terminal_first_id = Uuid::parse_str(terminal_first.search_id.as_str()).unwrap();
+    complete_search_with_operational_failure(administrator_pool, terminal_first_id).await;
+    let delivery_before_registration: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notification_deliveries \
+         WHERE tenant_id = $1 AND search_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(terminal_first_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(delivery_before_registration, 0);
+    let terminal_first_path = format!("/v1/searches/{terminal_first_id}/completion-webhook");
+    let terminal_registration = server_request_with(
+        application_pool,
+        Method::POST,
+        &terminal_first_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(terminal_registration.status(), StatusCode::CREATED);
+    let terminal_registered: SearchCompletionWebhookResource =
+        serde_json::from_value(json_body(terminal_registration).await).unwrap();
+    assert_eq!(
+        terminal_registered.delivery.as_ref().unwrap().state,
+        socialname_protocol::NotificationDeliveryState::Queued
+    );
+
+    for _ in 0..2 {
+        let cancelled = server_request_with(
+            application_pool,
+            Method::DELETE,
+            &terminal_first_path,
+            Some(&writer_token),
+            &[],
+            String::new(),
+        )
+        .await;
+        assert_eq!(cancelled.status(), StatusCode::OK);
+        let resource: SearchCompletionWebhookResource =
+            serde_json::from_value(json_body(cancelled).await).unwrap();
+        assert!(resource.validate().is_ok());
+        assert_eq!(
+            resource.subscription_state,
+            SearchCompletionWebhookSubscriptionState::Cancelled
+        );
+        assert_eq!(
+            resource.delivery.as_ref().unwrap().state,
+            socialname_protocol::NotificationDeliveryState::Cancelled
+        );
+    }
+
+    let cancelled_search =
+        create_private_search(application_pool, "completion-webhook-cancelled").await;
+    let cancelled_search_id = Uuid::parse_str(cancelled_search.search_id.as_str()).unwrap();
+    let cancelled_path = format!("/v1/searches/{cancelled_search_id}/completion-webhook");
+    let cancel_search = server_request_with(
+        application_pool,
+        Method::DELETE,
+        &format!("/v1/searches/{cancelled_search_id}"),
+        Some(&writer_token),
+        &[],
+        String::new(),
+    )
+    .await;
+    assert_eq!(cancel_search.status(), StatusCode::OK);
+    let rejected_registration = server_request_with(
+        application_pool,
+        Method::POST,
+        &cancelled_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(rejected_registration.status(), StatusCode::CONFLICT);
+    assert_api_error(rejected_registration, ApiErrorCode::Conflict).await;
+
+    let pending_cancel =
+        create_private_search(application_pool, "completion-webhook-pending-cancel").await;
+    let pending_cancel_id = Uuid::parse_str(pending_cancel.search_id.as_str()).unwrap();
+    let pending_cancel_path = format!("/v1/searches/{pending_cancel_id}/completion-webhook");
+    let pending_registration = server_request_with(
+        application_pool,
+        Method::POST,
+        &pending_cancel_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(pending_registration.status(), StatusCode::CREATED);
+    let pending_cancelled = server_request_with(
+        application_pool,
+        Method::DELETE,
+        &pending_cancel_path,
+        Some(&writer_token),
+        &[],
+        String::new(),
+    )
+    .await;
+    let pending_cancelled_resource: SearchCompletionWebhookResource =
+        serde_json::from_value(json_body(pending_cancelled).await).unwrap();
+    assert_eq!(
+        pending_cancelled_resource.subscription_state,
+        SearchCompletionWebhookSubscriptionState::Cancelled
+    );
+    complete_search_with_operational_failure(administrator_pool, pending_cancel_id).await;
+    let suppressed_delivery_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notification_deliveries \
+         WHERE tenant_id = $1 AND search_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(pending_cancel_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(suppressed_delivery_count, 0);
+
+    let endpoint_disabled =
+        create_private_search(application_pool, "completion-webhook-endpoint-disabled").await;
+    let endpoint_disabled_id = Uuid::parse_str(endpoint_disabled.search_id.as_str()).unwrap();
+    let endpoint_disabled_path = format!("/v1/searches/{endpoint_disabled_id}/completion-webhook");
+    let disabled_registration = server_request_with(
+        application_pool,
+        Method::POST,
+        &endpoint_disabled_path,
+        Some(&writer_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(disabled_registration.status(), StatusCode::CREATED);
+    sqlx::query(
+        "UPDATE notification_endpoints \
+         SET state = 'disabled', disabled_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(Uuid::parse_str(primary_endpoint_id.as_str()).unwrap())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    complete_search_with_operational_failure(administrator_pool, endpoint_disabled_id).await;
+    let disabled_resource_response = server_request(
+        application_pool,
+        &endpoint_disabled_path,
+        Some(&reader_token),
+    )
+    .await;
+    let disabled_resource: SearchCompletionWebhookResource =
+        serde_json::from_value(json_body(disabled_resource_response).await).unwrap();
+    assert!(disabled_resource.validate().is_ok());
+    let disabled_delivery = disabled_resource.delivery.as_ref().unwrap();
+    assert_eq!(
+        disabled_delivery.state,
+        socialname_protocol::NotificationDeliveryState::Cancelled
+    );
+    assert_eq!(
+        disabled_delivery.last_error_code.as_ref().unwrap().as_str(),
+        "endpoint_disabled"
+    );
+    sqlx::query(
+        "UPDATE notification_endpoints \
+         SET state = 'active', disabled_at = NULL \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(Uuid::parse_str(primary_endpoint_id.as_str()).unwrap())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    let leaked_audit_details: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events \
+         WHERE action LIKE 'search_completion.%' \
+           AND details::text LIKE '%private-search-target%'",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(leaked_audit_details, 0);
+}
+
 struct CapturedEmailRequest {
     gateway_matches: bool,
     bearer_matches: bool,
@@ -7067,7 +7497,8 @@ async fn install_worker_role(pool: &PgPool) {
             consent_grants, searches, search_targets, search_events, probe_jobs,
             probe_job_consumers, data_lineage_edges, audit_events,
             rule_versions, watches, watch_targets,
-            watch_notification_endpoints, notification_endpoints, watch_runs,
+            watch_notification_endpoints, search_completion_webhooks,
+            notification_endpoints, watch_runs,
             watch_run_targets, observations, assertions, assertion_support,
             regional_assertions, regional_assertion_support, transitions,
             transition_basis, notification_deliveries,
@@ -7185,6 +7616,30 @@ async fn create_managed_search(
             ("idempotency-key", idempotency_key),
         ],
         serde_json::to_string(&request).unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let resource: SearchResource = serde_json::from_value(json_body(response).await).unwrap();
+    assert_eq!(resource.state, SearchState::Accepted);
+    resource
+}
+
+async fn create_private_search(application_pool: &PgPool, idempotency_key: &str) -> SearchResource {
+    let response = server_request_with(
+        application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&api_key_token("aaaaaaaaaaaaaaaa", 0x11)),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", idempotency_key),
+        ],
+        serde_json::to_string(&private_search_request(
+            SyncPolicy::Private,
+            "github",
+            60_000,
+        ))
+        .unwrap(),
     )
     .await;
     assert_eq!(response.status(), StatusCode::CREATED);

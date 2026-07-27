@@ -38,7 +38,7 @@ API schema version; it is not silently treated as an additive v1 change.
 The repository publishes every root beside an OpenAPI 3.1.2 description, an
 exact SSE transport contract, and a digest manifest under
 [`contracts/api/v1`](../contracts/api/v1/README.md). The generator-owned route
-registry contains all 23 current operations and their required scopes; server
+registry contains all 26 current operations and their required scopes; server
 tests independently prove that every published method/path is registered
 behind authentication with the same scope. See
 [API v1 contract publication](api-contract-publication.md).
@@ -300,6 +300,21 @@ exactly-once guarantee. Signature input, outbound network policy, retries,
 fencing, and audit are specified in
 [Signed webhook delivery](webhook-delivery.md).
 
+`SearchCompletionWebhookCreateRequest` binds one existing active tenant-local
+webhook endpoint to one search without extending the closed
+`SearchCreateRequest`. The corresponding resource exposes search/subscription
+state and an optional bounded delivery status, never targets, results, consent,
+destination, or key data. Creation and cancellation require `search:write`;
+reads require `search:read`.
+
+`SearchCompletionWebhook` is a separate stable signed body containing only the
+schema, delivery ID, search ID, terminal `completed`/`failed` outcome, and
+completion time. It is a wake-up signal to poll the authenticated search, not
+an account-state assertion. Registration-before-completion and
+completion-before-registration converge on one logical delivery; cancelled
+searches do not enqueue. See
+[Search-completion webhooks](search-completion-webhooks.md).
+
 `EmailNotification` has the same stable delivery ID and typed confirmed
 transition admission boundary. It is the canonical retry payload whose digest
 is recorded, but it is not sent directly to a recipient. The worker derives a
@@ -341,10 +356,11 @@ absence of key secret/digest fields, exact account/installation consent wire
 shapes and redaction, exact accepted private-search resources, Cartesian
 target/progress consistency, consent and monitoring page bounds, cursor
 relations, transition/delivery ownership, acknowledgement wire shape, and
-delivered-only acknowledgement relations. Operational-report coverage pins its
+delivered-only acknowledgement relations. Search-completion coverage pins its
+exact request/resource/body shapes and target-free body. Operational-report coverage pins its
 target-free exact wire shape, closed windows, fixed targets, derived status,
 deletion milestone health, and backlog-age relations.
-Publication coverage additionally pins 23 unique operation IDs and
+Publication coverage additionally pins 26 unique operation IDs and
 method/path pairs, exact scopes, resolvable request/response schema roots,
 OpenAPI-to-SSE linkage, deterministic bytes, SHA-256 manifest entries, absence
 of unexpected generated JSON, and router registration.

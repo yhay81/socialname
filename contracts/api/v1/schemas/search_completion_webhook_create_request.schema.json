@@ -1,0 +1,26 @@
+{
+  "$defs": {
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "endpoint_id": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    }
+  },
+  "required": [
+    "schema",
+    "endpoint_id"
+  ],
+  "title": "SearchCompletionWebhookCreateRequest",
+  "type": "object"
+}

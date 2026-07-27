@@ -172,7 +172,9 @@ The real PostgreSQL 18 gate proves:
 - backlog, success, first-result, and terminal-latency cohort separation;
 - deadline hiding and bounded worker-only physical expiry.
 
-Search-completion webhooks remain the next sub-slice of the same roadmap item.
+Search-completion webhooks are implemented as the adjacent, separately
+versioned binding and delivery boundary; see
+[Search-completion webhooks](search-completion-webhooks.md).
 Plan selection, billing, hosted origin, endpoint ownership, production
 retention scheduling, alert ownership, and elapsed SLA evidence remain later
 software or external gates.
