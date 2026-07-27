@@ -4,8 +4,14 @@ import {
   type LatencySlo,
   type NotificationAcknowledgementResource,
   type OperationalReportResource,
+  type OrganizationAuditEventPage,
+  type OrganizationMemberPage,
+  type OrganizationMemberResource,
+  type OrganizationResource,
+  type OrganizationRetentionPolicyResource,
   type RatioSlo,
   type SloStatus,
+  type TransitionReviewPage,
   type WatchListPage,
   type WatchTransitionEntry,
   type WatchTransitionPage,
@@ -116,6 +122,308 @@ export function parseNotificationAcknowledgement(
     throw new Error("The notification response does not match API v1.");
   }
   return value as unknown as NotificationAcknowledgementResource;
+}
+
+const ORGANIZATION_ROLES = new Set([
+  "owner",
+  "administrator",
+  "member",
+  "viewer",
+]);
+const MEMBER_STATES = new Set(["active", "suspended", "removed"]);
+
+function isOrganizationMember(
+  value: unknown,
+): value is OrganizationMemberResource {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "schema",
+      "organization_id",
+      "membership_id",
+      "display_name",
+      "role",
+      "state",
+      "revision",
+      "created_at_unix_ms",
+      "updated_at_unix_ms",
+    ]) &&
+    value.schema === API_SCHEMA &&
+    typeof value.organization_id === "string" &&
+    typeof value.membership_id === "string" &&
+    typeof value.display_name === "string" &&
+    value.display_name.length > 0 &&
+    value.display_name.length <= 100 &&
+    ORGANIZATION_ROLES.has(String(value.role)) &&
+    MEMBER_STATES.has(String(value.state)) &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) > 0 &&
+    Number.isSafeInteger(value.created_at_unix_ms) &&
+    Number(value.created_at_unix_ms) >= 0 &&
+    Number.isSafeInteger(value.updated_at_unix_ms) &&
+    Number(value.updated_at_unix_ms) >= Number(value.created_at_unix_ms)
+  );
+}
+
+export function parseOrganization(value: unknown): OrganizationResource {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schema",
+      "organization_id",
+      "slug",
+      "display_name",
+      "state",
+      "authenticated_member",
+    ]) ||
+    value.schema !== API_SCHEMA ||
+    typeof value.organization_id !== "string" ||
+    typeof value.slug !== "string" ||
+    typeof value.display_name !== "string" ||
+    !["active", "suspended", "deleting"].includes(String(value.state)) ||
+    !isOrganizationMember(value.authenticated_member) ||
+    value.authenticated_member.organization_id !== value.organization_id
+  ) {
+    throw new Error("The organization response does not match API v1.");
+  }
+  return value as unknown as OrganizationResource;
+}
+
+export function parseOrganizationMemberPage(
+  value: unknown,
+): OrganizationMemberPage {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["schema", "members", "next_cursor"]) ||
+    value.schema !== API_SCHEMA ||
+    !Array.isArray(value.members) ||
+    value.members.length > 50 ||
+    !value.members.every(isOrganizationMember) ||
+    !(value.next_cursor === null || typeof value.next_cursor === "string") ||
+    (value.next_cursor !== null &&
+      value.members.at(-1)?.membership_id !== value.next_cursor)
+  ) {
+    throw new Error("The organization member response does not match API v1.");
+  }
+  return value as unknown as OrganizationMemberPage;
+}
+
+export function parseOrganizationMember(
+  value: unknown,
+): OrganizationMemberResource {
+  if (!isOrganizationMember(value)) {
+    throw new Error("The organization member response does not match API v1.");
+  }
+  return value;
+}
+
+export function parseRetentionPolicy(
+  value: unknown,
+): OrganizationRetentionPolicyResource {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schema",
+      "organization_id",
+      "revision",
+      "minimum_watch_retention_days",
+      "maximum_watch_retention_days",
+      "updated_at_unix_ms",
+    ]) ||
+    value.schema !== API_SCHEMA ||
+    typeof value.organization_id !== "string" ||
+    !Number.isSafeInteger(value.revision) ||
+    Number(value.revision) < 1 ||
+    !Number.isSafeInteger(value.minimum_watch_retention_days) ||
+    !Number.isSafeInteger(value.maximum_watch_retention_days) ||
+    Number(value.minimum_watch_retention_days) < 30 ||
+    Number(value.maximum_watch_retention_days) >
+      730 ||
+    Number(value.minimum_watch_retention_days) >
+      Number(value.maximum_watch_retention_days) ||
+    !Number.isSafeInteger(value.updated_at_unix_ms) ||
+    Number(value.updated_at_unix_ms) < 0
+  ) {
+    throw new Error("The retention response does not match API v1.");
+  }
+  return value as unknown as OrganizationRetentionPolicyResource;
+}
+
+export function parseTransitionReviewPage(
+  value: unknown,
+): TransitionReviewPage {
+  const states = new Set(["open", "acknowledged", "resolved"]);
+  const resolutions = new Set([
+    "action_taken",
+    "no_action_required",
+    "measurement_follow_up",
+    "externally_escalated",
+  ]);
+  const isReview = (review: unknown): boolean => {
+    if (
+      !isRecord(review) ||
+      !hasExactKeys(review, [
+        "schema",
+        "review_id",
+        "transition",
+        "state",
+        "revision",
+        "assigned_membership_id",
+        "acknowledged_by_membership_id",
+        "acknowledged_at_unix_ms",
+        "resolved_by_membership_id",
+        "resolved_at_unix_ms",
+        "resolution",
+        "created_at_unix_ms",
+        "updated_at_unix_ms",
+      ]) ||
+      review.schema !== API_SCHEMA ||
+      typeof review.review_id !== "string" ||
+      !isRecord(review.transition) ||
+      review.transition.schema !== API_SCHEMA ||
+      typeof review.transition.transition_id !== "string" ||
+      !isRecord(review.transition.target) ||
+      typeof review.transition.target.username !== "string" ||
+      typeof review.transition.target.site_id !== "string" ||
+      !isRecord(review.transition.change) ||
+      review.transition.change.class !== "account_state" ||
+      !isRecord(review.transition.confirmation) ||
+      review.transition.confirmation.status !== "confirmed" ||
+      !states.has(String(review.state)) ||
+      !Number.isSafeInteger(review.revision) ||
+      Number(review.revision) < 1 ||
+      !(
+        review.assigned_membership_id === null ||
+        typeof review.assigned_membership_id === "string"
+      ) ||
+      !(
+        review.acknowledged_by_membership_id === null ||
+        typeof review.acknowledged_by_membership_id === "string"
+      ) ||
+      !(
+        review.resolved_by_membership_id === null ||
+        typeof review.resolved_by_membership_id === "string"
+      ) ||
+      !(
+        review.acknowledged_at_unix_ms === null ||
+        (Number.isSafeInteger(review.acknowledged_at_unix_ms) &&
+          Number(review.acknowledged_at_unix_ms) >= 0)
+      ) ||
+      !(
+        review.resolved_at_unix_ms === null ||
+        (Number.isSafeInteger(review.resolved_at_unix_ms) &&
+          Number(review.resolved_at_unix_ms) >= 0)
+      ) ||
+      !(
+        review.resolution === null ||
+        resolutions.has(String(review.resolution))
+      ) ||
+      !Number.isSafeInteger(review.created_at_unix_ms) ||
+      Number(review.created_at_unix_ms) < 0 ||
+      !Number.isSafeInteger(review.updated_at_unix_ms) ||
+      Number(review.updated_at_unix_ms) <
+        Number(review.created_at_unix_ms)
+    ) {
+      return false;
+    }
+
+    const assignment = review.assigned_membership_id;
+    const acknowledgedAt = review.acknowledged_at_unix_ms;
+    const resolvedAt = review.resolved_at_unix_ms;
+    const stateRelation =
+      review.state === "open"
+        ? review.acknowledged_by_membership_id === null &&
+          acknowledgedAt === null &&
+          review.resolved_by_membership_id === null &&
+          resolvedAt === null &&
+          review.resolution === null
+        : review.state === "acknowledged"
+          ? typeof assignment === "string" &&
+            review.acknowledged_by_membership_id === assignment &&
+            typeof acknowledgedAt === "number" &&
+            review.resolved_by_membership_id === null &&
+            resolvedAt === null &&
+            review.resolution === null
+          : typeof assignment === "string" &&
+            review.acknowledged_by_membership_id === assignment &&
+            typeof acknowledgedAt === "number" &&
+            review.resolved_by_membership_id === assignment &&
+            typeof resolvedAt === "number" &&
+            review.resolution !== null;
+    return (
+      stateRelation &&
+      (acknowledgedAt === null ||
+        (typeof acknowledgedAt === "number" &&
+          acknowledgedAt >= Number(review.created_at_unix_ms))) &&
+      (resolvedAt === null ||
+        (typeof resolvedAt === "number" &&
+          typeof acknowledgedAt === "number" &&
+          resolvedAt >= acknowledgedAt))
+    );
+  };
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["schema", "reviews", "next_cursor"]) ||
+    value.schema !== API_SCHEMA ||
+    !Array.isArray(value.reviews) ||
+    value.reviews.length > 50 ||
+    !(value.next_cursor === null || typeof value.next_cursor === "string") ||
+    !value.reviews.every(isReview) ||
+    (value.next_cursor !== null &&
+      value.reviews.at(-1)?.review_id !== value.next_cursor)
+  ) {
+    throw new Error("The review response does not match API v1.");
+  }
+  return value as unknown as TransitionReviewPage;
+}
+
+export function parseOrganizationAuditPage(
+  value: unknown,
+): OrganizationAuditEventPage {
+  const isActor = (actor: unknown): boolean =>
+    isRecord(actor) &&
+    ((actor.kind === "system" && hasExactKeys(actor, ["kind"])) ||
+      (actor.kind === "membership" &&
+        hasExactKeys(actor, ["kind", "membership_id"]) &&
+        typeof actor.membership_id === "string") ||
+      (actor.kind === "api_key" &&
+        hasExactKeys(actor, ["kind", "api_key_id"]) &&
+        typeof actor.api_key_id === "string"));
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["schema", "events", "next_cursor"]) ||
+    value.schema !== API_SCHEMA ||
+    !Array.isArray(value.events) ||
+    value.events.length > 50 ||
+    !(value.next_cursor === null || typeof value.next_cursor === "string") ||
+    !value.events.every(
+      (event) =>
+        isRecord(event) &&
+        hasExactKeys(event, [
+          "schema",
+          "audit_event_id",
+          "actor",
+          "action",
+          "resource_kind",
+          "resource_id",
+          "occurred_at_unix_ms",
+        ]) &&
+        event.schema === API_SCHEMA &&
+        typeof event.audit_event_id === "string" &&
+        isActor(event.actor) &&
+        typeof event.action === "string" &&
+        typeof event.resource_kind === "string" &&
+        (event.resource_id === null ||
+          typeof event.resource_id === "string") &&
+        Number.isSafeInteger(event.occurred_at_unix_ms) &&
+        Number(event.occurred_at_unix_ms) >= 0,
+    ) ||
+    (value.next_cursor !== null &&
+      value.events.at(-1)?.audit_event_id !== value.next_cursor)
+  ) {
+    throw new Error("The audit response does not match API v1.");
+  }
+  return value as unknown as OrganizationAuditEventPage;
 }
 
 const SLO_STATUSES = new Set<SloStatus>([
@@ -340,7 +648,13 @@ export function latencyText(objective: LatencySlo): string {
   if (objective.p95_ms < 60_000) {
     return `${(objective.p95_ms / 1_000).toFixed(1)}s`;
   }
-  return `${(objective.p95_ms / 60_000).toFixed(1)}m`;
+  if (objective.p95_ms < 3_600_000) {
+    return `${(objective.p95_ms / 60_000).toFixed(1)}m`;
+  }
+  if (objective.p95_ms < 86_400_000) {
+    return `${(objective.p95_ms / 3_600_000).toFixed(1)}h`;
+  }
+  return `${(objective.p95_ms / 86_400_000).toFixed(1)}d`;
 }
 
 export function sloLabel(status: SloStatus): string {

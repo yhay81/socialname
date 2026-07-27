@@ -2,12 +2,28 @@ import {
   parseTransitionPage,
   parseNotificationAcknowledgement,
   parseOperationalReport,
+  parseOrganization,
+  parseOrganizationAuditPage,
+  parseOrganizationMember,
+  parseOrganizationMemberPage,
+  parseRetentionPolicy,
+  parseTransitionReviewPage,
   parseWatchPage,
   parseWorkspace,
 } from "./model";
 import {
   API_SCHEMA,
   type ApiErrorResponse,
+  type OrganizationAuditEventPage,
+  type OrganizationMemberAction,
+  type OrganizationMemberCreateRequest,
+  type OrganizationMemberPage,
+  type OrganizationMemberResource,
+  type OrganizationResource,
+  type OrganizationRetentionPolicyResource,
+  type TransitionReviewAction,
+  type TransitionReviewPage,
+  type TransitionReviewResource,
   type WatchCreateRequest,
   type OperationalReportResource,
   type OperationalReportWindow,
@@ -62,6 +78,126 @@ async function request(
 
 export async function loadWorkspace(token: string): Promise<WorkspaceResource> {
   return parseWorkspace(await request("/v1/workspace", token));
+}
+
+export async function loadOrganization(
+  token: string,
+): Promise<OrganizationResource> {
+  return parseOrganization(await request("/v1/organization", token));
+}
+
+export async function loadOrganizationMembers(
+  token: string,
+): Promise<OrganizationMemberPage> {
+  return parseOrganizationMemberPage(
+    await request("/v1/organization/members?limit=50", token),
+  );
+}
+
+export async function createOrganizationMember(
+  token: string,
+  payload: OrganizationMemberCreateRequest,
+): Promise<OrganizationMemberResource> {
+  return parseOrganizationMember(
+    await request("/v1/organization/members", token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+export async function updateOrganizationMember(
+  token: string,
+  membership: OrganizationMemberResource,
+  action: OrganizationMemberAction,
+): Promise<OrganizationMemberResource> {
+  return parseOrganizationMember(
+    await request(
+      `/v1/organization/members/${encodeURIComponent(membership.membership_id)}`,
+      token,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          schema: API_SCHEMA,
+          expected_revision: membership.revision,
+          action,
+        }),
+      },
+    ),
+  );
+}
+
+export async function loadOrganizationRetention(
+  token: string,
+): Promise<OrganizationRetentionPolicyResource> {
+  return parseRetentionPolicy(
+    await request("/v1/organization/retention-policy", token),
+  );
+}
+
+export async function updateOrganizationRetention(
+  token: string,
+  current: OrganizationRetentionPolicyResource,
+  minimum: number,
+  maximum: number,
+): Promise<OrganizationRetentionPolicyResource> {
+  return parseRetentionPolicy(
+    await request("/v1/organization/retention-policy", token, {
+      method: "PATCH",
+      body: JSON.stringify({
+        schema: API_SCHEMA,
+        expected_revision: current.revision,
+        minimum_watch_retention_days: minimum,
+        maximum_watch_retention_days: maximum,
+      }),
+    }),
+  );
+}
+
+export async function loadTransitionReviews(
+  token: string,
+): Promise<TransitionReviewPage> {
+  return parseTransitionReviewPage(
+    await request("/v1/reviews?limit=50", token),
+  );
+}
+
+export async function updateTransitionReview(
+  token: string,
+  review: TransitionReviewResource,
+  action: TransitionReviewAction,
+): Promise<TransitionReviewResource> {
+  const page = parseTransitionReviewPage({
+    schema: API_SCHEMA,
+    reviews: [
+      await request(
+        `/v1/reviews/${encodeURIComponent(review.review_id)}`,
+        token,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            schema: API_SCHEMA,
+            expected_revision: review.revision,
+            action,
+          }),
+        },
+      ),
+    ],
+    next_cursor: null,
+  });
+  const updated = page.reviews[0];
+  if (!updated) {
+    throw new ApiFailure(503, "unavailable");
+  }
+  return updated;
+}
+
+export async function loadOrganizationAudit(
+  token: string,
+): Promise<OrganizationAuditEventPage> {
+  return parseOrganizationAuditPage(
+    await request("/v1/organization/audit-events?limit=20", token),
+  );
 }
 
 export async function loadOperationalReport(

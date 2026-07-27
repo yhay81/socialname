@@ -4,6 +4,11 @@ import {
   deliveryLabel,
   latencyText,
   parseOperationalReport,
+  parseOrganization,
+  parseOrganizationAuditPage,
+  parseOrganizationMemberPage,
+  parseRetentionPolicy,
+  parseTransitionReviewPage,
   parseWatchPage,
   ratioText,
   sloLabel,
@@ -51,6 +56,138 @@ test("bounded API parser rejects an unversioned or oversized watch page", () => 
       next_cursor: null,
     }),
   );
+});
+
+const teamMember = {
+  schema: API_SCHEMA,
+  organization_id: "organization_01",
+  membership_id: "membership_01",
+  display_name: "Owner",
+  role: "owner",
+  state: "active",
+  revision: 1,
+  created_at_unix_ms: 1_000,
+  updated_at_unix_ms: 1_000,
+};
+
+test("team parsers keep member subjects and audit details outside responses", () => {
+  const organization = parseOrganization({
+    schema: API_SCHEMA,
+    organization_id: "organization_01",
+    slug: "example",
+    display_name: "Example",
+    state: "active",
+    authenticated_member: teamMember,
+  });
+  assert.equal(organization.authenticated_member.role, "owner");
+
+  const members = parseOrganizationMemberPage({
+    schema: API_SCHEMA,
+    members: [teamMember],
+    next_cursor: "membership_01",
+  });
+  assert.equal(members.members.length, 1);
+
+  const leakedSubject = structuredClone(teamMember) as Record<string, unknown>;
+  leakedSubject.subject_reference = "forbidden";
+  assert.throws(() =>
+    parseOrganizationMemberPage({
+      schema: API_SCHEMA,
+      members: [leakedSubject],
+      next_cursor: null,
+    }),
+  );
+
+  const retention = parseRetentionPolicy({
+    schema: API_SCHEMA,
+    organization_id: "organization_01",
+    revision: 2,
+    minimum_watch_retention_days: 30,
+    maximum_watch_retention_days: 365,
+    updated_at_unix_ms: 2_000,
+  });
+  assert.equal(retention.maximum_watch_retention_days, 365);
+
+  assert.throws(() =>
+    parseOrganizationAuditPage({
+      schema: API_SCHEMA,
+      events: [
+        {
+          schema: API_SCHEMA,
+          audit_event_id: "audit_01",
+          actor: { kind: "system" },
+          action: "transition.review.opened",
+          resource_kind: "transition_review",
+          resource_id: "review_01",
+          occurred_at_unix_ms: 2_000,
+          details: { target: "forbidden" },
+        },
+      ],
+      next_cursor: null,
+    }),
+  );
+
+  assert.throws(() =>
+    parseOrganizationAuditPage({
+      schema: API_SCHEMA,
+      events: [
+        {
+          schema: API_SCHEMA,
+          audit_event_id: "audit_01",
+          actor: { kind: "system", membership_id: "forbidden" },
+          action: "transition.review.opened",
+          resource_kind: "transition_review",
+          resource_id: "review_01",
+          occurred_at_unix_ms: 2_000,
+        },
+      ],
+      next_cursor: null,
+    }),
+  );
+});
+
+test("team review parser enforces confirmed-account workflow relations", () => {
+  const reviewPage = {
+    schema: API_SCHEMA,
+    reviews: [
+      {
+        schema: API_SCHEMA,
+        review_id: "review_01",
+        transition: {
+          schema: API_SCHEMA,
+          transition_id: "transition_01",
+          target: { username: "private-target", site_id: "github" },
+          change: {
+            class: "account_state",
+            from: "not_found",
+            to: "found",
+          },
+          confirmation: { status: "confirmed", basis: "managed_e4" },
+        },
+        state: "acknowledged",
+        revision: 2,
+        assigned_membership_id: "membership_01",
+        acknowledged_by_membership_id: "membership_01",
+        acknowledged_at_unix_ms: 2_000,
+        resolved_by_membership_id: null,
+        resolved_at_unix_ms: null,
+        resolution: null,
+        created_at_unix_ms: 1_000,
+        updated_at_unix_ms: 2_000,
+      },
+    ],
+    next_cursor: "review_01",
+  };
+  assert.equal(parseTransitionReviewPage(reviewPage).reviews.length, 1);
+
+  const wrongAssignee = structuredClone(reviewPage);
+  wrongAssignee.reviews[0].acknowledged_by_membership_id = "membership_02";
+  assert.throws(() => parseTransitionReviewPage(wrongAssignee));
+
+  const measurementReview = structuredClone(reviewPage);
+  measurementReview.reviews[0].transition.change.class =
+    "measurement_health";
+  assert.throws(() => parseTransitionReviewPage(measurementReview));
 });
 
 const operationalReport = {
@@ -134,6 +271,15 @@ test("operational parser and labels preserve no-data and SLO status", () => {
   assert.equal(
     latencyText(report.objectives.transition_to_delivery_latency.email),
     "4.2m",
+  );
+  assert.equal(
+    latencyText({
+      status: "breached",
+      samples: 1,
+      p95_ms: 17_910_000_000,
+      target_ms: 300_000,
+    }),
+    "207.3d",
   );
   assert.equal(sloLabel("breached"), "Breached");
 });

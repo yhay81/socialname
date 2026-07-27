@@ -26,6 +26,7 @@ import {
   type WatchTransitionEntry,
   type WorkspaceResource,
 } from "./types";
+import { TeamPanel } from "./TeamPanel";
 
 interface CreateFields {
   username: string;
@@ -720,6 +721,11 @@ function App() {
             </p>
           </section>
         )}
+
+        <TeamPanel
+          scopes={workspace.authenticated_api_key.scopes}
+          token={tokenRef.current}
+        />
 
         <section className="monitoring-grid">
           <aside className="watch-panel">

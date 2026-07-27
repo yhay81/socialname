@@ -6,9 +6,13 @@ export type ApiKeyScope =
   | "search:write"
   | "watch:read"
   | "watch:write"
+  | "consent:read"
+  | "consent:write"
+  | "evidence:read"
   | "notification:read"
   | "notification:write"
   | "operations:read"
+  | "usage:read"
   | "data:export"
   | "data:delete";
 
@@ -239,6 +243,128 @@ export interface WatchTransitionPage {
   schema: typeof API_SCHEMA;
   watch_id: string;
   entries: WatchTransitionEntry[];
+  next_cursor: string | null;
+}
+
+export type OrganizationRole =
+  | "owner"
+  | "administrator"
+  | "member"
+  | "viewer";
+
+export type OrganizationMemberState = "active" | "suspended" | "removed";
+
+export interface OrganizationMemberResource {
+  schema: typeof API_SCHEMA;
+  organization_id: string;
+  membership_id: string;
+  display_name: string;
+  role: OrganizationRole;
+  state: OrganizationMemberState;
+  revision: number;
+  created_at_unix_ms: number;
+  updated_at_unix_ms: number;
+}
+
+export interface OrganizationResource {
+  schema: typeof API_SCHEMA;
+  organization_id: string;
+  slug: string;
+  display_name: string;
+  state: "active" | "suspended" | "deleting";
+  authenticated_member: OrganizationMemberResource;
+}
+
+export interface OrganizationMemberPage {
+  schema: typeof API_SCHEMA;
+  members: OrganizationMemberResource[];
+  next_cursor: string | null;
+}
+
+export interface OrganizationMemberCreateRequest {
+  schema: typeof API_SCHEMA;
+  subject_reference: string;
+  display_name: string;
+  role: OrganizationRole;
+}
+
+export type OrganizationMemberAction =
+  | { kind: "change_role"; role: OrganizationRole }
+  | { kind: "suspend" }
+  | { kind: "reactivate" }
+  | { kind: "remove" };
+
+export interface OrganizationMemberPatchRequest {
+  schema: typeof API_SCHEMA;
+  expected_revision: number;
+  action: OrganizationMemberAction;
+}
+
+export interface OrganizationRetentionPolicyResource {
+  schema: typeof API_SCHEMA;
+  organization_id: string;
+  revision: number;
+  minimum_watch_retention_days: number;
+  maximum_watch_retention_days: number;
+  updated_at_unix_ms: number;
+}
+
+export interface OrganizationRetentionPolicyPatchRequest {
+  schema: typeof API_SCHEMA;
+  expected_revision: number;
+  minimum_watch_retention_days: number;
+  maximum_watch_retention_days: number;
+}
+
+export type TransitionReviewResolution =
+  | "action_taken"
+  | "no_action_required"
+  | "measurement_follow_up"
+  | "externally_escalated";
+
+export type TransitionReviewAction =
+  | { kind: "assign"; membership_id: string }
+  | { kind: "acknowledge" }
+  | { kind: "resolve"; resolution: TransitionReviewResolution };
+
+export interface TransitionReviewResource {
+  schema: typeof API_SCHEMA;
+  review_id: string;
+  transition: Transition;
+  state: "open" | "acknowledged" | "resolved";
+  revision: number;
+  assigned_membership_id: string | null;
+  acknowledged_by_membership_id: string | null;
+  acknowledged_at_unix_ms: number | null;
+  resolved_by_membership_id: string | null;
+  resolved_at_unix_ms: number | null;
+  resolution: TransitionReviewResolution | null;
+  created_at_unix_ms: number;
+  updated_at_unix_ms: number;
+}
+
+export interface TransitionReviewPage {
+  schema: typeof API_SCHEMA;
+  reviews: TransitionReviewResource[];
+  next_cursor: string | null;
+}
+
+export interface OrganizationAuditEventResource {
+  schema: typeof API_SCHEMA;
+  audit_event_id: string;
+  actor:
+    | { kind: "system" }
+    | { kind: "membership"; membership_id: string }
+    | { kind: "api_key"; api_key_id: string };
+  action: string;
+  resource_kind: string;
+  resource_id: string | null;
+  occurred_at_unix_ms: number;
+}
+
+export interface OrganizationAuditEventPage {
+  schema: typeof API_SCHEMA;
+  events: OrganizationAuditEventResource[];
   next_cursor: string | null;
 }
 
