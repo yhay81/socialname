@@ -471,6 +471,16 @@ async fn materialize_contributor_lineage(
              AND consumer.probe_job_id = selected.probe_job_id \
             WHERE consumer.search_target_id IS NOT NULL \
             UNION \
+            SELECT 'shared_contribution'::text, contribution.id \
+            FROM shared_contributions AS contribution \
+            JOIN consent_grants AS consent \
+              ON consent.tenant_id = contribution.tenant_id \
+             AND consent.id = contribution.consent_grant_id \
+            WHERE contribution.tenant_id = $1 \
+              AND consent.subject_kind = $3 \
+              AND COALESCE(consent.membership_id, consent.client_id) = $4 \
+              AND consent.purpose = $5 \
+            UNION \
             SELECT lineage.child_kind, lineage.child_id \
             FROM data_lineage_edges AS lineage \
             JOIN matched AS parent \
@@ -486,7 +496,8 @@ async fn materialize_contributor_lineage(
          WHERE resource_kind IN (\
             'observation', 'evidence_capsule', 'assertion', \
             'regional_assertion', 'search_event', 'watch_run_target', \
-            'transition', 'notification_delivery', 'probe_job', 'search_target'\
+            'transition', 'notification_delivery', 'probe_job', \
+            'search_target', 'shared_contribution'\
          ) \
          ON CONFLICT DO NOTHING",
     )

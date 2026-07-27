@@ -2,6 +2,7 @@
 
 mod common;
 mod consent;
+mod contribution;
 mod deletion;
 mod developer;
 mod error;
@@ -21,7 +22,7 @@ mod workspace;
 
 pub use common::{
     API_V1_SCHEMA, ApiKeyId, AuditEventId, AuditResourceId, ConsentGrantId, ConsentSubjectId,
-    DefinitiveVerdict, DeletionRequestId, DeliveryErrorCode, EmailAddress, EventId,
+    ContributionId, DefinitiveVerdict, DeletionRequestId, DeliveryErrorCode, EmailAddress, EventId,
     EvidenceCapsuleId, EvidenceClass, EvidenceDigest, Freshness, FreshnessState, HttpsUrl,
     IdempotencyKey, IdentifierError, InstallationId, MembershipId, NotificationDeliveryId,
     NotificationEndpointId, NotificationLogicalKey, ObservationId, ProtocolVersion, RegionClass,
@@ -33,6 +34,13 @@ pub use consent::{
     ConsentCollectionProfileVersion, ConsentGrantCreateRequest, ConsentGrantListPage,
     ConsentGrantResource, ConsentGrantState, ConsentNoticeVersion, ConsentPurpose, ConsentSource,
     ConsentSubjectKind, ConsentWithdrawalRequest, MAX_CONSENT_PAGE_ITEMS,
+};
+pub use contribution::{
+    ContributionHistoryReason, ContributionInfluenceScope, ContributionNetworkClass,
+    ContributorReputationTier, MAX_CONTRIBUTION_BYTES, MAX_CONTRIBUTION_MATCHER_TRACES,
+    MAX_CONTRIBUTION_PAGE_ITEMS, MAX_CONTRIBUTION_PROBES, SHARED_CONTRIBUTION_V1,
+    SharedContributionPage, SharedContributionResource, SharedContributionSchema,
+    SharedContributionSubmitRequest,
 };
 pub use deletion::{
     ContributorDeletionCreateRequest, DeletionReceiptResource, DeletionReceiptState,

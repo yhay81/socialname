@@ -216,7 +216,7 @@ so status does not diverge across design records.
   compliance claim; production SLA history remains external evidence.
 - API v1 publication is generator-owned and committed as OpenAPI 3.1.2,
   independent Draft 2020-12 roots, an exact SocialName SSE contract, and a
-  SHA-256 drift manifest. One closed registry owns the 38 published
+  SHA-256 drift manifest. One closed registry owns the 41 published
   method/path/schema/scope descriptions; Axum keeps an independent
   operation-to-scope mapping and tests route registration plus exact scope
   agreement. The publication declares no production origin or availability.
@@ -276,6 +276,22 @@ so status does not diverge across design records.
   already-budgeted queued/retry watch job: regional conflict outranks pending
   account confirmation, which outranks routine work. Priority alone cannot
   create a probe, region, or deployment claim.
+- Client-contributed shared observations are an untrusted, structurally
+  separate store behind the closed `contribution:read`/`contribution:write`
+  scopes. Acceptance requires an installation-subject `shared_observation`
+  grant active at both observation and submission time, a recognized exact
+  `(site, rule hash)`, server-side normalization through that rule, and
+  fail-closed target-suppression checks. Replay uses a locked per-installation
+  monotonic sequence with committed violation counting; quotas are UTC-day
+  tenant and installation ceilings; probe-plan disagreement is
+  fabricated-plan evidence with immediate site-family suspension; diversity
+  records a keyed coarse region/network/week independence bucket and never a
+  client IP. Reputation tiers are closed database-guarded states whose
+  calibration ascent and any corroboration influence remain later ordered
+  work; no contribution reaches `assertion_support`, `verified` truth, or a
+  notification in this slice. Contributor deletion, verified target-person
+  deletion, worker purge, and restore-ledger replay all traverse
+  contributions.
 
 ## Detailed records
 
@@ -310,6 +326,7 @@ so status does not diverge across design records.
 - [Search-completion webhooks](search-completion-webhooks.md)
 - [Plan entitlements and billing boundary](plan-entitlements-billing.md)
 - [Team organizations, review, audit, and retention](team-workflows.md)
+- [Shared contribution ingestion v1](shared-contributions.md)
 
 ## Implementation baseline
 
@@ -422,6 +439,13 @@ so status does not diverge across design records.
     invalidation, confirmed-transition review and reviewer acknowledgement,
     target-free audit projection, and enforced organization watch-retention
     policy.
+32. **Done:** Add the shared-contribution acceptance boundary: minimized
+    consented client submissions in an untrusted separate store with replay
+    high-water/violation control, UTC-day quotas, probe-plan and window
+    anomaly rejection, keyed coarse independence facts, guarded reputation
+    tiers with violation suspension, and complete deletion/suppression/restore
+    traversal. Calibration ascent and quorum corroboration remain ordered
+    later work.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -437,6 +461,8 @@ idempotency, quota, usage-report, search-completion webhook, consent-bound
 remote client boundaries, private search history, bounded export,
 adoption-focused examples, and provider-neutral plan entitlements. Payment
 provider integration and hosted commercial evidence remain external.
-Milestone 5 has its first repository-complete Team organization workflow;
-collaboration integrations, consented shared observations, quorum
-corroboration, and any community daemon remain ordered later work.
+Milestone 5 has its repository-complete Team organization workflow and the
+shared-contribution acceptance boundary with replay, quota, anomaly,
+diversity, and reputation-suspension controls. Collaboration integrations
+wait for demonstrated customer workflow demand; reputation calibration,
+quorum corroboration, and any community daemon remain ordered later work.

@@ -204,16 +204,30 @@ pub async fn request_verified_target_deletion(
         }
 
         let matched: i64 = sqlx::query_scalar(
-            "SELECT count(*) \
-             FROM observations AS observation \
-             WHERE observation.tenant_id = $1 \
-               AND observation.visibility = 'shared' \
-               AND EXISTS (\
-                   SELECT 1 FROM unnest($2::text[], $3::text[]) \
-                       AS selector(site_id, normalized_username) \
-                   WHERE selector.site_id = observation.site_id \
-                     AND selector.normalized_username = observation.normalized_username\
-               )",
+            "SELECT (\
+                SELECT count(*) \
+                FROM observations AS observation \
+                WHERE observation.tenant_id = $1 \
+                  AND observation.visibility = 'shared' \
+                  AND EXISTS (\
+                      SELECT 1 FROM unnest($2::text[], $3::text[]) \
+                          AS selector(site_id, normalized_username) \
+                      WHERE selector.site_id = observation.site_id \
+                        AND selector.normalized_username \
+                            = observation.normalized_username\
+                  )\
+             ) + (\
+                SELECT count(*) \
+                FROM shared_contributions AS contribution \
+                WHERE contribution.tenant_id = $1 \
+                  AND EXISTS (\
+                      SELECT 1 FROM unnest($2::text[], $3::text[]) \
+                          AS selector(site_id, normalized_username) \
+                      WHERE selector.site_id = contribution.site_id \
+                        AND selector.normalized_username \
+                            = contribution.normalized_username\
+                  )\
+             )",
         )
         .bind(tenant_id)
         .bind(&site_ids)
@@ -348,6 +362,16 @@ async fn materialize_target_lineage(
              AND consumer.probe_job_id = selected.probe_job_id \
             WHERE consumer.search_target_id IS NOT NULL \
             UNION \
+            SELECT 'shared_contribution'::text, contribution.id \
+            FROM shared_contributions AS contribution \
+            WHERE contribution.tenant_id = $1 \
+              AND EXISTS (\
+                  SELECT 1 FROM unnest($3::text[], $4::text[]) \
+                      AS selector(site_id, normalized_username) \
+                  WHERE selector.site_id = contribution.site_id \
+                    AND selector.normalized_username = contribution.normalized_username\
+              ) \
+            UNION \
             SELECT lineage.child_kind, lineage.child_id \
             FROM data_lineage_edges AS lineage \
             JOIN matched AS parent \
@@ -363,7 +387,8 @@ async fn materialize_target_lineage(
          WHERE resource_kind IN (\
             'observation', 'evidence_capsule', 'assertion', \
             'regional_assertion', 'search_event', 'watch_run_target', \
-            'transition', 'notification_delivery', 'probe_job', 'search_target'\
+            'transition', 'notification_delivery', 'probe_job', \
+            'search_target', 'shared_contribution'\
          ) \
          ON CONFLICT DO NOTHING",
     )

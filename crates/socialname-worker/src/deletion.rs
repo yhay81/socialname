@@ -510,6 +510,14 @@ async fn delete_primary_resources(
                AND matched.resource_kind = 'observation' \
                AND matched.resource_id = observation.id\
          )",
+        "DELETE FROM shared_contributions AS contribution \
+         WHERE contribution.tenant_id = $1 AND EXISTS (\
+             SELECT 1 FROM deletion_resource_matches AS matched \
+             WHERE matched.tenant_id = contribution.tenant_id \
+               AND matched.deletion_request_id = $2 \
+               AND matched.resource_kind = 'shared_contribution' \
+               AND matched.resource_id = contribution.id\
+         )",
         "DELETE FROM data_lineage_edges AS lineage \
          WHERE lineage.tenant_id = $1 AND (\
              EXISTS (\

@@ -53,7 +53,12 @@ and plan-aware due-watch scheduling. Migration `0021_team_workflows.sql` adds
 public membership names and revisions, one organization retention policy,
 confirmed-transition review/current and append-only history, private member
 provisioning, last-owner and assignee safety, and serialized watch-retention
-enforcement.
+enforcement. Migration `0022_shared_contributions.sql` adds the closed
+`contribution:read`/`contribution:write` scopes, the append-only untrusted
+`shared_contributions` store with exact rule/consent binding and coarse
+independence facts, per-installation replay high-water marks, UTC-day quota
+counters, guarded contributor-reputation tier records, and the
+`shared_contribution` deletion-match kind.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -82,7 +87,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 57 product tables:
+The migrations create 61 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -95,6 +100,7 @@ The migrations create 57 product tables:
 | Team governance | `organization_retention_policies`, `transition_reviews`, `transition_review_events` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
+| Shared contributions | `shared_contributions`, `contribution_sequences`, `contribution_quota_counters`, `contributor_reputation` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `search_completion_webhooks`, `notification_deliveries`, `notification_delivery_attempts`, `notification_acknowledgements` |
 | Audit and governance | `audit_events`, `data_lineage_edges`, `deletion_requests`, `deletion_tasks`, `deletion_receipts`, `deletion_resource_matches`, `deletion_backup_verifications`, `deletion_restore_runs`, `deletion_restore_request_links`, `suppression_tokens` |
 
@@ -326,7 +332,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 57 tables and 45
+It applies the embedded migrations twice, inventories all 61 tables and 49
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant

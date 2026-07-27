@@ -189,6 +189,7 @@ opaque_id!(EventId, "event_id");
 opaque_id!(RequestId, "request_id");
 opaque_id!(ConsentGrantId, "consent_grant_id");
 opaque_id!(ConsentSubjectId, "consent_subject_id");
+opaque_id!(ContributionId, "contribution_id");
 opaque_id!(EvidenceCapsuleId, "evidence_capsule_id");
 opaque_id!(DeletionRequestId, "deletion_request_id");
 opaque_id!(WorkspaceId, "workspace_id");

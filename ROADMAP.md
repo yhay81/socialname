@@ -2,7 +2,7 @@
 
 Status: **Active**
 
-Last reviewed: 2026-07-27
+Last reviewed: 2026-07-28
 
 Authority: `docs/ultimate-goal.md`
 
@@ -1810,6 +1810,73 @@ passed Rust core including PostgreSQL 18 Team migration, role, review, audit,
 retention, and contract-drift tests; Windows/macOS desktop, monitoring console,
 and managed-worker OCI also passed for commit `9dbca73`.
 
+Shared-contribution acceptance partial software evidence (the roadmap item
+remains open for reputation-calibration ascent; the collaboration-integration
+item stays untouched because its demonstrated-customer-demand trigger is
+external and unmet):
+
+```console
+cargo fmt --all -- --check
+# passed
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified exact committed OpenAPI with 41 operations, 48 JSON Schema roots,
+# SSE, and manifest
+cargo test --locked --workspace --all-targets
+# passed against disposable PostgreSQL 18.4, including protocol 70 unit +
+# 20 wire + 1 publication; server 49 library + 2 binary + 1 full integration
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+node --test examples/api-v1/client.test.mjs
+# 5 passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- canaries validate
+# validated 0 canary manifests; 10 site rules remain discovery-only
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+cd ../console
+npm ci
+npm test
+npm run check
+npm run build
+# all passed
+```
+
+Migration `0022` brings the schema to 61 product tables and 49 forced-RLS
+policies. Three new API v1 operations under the closed
+`contribution:read`/`contribution:write` scopes accept one minimized
+installation-consented shared observation into an untrusted store that is
+structurally outside `observations`, `assertion_support`, `verified` truth,
+and every notification path. Admission enforces active-at-observation consent,
+recognized exact `(site, rule hash)` resolution with server-side username
+normalization, closed freshness/skew windows, locked per-installation
+monotonic sequences with committed replay-violation counting and
+third-violation suspension, immediate fabricated-plan-evidence suspension on
+probe/allowlist disagreement, fail-closed target-suppression checks, UTC-day
+tenant and installation quotas, verdict-specific expiry, and a keyed coarse
+region/network/week independence bucket without any client IP.
+
+Contributor deletion, verified target-person deletion, fenced worker purge,
+and restore-ledger replay all traverse `shared_contribution` matches, so
+hidden rows disappear from reads immediately, purge physically, and re-hide
+after a backup restore. The real PostgreSQL 18 gate proves scope/role denial,
+consent conflicts, history-only versus green-health current influence,
+stale-upload retention, window and unknown-rule rejection without target
+echo, exact replay convergence, counted violations and both suspension
+reasons with target-free audit, tenant isolation, cursor validation, seeded
+quota exhaustion with retry-after, append-only and guard-trigger enforcement,
+suppression-blocked resubmission, and retained target-free control rows.
+Reputation calibration ascent (managed-overlap validation toward
+`calibrated`/`trusted`) and quorum `corroborated` derivation remain ordered
+later work; no repository rule is promoted and hosted evidence is not
+claimed. The complete boundary is in
+[`docs/shared-contributions.md`](docs/shared-contributions.md).
+
 Acceptance gate:
 
 - Ordinary CLI installations never execute unrelated central jobs.
@@ -2027,6 +2094,17 @@ Choose these only when their trigger is measured:
   least-privilege evidence. Kept provider integration, pricing, checkout,
   invoicing, hosted deployment, and live commercial evidence external, and
   selected Milestone 5 team workflows next.
+- **2026-07-28:** Added the shared-contribution acceptance boundary: three
+  scoped API v1 operations admitting minimized installation-consented shared
+  observations into an untrusted separate store with replay high-water and
+  committed violation control, UTC-day tenant/installation quotas,
+  window/rule/probe-plan anomaly rejection, keyed coarse independence facts,
+  guarded reputation tiers with violation suspension, and complete
+  deletion/suppression/restore traversal under PostgreSQL 18 evidence.
+  Skipped the collaboration-integration item because its
+  demonstrated-customer-demand trigger is external and unmet, and kept the
+  shared-observation item open for reputation-calibration ascent before
+  quorum corroboration.
 - **2026-07-27:** Added the first Milestone 5 Team workflow: one-workspace
   organizations, role-and-scope authorization, private replay-safe member
   provisioning and safe lifecycle/key invalidation, confirmed-transition

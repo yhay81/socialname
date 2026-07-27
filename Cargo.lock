@@ -4176,6 +4176,7 @@ dependencies = [
  "socialname-engine",
  "socialname-protocol",
  "socialname-rule-compiler",
+ "socialname-rule-schema",
  "socialname-worker",
  "sqlx",
  "thiserror 2.0.19",
@@ -4184,6 +4185,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "zeroize",
 ]

@@ -31,6 +31,10 @@ pub enum ApiKeyScope {
     ConsentRead,
     #[serde(rename = "consent:write")]
     ConsentWrite,
+    #[serde(rename = "contribution:read")]
+    ContributionRead,
+    #[serde(rename = "contribution:write")]
+    ContributionWrite,
     #[serde(rename = "evidence:read")]
     EvidenceRead,
     #[serde(rename = "operations:read")]
@@ -54,6 +58,8 @@ impl ApiKeyScope {
             Self::DataDelete => "data:delete",
             Self::ConsentRead => "consent:read",
             Self::ConsentWrite => "consent:write",
+            Self::ContributionRead => "contribution:read",
+            Self::ContributionWrite => "contribution:write",
             Self::EvidenceRead => "evidence:read",
             Self::OperationsRead => "operations:read",
             Self::UsageRead => "usage:read",
@@ -73,6 +79,8 @@ impl ApiKeyScope {
             "data:delete" => Ok(Self::DataDelete),
             "consent:read" => Ok(Self::ConsentRead),
             "consent:write" => Ok(Self::ConsentWrite),
+            "contribution:read" => Ok(Self::ContributionRead),
+            "contribution:write" => Ok(Self::ContributionWrite),
             "evidence:read" => Ok(Self::EvidenceRead),
             "operations:read" => Ok(Self::OperationsRead),
             "usage:read" => Ok(Self::UsageRead),

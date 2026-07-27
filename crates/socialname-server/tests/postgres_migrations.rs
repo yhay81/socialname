@@ -32,24 +32,27 @@ use socialname_protocol::{
     ApiErrorCode, ApiErrorResponse, ConsentCollectionProfileVersion, ConsentGrantCreateRequest,
     ConsentGrantId, ConsentGrantListPage, ConsentGrantResource, ConsentGrantState,
     ConsentNoticeVersion, ConsentPurpose, ConsentSource, ConsentSubjectKind,
-    ConsentWithdrawalRequest, ContributorDeletionCreateRequest, DefinitiveVerdict,
-    DeletionReceiptResource, DeletionReceiptState, DeletionRequestResource, DeletionRequestState,
-    DeletionStoreKind, DeletionStoreState, DeveloperReportResource, EventId, EvidenceCapsuleId,
-    EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
-    EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
-    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId, MembershipId,
-    NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
-    NotificationEndpointId, OperationalFailure, OperationalFailureKind, OperationalReportResource,
-    OrganizationAuditEventPage, OrganizationMemberAction, OrganizationMemberCreateRequest,
-    OrganizationMemberPage, OrganizationMemberPatchRequest, OrganizationMemberResource,
-    OrganizationMemberState, OrganizationResource, OrganizationRetentionPolicyPatchRequest,
+    ConsentWithdrawalRequest, ContributionHistoryReason, ContributionInfluenceScope,
+    ContributionNetworkClass, ContributorDeletionCreateRequest, ContributorReputationTier,
+    DefinitiveVerdict, DeletionReceiptResource, DeletionReceiptState, DeletionRequestResource,
+    DeletionRequestState, DeletionStoreKind, DeletionStoreState, DeveloperReportResource, EventId,
+    EvidenceCapsuleId, EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema,
+    EvidenceClass, EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome,
+    EvidenceProbe, EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, HttpsUrl,
+    InstallationId, MembershipId, NotificationAcknowledgementCreateRequest,
+    NotificationAcknowledgementResource, NotificationEndpointId, OperationalFailure,
+    OperationalFailureKind, OperationalReportResource, OrganizationAuditEventPage,
+    OrganizationMemberAction, OrganizationMemberCreateRequest, OrganizationMemberPage,
+    OrganizationMemberPatchRequest, OrganizationMemberResource, OrganizationMemberState,
+    OrganizationResource, OrganizationRetentionPolicyPatchRequest,
     OrganizationRetentionPolicyResource, OrganizationRole, OrganizationSubjectReference,
     PlanCapability, PlanCode, PlanEntitlementResource, PlanEntitlementState, ProbeBudget,
     ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCompletionWebhookCreateRequest,
     SearchCompletionWebhookResource, SearchCompletionWebhookSubscriptionState, SearchCreateRequest,
     SearchEvent, SearchEventData, SearchExportPage, SearchHistoryPage, SearchId, SearchMode,
-    SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId, SloStatus,
-    SyncPolicy, Target, TargetSelection, TransitionReviewAction, TransitionReviewPage,
+    SearchProgress, SearchResource, SearchState, SearchTerminalState, SharedContributionPage,
+    SharedContributionResource, SharedContributionSubmitRequest, SiteId, SloStatus, SyncPolicy,
+    Target, TargetSelection, TransitionReviewAction, TransitionReviewPage,
     TransitionReviewPatchRequest, TransitionReviewResolution, TransitionReviewResource,
     TransitionReviewState, Username, Validate, WatchCreateRequest, WatchListPage,
     WatchPatchRequest, WatchResource, WatchSchedule, WatchState, WatchStateUpdate,
@@ -107,6 +110,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_authenticated_workspace_boundary(&pool).await;
     assert_team_workflow_boundary(&pool).await;
     assert_consent_grant_lifecycle_boundary(&pool).await;
+    assert_shared_contribution_boundary(&pool).await;
     assert_private_search_and_event_stream_boundary(&pool).await;
     assert_search_history_export_boundary(&pool).await;
     assert_watch_api_boundary(&pool).await;
@@ -144,7 +148,9 @@ async fn reset_test_state(pool: &PgPool) {
             deletion_restore_runs, developer_quota_policies,
             developer_usage_records, tenant_plan_entitlements,
             plan_entitlement_events, organization_retention_policies,
-            transition_reviews, transition_review_events
+            transition_reviews, transition_review_events, shared_contributions,
+            contribution_sequences, contribution_quota_counters,
+            contributor_reputation
         CASCADE;
 
         DO $$
@@ -209,7 +215,9 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('developer_quota_policies'), ('developer_usage_records'),
                 ('tenant_plan_entitlements'), ('plan_entitlement_events'),
                 ('organization_retention_policies'), ('transition_reviews'),
-                ('transition_review_events')
+                ('transition_review_events'), ('shared_contributions'),
+                ('contribution_sequences'), ('contribution_quota_counters'),
+                ('contributor_reputation')
         )
         SELECT count(*)
         FROM required
@@ -219,7 +227,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 57);
+    assert_eq!(required_tables, 61);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -228,7 +236,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 45);
+    assert_eq!(tenant_policies, 49);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -238,7 +246,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 45);
+    assert_eq!(forced_rls_tables, 49);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -565,6 +573,8 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "watch:write",
                 "consent:read",
                 "consent:write",
+                "contribution:read",
+                "contribution:write",
                 "evidence:read",
                 "operations:read",
                 "usage:read",
@@ -590,6 +600,8 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "watch:write",
                 "consent:read",
                 "consent:write",
+                "contribution:read",
+                "contribution:write",
                 "evidence:read",
                 "operations:read",
                 "usage:read",
@@ -748,12 +760,15 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             notification_endpoints, watch_runs, watch_run_targets,
             transitions, transition_basis, notification_deliveries,
             notification_acknowledgements,
-            rule_versions, evidence_capsules, suppression_tokens,
+            rule_versions, rule_health_records, evidence_capsules,
+            suppression_tokens,
             deletion_requests, deletion_tasks, deletion_receipts,
             deletion_resource_matches, observations,
             data_lineage_edges, probe_jobs, probe_job_consumers,
             developer_quota_policies, developer_usage_records,
-            organization_retention_policies, transition_reviews
+            organization_retention_policies, transition_reviews,
+            shared_contributions, contribution_sequences,
+            contribution_quota_counters, contributor_reputation
             TO socialname_migration_test_app;
         GRANT SELECT (
             id, tenant_id, actor_membership_id, actor_api_key_id,
@@ -770,8 +785,20 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             deletion_requests, deletion_tasks,
             suppression_tokens, deletion_resource_matches,
             notification_acknowledgements, audit_events,
-            developer_usage_records, transition_review_events
+            developer_usage_records, transition_review_events,
+            shared_contributions, contribution_sequences,
+            contribution_quota_counters, contributor_reputation
             TO socialname_migration_test_app;
+        GRANT UPDATE (
+            high_water, replay_violations, last_violation_at, updated_at
+        ) ON contribution_sequences TO socialname_migration_test_app;
+        GRANT UPDATE (accepted_count) ON contribution_quota_counters
+            TO socialname_migration_test_app;
+        GRANT UPDATE (
+            tier, revision, validated_overlaps, agreement_hits,
+            agreement_misses, active_days, last_active_day, suspended_at,
+            suspension_reason, updated_at
+        ) ON contributor_reputation TO socialname_migration_test_app;
         GRANT UPDATE (last_seen_at) ON clients
             TO socialname_migration_test_app;
         GRANT UPDATE (role, state, revision, updated_at) ON memberships
@@ -2389,6 +2416,745 @@ async fn assert_consent_database_guards(
             .await
             .unwrap_err();
     assert_database_code(immutable_event, "55000");
+}
+
+const CONTRIBUTION_RULE: &str = r#"
+schema: socialname.dev/site/v1
+id: contrib-test
+name: Contribution Test
+homepage: https://contrib.example.com/
+profile_url: https://contrib.example.com/u/{username:path}
+namespace: person
+username:
+  pattern: '^[a-z][a-z0-9-]{2,31}$'
+  normalization: lowercase
+probes:
+  - id: profile
+    http:
+      method: GET
+      url: https://contrib.example.com/u/{username:path}
+      allowed_hosts: [contrib.example.com]
+      expected_body: bounded_text
+      transport_profile: minimal
+plan:
+  type: single
+  probe: profile
+classification:
+  found:
+    status:
+      probe: profile
+      in: [200]
+  not_found:
+    status:
+      probe: profile
+      in: [404]
+metadata:
+  enabled: true
+"#;
+
+fn contribution_request(
+    installation_id: &InstallationId,
+    consent_grant_id: &str,
+    sequence_number: u64,
+    username: &str,
+    rule_hash: &str,
+    observed_at_unix_ms: i64,
+) -> SharedContributionSubmitRequest {
+    SharedContributionSubmitRequest {
+        schema: ProtocolVersion::ApiV1,
+        installation_id: installation_id.clone(),
+        consent_grant_id: ConsentGrantId::new(consent_grant_id).unwrap(),
+        sequence_number,
+        target: Target {
+            username: Username::new(username).unwrap(),
+            site_id: SiteId::new("contrib-test").unwrap(),
+        },
+        rule_hash: RuleHash::new(rule_hash).unwrap(),
+        engine_hash: "ab".repeat(32),
+        observed_at_unix_ms,
+        region_class: RegionClass::new("jp").unwrap(),
+        network_class: ContributionNetworkClass::Residential,
+        outcome: EvidenceOutcome::Definitive {
+            verdict: DefinitiveVerdict::Found,
+        },
+        evidence_class: EvidenceClass::E3ExplicitEndpoint,
+        evidence_digest: EvidenceDigest::new("cd".repeat(32)).unwrap(),
+        probes: vec![EvidenceProbe {
+            probe_id: "profile".to_owned(),
+            transport: EvidenceTransportOutcome::Completed,
+            status: Some(200),
+            final_url: Some(
+                HttpsUrl::new(format!(
+                    "https://contrib.example.com/u/{}",
+                    username.to_lowercase()
+                ))
+                .unwrap(),
+            ),
+            content_type: Some("text/html".to_owned()),
+            body_bytes: 512,
+            body_truncated: false,
+            latency_bucket_ms: 100,
+        }],
+        matcher_trace: vec![EvidenceMatcherTrace {
+            path: "found.status".to_owned(),
+            matched: true,
+            detail: "status Some(200)".to_owned(),
+        }],
+    }
+}
+
+async fn post_contribution(
+    pool: &PgPool,
+    token: &str,
+    request: &SharedContributionSubmitRequest,
+) -> Response {
+    server_request_with(
+        pool,
+        Method::POST,
+        "/v1/shared-contributions",
+        Some(token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(request).unwrap(),
+    )
+    .await
+}
+
+/// Installs an installation-subject shared-observation grant exactly as the
+/// consent API stores it, backdated so contributions observed before the
+/// submission moment remain covered by an already-active grant.
+async fn install_backdated_installation_grant(
+    pool: &PgPool,
+    installation_id: &InstallationId,
+) -> String {
+    let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let membership = Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap();
+    let mut hasher = Sha256::new();
+    hasher.update(b"socialname-installation-v1\0");
+    hasher.update(tenant.as_bytes());
+    hasher.update([0]);
+    hasher.update(installation_id.as_str().as_bytes());
+    let installation_hash: [u8; 32] = hasher.finalize().into();
+    let client_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO clients (\
+            id, tenant_id, installation_hash, consent_owner_membership_id, \
+            state, created_at, last_seen_at\
+         ) VALUES (\
+            $1, $2, $3, $4, 'active', \
+            clock_timestamp() - interval '2 hours', \
+            clock_timestamp() - interval '2 hours'\
+         )",
+    )
+    .bind(client_id)
+    .bind(tenant)
+    .bind(&installation_hash[..])
+    .bind(membership)
+    .execute(pool)
+    .await
+    .unwrap();
+    let grant_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO consent_grants (\
+            id, tenant_id, client_id, subject_kind, purpose, \
+            collection_profile_version, notice_version, source, granted_at\
+         ) VALUES (\
+            $1, $2, $3, 'installation', 'shared_observation', \
+            'profile-v1', 'notice-v1', 'api', \
+            clock_timestamp() - interval '2 hours'\
+         )",
+    )
+    .bind(grant_id)
+    .bind(tenant)
+    .bind(client_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO consent_events (\
+            id, tenant_id, consent_grant_id, event_kind, \
+            actor_membership_id, occurred_at, details\
+         ) VALUES (\
+            $1, $2, $3, 'granted', $4, \
+            clock_timestamp() - interval '2 hours', '{}'::jsonb\
+         )",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant)
+    .bind(grant_id)
+    .bind(membership)
+    .execute(pool)
+    .await
+    .unwrap();
+    grant_id.to_string()
+}
+
+async fn assert_shared_contribution_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let owner_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let wrong_scope_token = api_key_token("cccccccccccccccc", 0x33);
+    let tenant_one = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+
+    // Recognized-rule fixture: a real compiled source rule stored exactly as
+    // the registry operator stores it.
+    let compiler = RuleCompiler::new();
+    let candidate = compiler
+        .compile_yaml(CONTRIBUTION_RULE, Some("contrib-test"))
+        .unwrap();
+    let rule_hash_hex = candidate.rule_hash.clone();
+    let rule_pack_id = Uuid::new_v4();
+    let rule_version_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO sites (id, display_name, created_at, updated_at) \
+         VALUES ('contrib-test', 'Contribution Test', clock_timestamp(), clock_timestamp())",
+    )
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rule_packs (id, version, pack_hash, state, created_at, published_at) \
+         VALUES ($1, 'contrib-fixture-v1', decode(repeat('c2', 32), 'hex'), 'active', \
+                 clock_timestamp(), clock_timestamp())",
+    )
+    .bind(rule_pack_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rule_versions (\
+            id, rule_pack_id, site_id, rule_hash, compiled_rule, enabled, created_at\
+         ) VALUES ($1, $2, 'contrib-test', decode($3, 'hex'), $4, false, clock_timestamp())",
+    )
+    .bind(rule_version_id)
+    .bind(rule_pack_id)
+    .bind(&rule_hash_hex)
+    .bind(serde_json::to_value(&candidate.source).unwrap())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    let installation_a = InstallationId::new("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+    let installation_b = InstallationId::new("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").unwrap();
+    let installation_c = InstallationId::new("cccccccc-cccc-4ccc-8ccc-cccccccccccc").unwrap();
+    let installation_d = InstallationId::new("dddddddd-dddd-4ddd-8ddd-dddddddddddd").unwrap();
+    let grant_a = install_backdated_installation_grant(administrator_pool, &installation_a).await;
+    let grant_b = install_backdated_installation_grant(administrator_pool, &installation_b).await;
+    let grant_c = install_backdated_installation_grant(administrator_pool, &installation_c).await;
+    let grant_d = install_backdated_installation_grant(administrator_pool, &installation_d).await;
+    let now = current_unix_ms();
+
+    // Scope enforcement precedes any admission logic.
+    let wrong_scope = server_request(
+        &application_pool,
+        "/v1/shared-contributions",
+        Some(&wrong_scope_token),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_scope, ApiErrorCode::Forbidden).await;
+
+    // Consent admission: an unknown grant and a grant bound to a different
+    // installation are both uniform conflicts.
+    let unknown_grant = contribution_request(
+        &installation_a,
+        &Uuid::new_v4().to_string(),
+        1,
+        "contrib-user-a",
+        &rule_hash_hex,
+        now,
+    );
+    let unknown_grant = post_contribution(&application_pool, &owner_token, &unknown_grant).await;
+    assert_eq!(unknown_grant.status(), StatusCode::CONFLICT);
+    let mismatched_grant = contribution_request(
+        &installation_b,
+        &grant_a,
+        1,
+        "contrib-user-a",
+        &rule_hash_hex,
+        now,
+    );
+    let mismatched_grant =
+        post_contribution(&application_pool, &owner_token, &mismatched_grant).await;
+    assert_eq!(mismatched_grant.status(), StatusCode::CONFLICT);
+
+    // A fresh upload without green regional health is accepted as history
+    // only, normalized through the exact site rule, and reported as `new`.
+    let first = contribution_request(
+        &installation_a,
+        &grant_a,
+        1,
+        "Contrib-User-A",
+        &rule_hash_hex,
+        now,
+    );
+    let created = post_contribution(&application_pool, &owner_token, &first).await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let location = created.headers()[LOCATION].to_str().unwrap().to_owned();
+    let created: SharedContributionResource =
+        serde_json::from_value(json_body(created).await).unwrap();
+    assert!(created.validate().is_ok());
+    assert_eq!(created.target.username.as_str(), "contrib-user-a");
+    assert_eq!(
+        created.influence_scope,
+        ContributionInfluenceScope::HistoryOnly
+    );
+    assert_eq!(
+        created.history_reason,
+        Some(ContributionHistoryReason::RuleHealthNotGreen)
+    );
+    assert_eq!(created.reputation_tier, ContributorReputationTier::New);
+    assert_eq!(
+        location,
+        format!(
+            "/v1/shared-contributions/{}",
+            created.contribution_id.as_str()
+        )
+    );
+
+    // Exact replay converges on the original resource without a new row.
+    let replayed = post_contribution(&application_pool, &owner_token, &first).await;
+    assert_eq!(replayed.status(), StatusCode::OK);
+    let replayed: SharedContributionResource =
+        serde_json::from_value(json_body(replayed).await).unwrap();
+    assert_eq!(replayed.contribution_id, created.contribution_id);
+
+    // Changed content under a used sequence is a counted replay violation and
+    // the third violation suspends the installation's site-family reputation.
+    let mut conflicting = first.clone();
+    conflicting.evidence_digest = EvidenceDigest::new("ef".repeat(32)).unwrap();
+    for expected_violations in 1..=2_i64 {
+        let response = post_contribution(&application_pool, &owner_token, &conflicting).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let violations: i64 = sqlx::query_scalar(
+            "SELECT replay_violations FROM contribution_sequences \
+             WHERE tenant_id = $1 AND client_id = (\
+                SELECT client_id FROM shared_contributions WHERE tenant_id = $1 AND id = $2\
+             )",
+        )
+        .bind(tenant_one)
+        .bind(Uuid::parse_str(created.contribution_id.as_str()).unwrap())
+        .fetch_one(administrator_pool)
+        .await
+        .unwrap();
+        assert_eq!(violations, expected_violations);
+    }
+    let suspended = post_contribution(&application_pool, &owner_token, &conflicting).await;
+    assert_eq!(suspended.status(), StatusCode::FORBIDDEN);
+    let suspended_state: (String, Option<String>) = sqlx::query_as(
+        "SELECT tier, suspension_reason FROM contributor_reputation \
+         WHERE tenant_id = $1 AND site_family = 'contrib-test' AND client_id = (\
+            SELECT client_id FROM shared_contributions WHERE tenant_id = $1 AND id = $2\
+         )",
+    )
+    .bind(tenant_one)
+    .bind(Uuid::parse_str(created.contribution_id.as_str()).unwrap())
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        suspended_state,
+        ("suspended".to_owned(), Some("replay_abuse".to_owned()))
+    );
+    let suspended_audit: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events \
+         WHERE tenant_id = $1 AND action = 'contribution.reputation.suspended'",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(suspended_audit, 1);
+
+    // A suspended installation cannot submit fresh work for that site family.
+    let fresh_after_suspension = contribution_request(
+        &installation_a,
+        &grant_a,
+        2,
+        "contrib-user-a",
+        &rule_hash_hex,
+        now,
+    );
+    let fresh_after_suspension =
+        post_contribution(&application_pool, &owner_token, &fresh_after_suspension).await;
+    assert_eq!(fresh_after_suspension.status(), StatusCode::FORBIDDEN);
+
+    // Green regional health inside the fifteen-minute window admits current
+    // influence for a different installation.
+    sqlx::query(
+        "INSERT INTO rule_health_records (\
+            id, rule_version_id, region_class, state, evidence_id, \
+            evidence_expires_at, summary, recorded_at\
+         ) VALUES (\
+            $1, $2, 'jp', 'healthy', $3, \
+            clock_timestamp() + interval '10 minutes', '{}', clock_timestamp()\
+         )",
+    )
+    .bind(Uuid::new_v4())
+    .bind(rule_version_id)
+    .bind(Uuid::new_v4())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let current = contribution_request(
+        &installation_b,
+        &grant_b,
+        1,
+        "contrib-user-b",
+        &rule_hash_hex,
+        current_unix_ms(),
+    );
+    let current = post_contribution(&application_pool, &owner_token, &current).await;
+    assert_eq!(current.status(), StatusCode::CREATED);
+    let current: SharedContributionResource =
+        serde_json::from_value(json_body(current).await).unwrap();
+    assert_eq!(current.influence_scope, ContributionInfluenceScope::Current);
+    assert_eq!(current.history_reason, None);
+
+    // A twenty-minute-old upload is retained as stale history despite green
+    // health, while uploads outside the closed windows are rejected.
+    let stale = contribution_request(
+        &installation_b,
+        &grant_b,
+        2,
+        "contrib-user-b",
+        &rule_hash_hex,
+        current_unix_ms() - 20 * 60 * 1_000,
+    );
+    let stale = post_contribution(&application_pool, &owner_token, &stale).await;
+    assert_eq!(stale.status(), StatusCode::CREATED);
+    let stale: SharedContributionResource = serde_json::from_value(json_body(stale).await).unwrap();
+    assert_eq!(
+        stale.influence_scope,
+        ContributionInfluenceScope::HistoryOnly
+    );
+    assert_eq!(
+        stale.history_reason,
+        Some(ContributionHistoryReason::StaleUpload)
+    );
+    for invalid_observed_at in [
+        current_unix_ms() - 25 * 60 * 60 * 1_000,
+        current_unix_ms() + 10 * 60 * 1_000,
+    ] {
+        let out_of_window = contribution_request(
+            &installation_b,
+            &grant_b,
+            3,
+            "contrib-user-b",
+            &rule_hash_hex,
+            invalid_observed_at,
+        );
+        let out_of_window =
+            post_contribution(&application_pool, &owner_token, &out_of_window).await;
+        assert_eq!(out_of_window.status(), StatusCode::BAD_REQUEST);
+        assert_api_error(out_of_window, ApiErrorCode::InvalidRequest).await;
+    }
+
+    // Unrecognized exact rule hashes are rejected without echoing the target.
+    let unknown_rule = contribution_request(
+        &installation_b,
+        &grant_b,
+        3,
+        "contrib-user-b",
+        &"77".repeat(32),
+        current_unix_ms(),
+    );
+    let unknown_rule = post_contribution(&application_pool, &owner_token, &unknown_rule).await;
+    assert_eq!(unknown_rule.status(), StatusCode::BAD_REQUEST);
+    let unknown_rule_body = json_body(unknown_rule).await;
+    assert_eq!(unknown_rule_body["error"]["code"], "invalid_request");
+    assert!(!unknown_rule_body.to_string().contains("contrib-user-b"));
+
+    // Fabricated probe-plan evidence suspends immediately.
+    let mut fabricated = contribution_request(
+        &installation_c,
+        &grant_c,
+        1,
+        "contrib-user-c",
+        &rule_hash_hex,
+        current_unix_ms(),
+    );
+    fabricated.probes[0].final_url =
+        Some(HttpsUrl::new("https://evil.example.net/u/contrib-user-c").unwrap());
+    let fabricated = post_contribution(&application_pool, &owner_token, &fabricated).await;
+    assert_eq!(fabricated.status(), StatusCode::FORBIDDEN);
+    let fabricated_reason: Option<String> = sqlx::query_scalar(
+        "SELECT suspension_reason FROM contributor_reputation \
+         WHERE tenant_id = $1 AND site_family = 'contrib-test' \
+           AND suspension_reason = 'fabricated_plan_evidence'",
+    )
+    .bind(tenant_one)
+    .fetch_optional(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        fabricated_reason.as_deref(),
+        Some("fabricated_plan_evidence")
+    );
+    let fabricated_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM shared_contributions \
+         WHERE tenant_id = $1 AND normalized_username = 'contrib-user-c'",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(fabricated_rows, 0);
+
+    // Reads and pages are tenant-isolated, hidden-aware, and cursor-validated.
+    let listed = server_request(
+        &application_pool,
+        "/v1/shared-contributions?limit=1",
+        Some(&owner_token),
+    )
+    .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed: SharedContributionPage = serde_json::from_value(json_body(listed).await).unwrap();
+    assert!(listed.validate().is_ok());
+    assert_eq!(listed.contributions.len(), 1);
+    let cursor = listed.next_cursor.clone().unwrap();
+    let second_page = server_request(
+        &application_pool,
+        &format!(
+            "/v1/shared-contributions?limit=50&after={}",
+            cursor.as_str()
+        ),
+        Some(&owner_token),
+    )
+    .await;
+    assert_eq!(second_page.status(), StatusCode::OK);
+    let second_page: SharedContributionPage =
+        serde_json::from_value(json_body(second_page).await).unwrap();
+    assert!(
+        second_page
+            .contributions
+            .iter()
+            .all(|contribution| contribution.contribution_id != cursor)
+    );
+    let foreign_cursor = server_request(
+        &application_pool,
+        &format!("/v1/shared-contributions?after={}", Uuid::new_v4()),
+        Some(&owner_token),
+    )
+    .await;
+    assert_eq!(foreign_cursor.status(), StatusCode::BAD_REQUEST);
+    let foreign_get = server_request(
+        &application_pool,
+        &format!(
+            "/v1/shared-contributions/{}",
+            created.contribution_id.as_str()
+        ),
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(foreign_get.status(), StatusCode::NOT_FOUND);
+    let foreign_list = server_request(
+        &application_pool,
+        "/v1/shared-contributions",
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(foreign_list.status(), StatusCode::OK);
+    let foreign_list: SharedContributionPage =
+        serde_json::from_value(json_body(foreign_list).await).unwrap();
+    assert!(foreign_list.contributions.is_empty());
+
+    // The daily installation quota is a hard admission ceiling.
+    sqlx::query(
+        "UPDATE contribution_quota_counters SET accepted_count = 1000 \
+         WHERE tenant_id = $1 AND counter_scope = 'installation' \
+           AND client_id = (SELECT client_id FROM shared_contributions \
+                            WHERE tenant_id = $1 AND id = $2)",
+    )
+    .bind(tenant_one)
+    .bind(Uuid::parse_str(current.contribution_id.as_str()).unwrap())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let over_quota = contribution_request(
+        &installation_b,
+        &grant_b,
+        3,
+        "contrib-user-b",
+        &rule_hash_hex,
+        current_unix_ms(),
+    );
+    let over_quota = post_contribution(&application_pool, &owner_token, &over_quota).await;
+    assert_eq!(over_quota.status(), StatusCode::TOO_MANY_REQUESTS);
+    let over_quota: ApiErrorResponse = serde_json::from_value(json_body(over_quota).await).unwrap();
+    assert_eq!(over_quota.error.code, ApiErrorCode::QuotaExceeded);
+    assert!(over_quota.error.retry_after_ms.unwrap_or_default() > 0);
+
+    // Database guards: contributions are append-only, the sequence high-water
+    // mark cannot regress, and reputation tiers cannot jump the closed path.
+    let immutable = sqlx::query(
+        "UPDATE shared_contributions SET verdict = 'not_found' WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_one)
+    .bind(Uuid::parse_str(created.contribution_id.as_str()).unwrap())
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(immutable, "55000");
+    let regressed = sqlx::query(
+        "UPDATE contribution_sequences SET high_water = high_water - 1, \
+             updated_at = clock_timestamp() \
+         WHERE tenant_id = $1",
+    )
+    .bind(tenant_one)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(regressed, "23514");
+    let jumped = sqlx::query(
+        "UPDATE contributor_reputation \
+         SET tier = 'trusted', revision = revision + 1, updated_at = clock_timestamp() \
+         WHERE tenant_id = $1 AND tier = 'new'",
+    )
+    .bind(tenant_one)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(jumped, "23514");
+
+    // Verified target-person deletion hides matching contributions, blocks
+    // re-ingestion fail-closed, and the fenced worker purges the rows.
+    let target_person = contribution_request(
+        &installation_d,
+        &grant_d,
+        1,
+        "contrib-target-person",
+        &rule_hash_hex,
+        current_unix_ms(),
+    );
+    let target_person = post_contribution(&application_pool, &owner_token, &target_person).await;
+    assert_eq!(target_person.status(), StatusCode::CREATED);
+    let target_person: SharedContributionResource =
+        serde_json::from_value(json_body(target_person).await).unwrap();
+    let target_output = request_verified_target_deletion(
+        administrator_pool,
+        &[0x11; 32],
+        VerifiedTargetDeletionInput {
+            schema: "socialname.dev/verified-target-deletion/v1".to_owned(),
+            verification_reference: "externally-verified-contribution-case".to_owned(),
+            selectors: vec![TargetDeletionSelector {
+                site_id: "contrib-test".to_owned(),
+                normalized_username: "contrib-target-person".to_owned(),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(target_output.matched_observations, 1);
+    assert_eq!(target_output.deletion_request_ids.len(), 1);
+    let hidden_get = server_request(
+        &application_pool,
+        &format!(
+            "/v1/shared-contributions/{}",
+            target_person.contribution_id.as_str()
+        ),
+        Some(&owner_token),
+    )
+    .await;
+    assert_eq!(hidden_get.status(), StatusCode::NOT_FOUND);
+    let suppressed_submit = contribution_request(
+        &installation_d,
+        &grant_d,
+        2,
+        "contrib-target-person",
+        &rule_hash_hex,
+        current_unix_ms(),
+    );
+    let suppressed_submit =
+        post_contribution(&application_pool, &owner_token, &suppressed_submit).await;
+    assert_eq!(suppressed_submit.status(), StatusCode::CONFLICT);
+
+    // Contributor deletion by the owned grant hides the remaining rows.
+    let contributor_deletion = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/deletion-requests/contributor",
+        Some(&owner_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&ContributorDeletionCreateRequest {
+            schema: ProtocolVersion::ApiV1,
+            consent_grant_id: ConsentGrantId::new(grant_b.clone()).unwrap(),
+        })
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(contributor_deletion.status(), StatusCode::CREATED);
+    let hidden_matches: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM deletion_resource_matches \
+         WHERE tenant_id = $1 AND resource_kind = 'shared_contribution'",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(hidden_matches, 3);
+    let hidden_contributor_get = server_request(
+        &application_pool,
+        &format!(
+            "/v1/shared-contributions/{}",
+            current.contribution_id.as_str()
+        ),
+        Some(&owner_token),
+    )
+    .await;
+    assert_eq!(hidden_contributor_get.status(), StatusCode::NOT_FOUND);
+
+    // The fenced deletion worker physically removes every matched
+    // contribution while leaving target-free control records in place.
+    install_worker_role(administrator_pool).await;
+    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
+        .expect("worker database URL must accompany the PostgreSQL integration test");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&worker_database_url)
+        .await
+        .unwrap();
+    let deletion_store = DeletionStore::new(worker_pool.clone());
+    for _ in 0..2 {
+        assert!(matches!(
+            deletion_store
+                .process_one("contribution-deletion-worker", Duration::from_secs(60))
+                .await
+                .unwrap(),
+            DeletionProcessOutcome::Processed { .. }
+        ));
+    }
+    assert_eq!(
+        deletion_store
+            .process_one("contribution-deletion-worker", Duration::from_secs(60))
+            .await
+            .unwrap(),
+        DeletionProcessOutcome::Idle
+    );
+    worker_pool.close().await;
+    let (purged_rows, remaining_rows, sequence_rows): (i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+            (SELECT count(*) FROM shared_contributions \
+             WHERE tenant_id = $1 AND normalized_username IN (\
+                'contrib-user-b', 'contrib-target-person'\
+             )), \
+            (SELECT count(*) FROM shared_contributions WHERE tenant_id = $1), \
+            (SELECT count(*) FROM contribution_sequences WHERE tenant_id = $1)",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(purged_rows, 0);
+    assert_eq!(remaining_rows, 1);
+    assert_eq!(sequence_rows, 4);
+
+    application_pool.close().await;
 }
 
 async fn assert_private_search_and_event_stream_boundary(administrator_pool: &PgPool) {
@@ -9087,7 +9853,8 @@ async fn install_worker_role(pool: &PgPool) {
             transition_basis, notification_deliveries,
             notification_delivery_attempts, evidence_capsules,
             evidence_retention_receipts, deletion_requests,
-            deletion_resource_matches, deletion_tasks, suppression_tokens
+            deletion_resource_matches, deletion_tasks, suppression_tokens,
+            shared_contributions
             TO socialname_migration_test_worker;
         GRANT INSERT ON
             search_events, probe_jobs, probe_job_consumers, observations,
@@ -9147,7 +9914,8 @@ async fn install_worker_role(pool: &PgPool) {
             transition_basis, notification_delivery_attempts,
             notification_deliveries, transitions, regional_assertions,
             assertions, evidence_retention_receipts, evidence_capsules,
-            search_events, observations, data_lineage_edges
+            search_events, observations, shared_contributions,
+            data_lineage_edges
             TO socialname_migration_test_worker;
         GRANT EXECUTE ON FUNCTION
             socialname_worker_resolve_rule(

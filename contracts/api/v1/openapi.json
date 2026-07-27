@@ -117,6 +117,15 @@
       "search_resource": {
         "$ref": "./schemas/search_resource.schema.json"
       },
+      "shared_contribution_page": {
+        "$ref": "./schemas/shared_contribution_page.schema.json"
+      },
+      "shared_contribution_resource": {
+        "$ref": "./schemas/shared_contribution_resource.schema.json"
+      },
+      "shared_contribution_submit_request": {
+        "$ref": "./schemas/shared_contribution_submit_request.schema.json"
+      },
       "transition": {
         "$ref": "./schemas/transition.schema.json"
       },
@@ -3808,6 +3817,390 @@
         ],
         "x-socialname-required-scope": "data:export",
         "x-socialname-unknown-query-parameters": "forbidden"
+      }
+    },
+    "/v1/shared-contributions": {
+      "get": {
+        "operationId": "listSharedContributions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/shared_contribution_page.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List the caller-owned shared contributions in received order.",
+        "tags": [
+          "contribution"
+        ],
+        "x-socialname-required-scope": "contribution:read",
+        "x-socialname-unknown-query-parameters": "forbidden"
+      },
+      "post": {
+        "operationId": "createSharedContribution",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/shared_contribution_submit_request.schema.json"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/shared_contribution_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Relative path of the created or replayed resource.",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/shared_contribution_resource.schema.json"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Relative path of the created or replayed resource.",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Submit one minimized, consented shared observation contribution.",
+        "tags": [
+          "contribution"
+        ],
+        "x-socialname-required-scope": "contribution:write"
+      }
+    },
+    "/v1/shared-contributions/{contribution_id}": {
+      "get": {
+        "operationId": "getSharedContribution",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "path",
+            "name": "contribution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/shared_contribution_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read one caller-owned shared contribution.",
+        "tags": [
+          "contribution"
+        ],
+        "x-socialname-required-scope": "contribution:read"
       }
     },
     "/v1/watches": {

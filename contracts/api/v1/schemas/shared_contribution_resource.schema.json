@@ -1,0 +1,218 @@
+{
+  "$defs": {
+    "ContributionHistoryReason": {
+      "enum": [
+        "stale_upload",
+        "rule_health_not_green"
+      ],
+      "type": "string"
+    },
+    "ContributionInfluenceScope": {
+      "description": "Whether an accepted contribution may influence the current shared state or\nis retained as history only.",
+      "enum": [
+        "current",
+        "history_only"
+      ],
+      "type": "string"
+    },
+    "ContributionNetworkClass": {
+      "description": "The client-declared coarse network class of the contributing vantage.\n\nThe claim provides diversity context and is recorded as claimed; it is not\ntreated as verified infrastructure truth.",
+      "enum": [
+        "datacenter",
+        "residential",
+        "anonymizer",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "ContributorReputationTier": {
+      "description": "The contributor's current reputation tier for the submitted site family.\n\nTiers are closed calibration states, never a synthetic confidence\npercentage. A suspended installation cannot submit new contributions, but\nan already-accepted resource keeps reporting the current tier honestly.",
+      "enum": [
+        "new",
+        "calibrated",
+        "trusted",
+        "suspended"
+      ],
+      "type": "string"
+    },
+    "DefinitiveVerdict": {
+      "enum": [
+        "found",
+        "not_found"
+      ],
+      "type": "string"
+    },
+    "EvidenceClass": {
+      "enum": [
+        "e0_no_account_evidence",
+        "e1_weak_signal",
+        "e2_differential_template",
+        "e3_explicit_endpoint",
+        "e4_structured_identity"
+      ],
+      "type": "string"
+    },
+    "EvidenceOutcome": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "definitive",
+              "type": "string"
+            },
+            "verdict": {
+              "$ref": "#/$defs/DefinitiveVerdict"
+            }
+          },
+          "required": [
+            "kind",
+            "verdict"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "uncertain",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/UncertaintyReason"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "SharedContributionSchema": {
+      "enum": [
+        "socialname.dev/shared-contribution/v1"
+      ],
+      "type": "string"
+    },
+    "Target": {
+      "additionalProperties": false,
+      "properties": {
+        "site_id": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "site_id"
+      ],
+      "type": "object"
+    },
+    "UncertaintyReason": {
+      "enum": [
+        "site_changed",
+        "no_rule_matched",
+        "conflicting_evidence",
+        "classification_ambiguous"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "contribution_id": {
+      "type": "string"
+    },
+    "contribution_schema": {
+      "$ref": "#/$defs/SharedContributionSchema"
+    },
+    "evidence_class": {
+      "$ref": "#/$defs/EvidenceClass"
+    },
+    "evidence_digest": {
+      "type": "string"
+    },
+    "expires_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "history_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ContributionHistoryReason"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "influence_scope": {
+      "$ref": "#/$defs/ContributionInfluenceScope"
+    },
+    "network_class": {
+      "$ref": "#/$defs/ContributionNetworkClass"
+    },
+    "observed_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "outcome": {
+      "$ref": "#/$defs/EvidenceOutcome"
+    },
+    "received_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "region_class": {
+      "type": "string"
+    },
+    "reputation_tier": {
+      "$ref": "#/$defs/ContributorReputationTier"
+    },
+    "rule_hash": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "sequence_number": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    }
+  },
+  "required": [
+    "schema",
+    "contribution_schema",
+    "contribution_id",
+    "target",
+    "rule_hash",
+    "region_class",
+    "network_class",
+    "outcome",
+    "evidence_class",
+    "evidence_digest",
+    "sequence_number",
+    "influence_scope",
+    "reputation_tier",
+    "observed_at_unix_ms",
+    "received_at_unix_ms",
+    "expires_at_unix_ms"
+  ],
+  "title": "SharedContributionResource",
+  "type": "object"
+}

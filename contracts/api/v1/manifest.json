@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "openapi.json",
-      "sha256": "1093bbc2446972cb90ab690518d261cf7c855a12cd1f901c56d1974c65144eac"
+      "sha256": "41b9f3d612a0d42fe0909957c2ad2b70443eb7f7b104d49b8be67099773510e9"
     },
     {
       "path": "schemas/api_error_response.schema.json",
@@ -143,6 +143,18 @@
       "sha256": "1b4aae67472cf884ad3856d24268e9a559c7fd3164bf84fb9702c7f80f3438ba"
     },
     {
+      "path": "schemas/shared_contribution_page.schema.json",
+      "sha256": "59f29a8b45ad08a55e15266c9708e286112df7b815663fdba1f9ba00d12ef8a5"
+    },
+    {
+      "path": "schemas/shared_contribution_resource.schema.json",
+      "sha256": "5ac6771a0b06697be12918873ca9578f6a0f2ae46e30da2ffb718c5a50e0fed0"
+    },
+    {
+      "path": "schemas/shared_contribution_submit_request.schema.json",
+      "sha256": "211f9c5eae96471470aa67b55d546b08b7f0d490c3a0ef511f21393b07c1fbc6"
+    },
+    {
       "path": "schemas/transition.schema.json",
       "sha256": "40865bf24599b6e7220e36cc09df2d356a5b9cc7b793e4309df85a6afd62df49"
     },
@@ -184,7 +196,7 @@
     },
     {
       "path": "schemas/workspace_resource.schema.json",
-      "sha256": "428a6dba251422ff0c00bd816bd51ca758a14c5cad182623818f3a7c55e1827a"
+      "sha256": "25d9f30d5cf00acc4315c3cfa0991be61fac7185489e87cf772321d734fb42cd"
     },
     {
       "path": "sse.json",

@@ -519,7 +519,17 @@ pub async fn replay_restore_ledger(
         .fetch_all(&mut *transaction)
         .await
         .map_err(|_| DeletionOperatorError::DatabaseUnavailable)?;
-        scanned_observations = scanned_observations.saturating_add(observations.len());
+        let contributions: Vec<StoredReplayContribution> = sqlx::query_as(
+            "SELECT id, consent_grant_id, site_id, normalized_username \
+             FROM shared_contributions WHERE tenant_id = $1 ORDER BY id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(|_| DeletionOperatorError::DatabaseUnavailable)?;
+        scanned_observations = scanned_observations
+            .saturating_add(observations.len())
+            .saturating_add(contributions.len());
         if scanned_observations > MAXIMUM_REPLAY_OBSERVATIONS {
             return Err(DeletionOperatorError::BoundExceeded);
         }
@@ -531,6 +541,7 @@ pub async fn replay_restore_ledger(
             let mut grant_ids = Vec::new();
             let mut observation_ids = Vec::new();
             let mut probe_job_ids = Vec::new();
+            let mut contribution_ids = Vec::new();
             match entry.purpose.as_str() {
                 "contributor_reingestion" => {
                     for grant in &contributor_grants {
@@ -552,6 +563,11 @@ pub async fn replay_restore_ledger(
                             probe_job_ids.push(observation.probe_job_id);
                         }
                     }
+                    for contribution in &contributions {
+                        if grant_ids.contains(&contribution.consent_grant_id) {
+                            contribution_ids.push(contribution.id);
+                        }
+                    }
                 }
                 "target_reingestion" => {
                     for observation in &observations {
@@ -570,6 +586,18 @@ pub async fn replay_restore_ledger(
                             probe_job_ids.push(observation.probe_job_id);
                         }
                     }
+                    for contribution in &contributions {
+                        let candidate = target_suppression_token(
+                            suppression_key,
+                            *tenant_id,
+                            &contribution.site_id,
+                            &contribution.normalized_username,
+                        )
+                        .ok_or(DeletionOperatorError::CryptographicFailure)?;
+                        if candidate == token {
+                            contribution_ids.push(contribution.id);
+                        }
+                    }
                 }
                 _ => return Err(DeletionOperatorError::InvalidInput),
             }
@@ -580,6 +608,7 @@ pub async fn replay_restore_ledger(
                 grant_ids,
                 observation_ids,
                 probe_job_ids,
+                contribution_ids,
             });
         }
     }
@@ -642,7 +671,7 @@ pub async fn replay_restore_ledger(
         if imported.rows_affected() != 1 {
             return Err(DeletionOperatorError::KeyMismatch);
         }
-        if plan.observation_ids.is_empty() {
+        if plan.observation_ids.is_empty() && plan.contribution_ids.is_empty() {
             continue;
         }
         let request_id = Uuid::new_v4();
@@ -691,6 +720,7 @@ pub async fn replay_restore_ledger(
             request_id,
             &plan.observation_ids,
             &plan.probe_job_ids,
+            &plan.contribution_ids,
             replayed_at_unix_ms,
         )
         .await?;
@@ -774,6 +804,7 @@ async fn materialize_restored_lineage(
     deletion_request_id: Uuid,
     observation_ids: &[Uuid],
     probe_job_ids: &[Uuid],
+    contribution_ids: &[Uuid],
     replayed_at_unix_ms: i64,
 ) -> Result<(), DeletionOperatorError> {
     sqlx::query(
@@ -781,6 +812,8 @@ async fn materialize_restored_lineage(
             SELECT 'observation'::text, id FROM unnest($3::uuid[]) AS id \
             UNION \
             SELECT 'probe_job'::text, id FROM unnest($4::uuid[]) AS id \
+            UNION \
+            SELECT 'shared_contribution'::text, id FROM unnest($6::uuid[]) AS id \
             UNION \
             SELECT 'search_target'::text, consumer.search_target_id \
             FROM probe_job_consumers AS consumer \
@@ -802,7 +835,8 @@ async fn materialize_restored_lineage(
            WHERE resource_kind IN (\
                 'observation', 'evidence_capsule', 'assertion', \
                 'regional_assertion', 'search_event', 'watch_run_target', \
-                'transition', 'notification_delivery', 'probe_job', 'search_target'\
+                'transition', 'notification_delivery', 'probe_job', \
+                'search_target', 'shared_contribution'\
            ) ON CONFLICT DO NOTHING",
     )
     .bind(tenant_id)
@@ -810,6 +844,7 @@ async fn materialize_restored_lineage(
     .bind(observation_ids)
     .bind(probe_job_ids)
     .bind(replayed_at_unix_ms)
+    .bind(contribution_ids)
     .execute(&mut **transaction)
     .await
     .map_err(|_| DeletionOperatorError::StorageInvariant)?;
@@ -1045,6 +1080,14 @@ struct StoredReplayObservation {
     visibility: String,
 }
 
+#[derive(FromRow)]
+struct StoredReplayContribution {
+    id: Uuid,
+    consent_grant_id: Uuid,
+    site_id: String,
+    normalized_username: String,
+}
+
 struct ReplayPlan {
     tenant_id: Uuid,
     entry: RestoreLedgerEntry,
@@ -1052,6 +1095,7 @@ struct ReplayPlan {
     grant_ids: Vec<Uuid>,
     observation_ids: Vec<Uuid>,
     probe_job_ids: Vec<Uuid>,
+    contribution_ids: Vec<Uuid>,
 }
 
 #[derive(FromRow)]

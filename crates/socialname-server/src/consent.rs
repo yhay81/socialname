@@ -444,7 +444,7 @@ async fn resolve_subject(
     }
 }
 
-fn installation_hash(workspace_id: Uuid, installation_id: &[u8]) -> [u8; 32] {
+pub(crate) fn installation_hash(workspace_id: Uuid, installation_id: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"socialname-installation-v1\0");
     hasher.update(workspace_id.as_bytes());

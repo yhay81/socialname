@@ -13,10 +13,10 @@ use crate::{
     OrganizationResource, OrganizationRetentionPolicyPatchRequest,
     OrganizationRetentionPolicyResource, PlanEntitlementResource, SearchCompletionWebhook,
     SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource, SearchCreateRequest,
-    SearchEvent, SearchExportPage, SearchHistoryPage, SearchResource, Transition,
-    TransitionReviewPage, TransitionReviewPatchRequest, TransitionReviewResource,
-    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchTransitionPage,
-    WebhookNotification, WorkspaceResource,
+    SearchEvent, SearchExportPage, SearchHistoryPage, SearchResource, SharedContributionPage,
+    SharedContributionResource, SharedContributionSubmitRequest, Transition, TransitionReviewPage,
+    TransitionReviewPatchRequest, TransitionReviewResource, WatchCreateRequest, WatchListPage,
+    WatchPatchRequest, WatchResource, WatchTransitionPage, WebhookNotification, WorkspaceResource,
 };
 
 #[must_use]
@@ -124,6 +124,18 @@ pub fn api_v1_schemas() -> BTreeMap<&'static str, Schema> {
         ("search_export_page", schema_for!(SearchExportPage)),
         ("search_history_page", schema_for!(SearchHistoryPage)),
         ("search_resource", schema_for!(SearchResource)),
+        (
+            "shared_contribution_page",
+            schema_for!(SharedContributionPage),
+        ),
+        (
+            "shared_contribution_resource",
+            schema_for!(SharedContributionResource),
+        ),
+        (
+            "shared_contribution_submit_request",
+            schema_for!(SharedContributionSubmitRequest),
+        ),
         ("transition", schema_for!(Transition)),
         ("transition_review_page", schema_for!(TransitionReviewPage)),
         (
@@ -189,6 +201,9 @@ mod tests {
                 "search_export_page",
                 "search_history_page",
                 "search_resource",
+                "shared_contribution_page",
+                "shared_contribution_resource",
+                "shared_contribution_submit_request",
                 "transition",
                 "transition_review_page",
                 "transition_review_patch_request",

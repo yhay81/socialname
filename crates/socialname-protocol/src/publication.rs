@@ -82,7 +82,7 @@ const IDEMPOTENCY: &[PublishedParameter] = &[PublishedParameter::IdempotencyKey]
 const RESUMABLE_STREAM: &[PublishedParameter] = &[PublishedParameter::LastEventId];
 const WINDOW: &[PublishedParameter] = &[PublishedParameter::Window];
 
-static OPERATIONS: [PublishedApiOperation; 38] = [
+static OPERATIONS: [PublishedApiOperation; 41] = [
     PublishedApiOperation {
         method: PublishedHttpMethod::Get,
         path: "/v1/workspace",
@@ -471,6 +471,45 @@ static OPERATIONS: [PublishedApiOperation; 38] = [
         parameters: NONE,
         success_statuses: OK,
         response: PublishedResponseKind::Json("consent_grant_resource"),
+        returns_location: false,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Get,
+        path: "/v1/shared-contributions",
+        operation_id: "listSharedContributions",
+        required_scope: ApiKeyScope::ContributionRead,
+        tag: "contribution",
+        summary: "List the caller-owned shared contributions in received order.",
+        request_schema: None,
+        parameters: PAGE,
+        success_statuses: OK,
+        response: PublishedResponseKind::Json("shared_contribution_page"),
+        returns_location: false,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Post,
+        path: "/v1/shared-contributions",
+        operation_id: "createSharedContribution",
+        required_scope: ApiKeyScope::ContributionWrite,
+        tag: "contribution",
+        summary: "Submit one minimized, consented shared observation contribution.",
+        request_schema: Some("shared_contribution_submit_request"),
+        parameters: NONE,
+        success_statuses: REPLAYABLE_CREATED,
+        response: PublishedResponseKind::Json("shared_contribution_resource"),
+        returns_location: true,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Get,
+        path: "/v1/shared-contributions/{contribution_id}",
+        operation_id: "getSharedContribution",
+        required_scope: ApiKeyScope::ContributionRead,
+        tag: "contribution",
+        summary: "Read one caller-owned shared contribution.",
+        request_schema: None,
+        parameters: NONE,
+        success_statuses: OK,
+        response: PublishedResponseKind::Json("shared_contribution_resource"),
         returns_location: false,
     },
     PublishedApiOperation {
@@ -1036,7 +1075,7 @@ mod tests {
 
     #[test]
     fn publication_has_one_unique_operation_for_every_current_route() {
-        assert_eq!(published_api_v1_operations().len(), 38);
+        assert_eq!(published_api_v1_operations().len(), 41);
         let identities = published_api_v1_operations()
             .iter()
             .map(|operation| (operation.method, operation.path))

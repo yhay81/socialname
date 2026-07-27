@@ -4,6 +4,7 @@ mod api_key;
 mod auth;
 mod config;
 mod consent;
+mod contribution;
 mod database;
 mod deletion;
 mod deletion_operator;
@@ -170,6 +171,8 @@ fn server_required_scope(operation_id: &str) -> ApiKeyScope {
         "updateTransitionReview" => ApiKeyScope::WatchWrite,
         "createConsentGrant" | "withdrawConsentGrant" => ApiKeyScope::ConsentWrite,
         "listConsentGrants" | "getConsentGrant" => ApiKeyScope::ConsentRead,
+        "createSharedContribution" => ApiKeyScope::ContributionWrite,
+        "listSharedContributions" | "getSharedContribution" => ApiKeyScope::ContributionRead,
         "getEvidenceCapsule" => ApiKeyScope::EvidenceRead,
         "createContributorDeletion" | "getDeletionRequest" | "getDeletionReceipt" => {
             ApiKeyScope::DataDelete
@@ -377,6 +380,34 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let contribution_write_routes = Router::new()
+        .route(
+            "/v1/shared-contributions",
+            axum::routing::post(contribution::create_shared_contribution),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("createSharedContribution"),
+            },
+            authenticate_request,
+        ));
+    let contribution_read_routes = Router::new()
+        .route(
+            "/v1/shared-contributions",
+            get(contribution::list_shared_contributions),
+        )
+        .route(
+            "/v1/shared-contributions/{contribution_id}",
+            get(contribution::get_shared_contribution),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("listSharedContributions"),
+            },
+            authenticate_request,
+        ));
     let evidence_read_routes = Router::new()
         .route(
             "/v1/observations/{observation_id}/evidence-capsule",
@@ -469,6 +500,8 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(watch_read_routes)
         .merge(consent_write_routes)
         .merge(consent_read_routes)
+        .merge(contribution_write_routes)
+        .merge(contribution_read_routes)
         .merge(evidence_read_routes)
         .merge(deletion_routes)
         .merge(notification_write_routes)

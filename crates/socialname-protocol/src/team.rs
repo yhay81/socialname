@@ -92,6 +92,7 @@ impl OrganizationRole {
                     | ApiKeyScope::SearchRead
                     | ApiKeyScope::WatchRead
                     | ApiKeyScope::ConsentRead
+                    | ApiKeyScope::ContributionRead
                     | ApiKeyScope::EvidenceRead
                     | ApiKeyScope::NotificationRead
                     | ApiKeyScope::OperationsRead

@@ -13,6 +13,8 @@
         "data:delete",
         "consent:read",
         "consent:write",
+        "contribution:read",
+        "contribution:write",
         "evidence:read",
         "operations:read",
         "usage:read"
