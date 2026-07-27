@@ -1430,6 +1430,12 @@ remain separate enforcement boundaries. Exact compatibility rules and
 remaining hosted-distribution gates are documented in
 [`docs/api-contract-publication.md`](docs/api-contract-publication.md).
 
+Quality run
+[`30231878790`](https://github.com/yhay81/socialname/actions/runs/30231878790)
+passed Rust core with the exact API-contract check and PostgreSQL 18
+migrations/tests, Windows/macOS desktop, monitoring console, and managed-worker
+OCI for commit `8b5a4ee`.
+
 Acceptance gate:
 
 - Local test behavior and managed API behavior use the same engine, rule pack,
