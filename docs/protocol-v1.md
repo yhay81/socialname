@@ -34,12 +34,14 @@ API schema version; it is not silently treated as an additive v1 change.
 - contributor deletion creation and target-free request resources;
 - authenticated private-workspace resources and API-key scope metadata;
 - provider-neutral plan entitlement state and derived capabilities;
+- Team organization, member, retention, review, and target-free audit
+  resources;
 - target-free operational reports and fixed software-objective state.
 
 The repository publishes every root beside an OpenAPI 3.1.2 description, an
 exact SSE transport contract, and a digest manifest under
 [`contracts/api/v1`](../contracts/api/v1/README.md). The generator-owned route
-registry contains all 29 current operations and their required scopes; server
+registry contains all 38 current operations and their required scopes; server
 tests independently prove that every published method/path is registered
 behind authentication with the same scope. See
 [API v1 contract publication](api-contract-publication.md).
@@ -127,6 +129,28 @@ times. Pending and suspended resources must have no capabilities. There is no
 provider, customer, price, invoice, payment method, or raw billing-event
 field. Reconciliation and admission behavior are specified in
 [Plan entitlements and billing boundary](plan-entitlements-billing.md).
+
+## Team organization and review
+
+`OrganizationResource` treats the existing workspace ID as the organization
+boundary and embeds only the authenticated member's public role/state
+projection. `OrganizationMemberResource` exposes a bounded display name,
+closed owner/administrator/member/viewer role, closed lifecycle state,
+optimistic revision, and timestamps. Provisioning subject references use a
+redacted write-only type and never enter a public resource.
+
+`OrganizationRetentionPolicyResource` is one revisioned 30–730 day minimum and
+maximum watch-retention range. `TransitionReviewResource` admits only confirmed
+account-state transitions and binds open assignment, exact-assignee
+acknowledgement, and exact-assignee resolution through a closed state machine.
+Its four resolutions record handling, not a new account verdict.
+
+`OrganizationAuditEventPage` publishes only a closed actor reference, bounded
+action/resource labels, optional opaque resource ID, and database time. It has
+no details, target, subject, destination, or credential field. Member, review,
+and audit pages are capped at 50 and bind a cursor to the final resource ID.
+Authorization composes the unchanged API-key scope enum with membership role;
+the complete boundary is in [Team organizations, review, audit, and retention](team-workflows.md).
 
 ## Consent grants
 
@@ -376,11 +400,14 @@ absence of key secret/digest fields, exact account/installation consent wire
 shapes and redaction, exact accepted private-search resources, Cartesian
 target/progress consistency, consent and monitoring page bounds, cursor
 relations, transition/delivery ownership, acknowledgement wire shape, and
-delivered-only acknowledgement relations. Search-completion coverage pins its
-exact request/resource/body shapes and target-free body. Operational-report coverage pins its
-target-free exact wire shape, closed windows, fixed targets, derived status,
-deletion milestone health, and backlog-age relations.
-Publication coverage additionally pins 26 unique operation IDs and
+delivered-only acknowledgement relations. Team coverage pins exact public
+member/audit projections, private subject redaction, retention bounds, role
+actions, confirmed-account-only review state, and assignment-bound
+acknowledgement/resolution. Search-completion coverage pins its exact
+request/resource/body shapes and target-free body. Operational-report coverage
+pins its target-free exact wire shape, closed windows, fixed targets, derived
+status, deletion milestone health, and backlog-age relations.
+Publication coverage additionally pins 38 unique operation IDs and
 method/path pairs, exact scopes, resolvable request/response schema roots,
 OpenAPI-to-SSE linkage, deterministic bytes, SHA-256 manifest entries, absence
 of unexpected generated JSON, and router registration.

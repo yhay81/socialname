@@ -516,6 +516,29 @@ cohorts use one of three closed windows; neither is presented as production
 SLA evidence. See
 [Operational reporting and software objectives](operational-reporting.md).
 
+### Team organization workflow
+
+```http
+GET   /v1/organization
+GET   /v1/organization/members
+POST  /v1/organization/members
+PATCH /v1/organization/members/{membership_id}
+GET   /v1/organization/audit-events
+GET   /v1/organization/retention-policy
+PATCH /v1/organization/retention-policy
+GET   /v1/reviews
+PATCH /v1/reviews/{review_id}
+```
+
+One workspace is one organization. Existing API-key scopes remain the
+purpose-specific outer boundary, while the active membership's closed role is
+a second authorization boundary. Confirmed account-state transitions create
+one human review; assignment, reviewer acknowledgement, and closed resolution
+remain separate from notification receipt. Organization policy narrows the
+existing 30–730 day watch-retention range only after current watches comply,
+and database triggers independently enforce the relation. See
+[Team organizations, review, audit, and retention](team-workflows.md).
+
 ### Rules and health
 
 ```http

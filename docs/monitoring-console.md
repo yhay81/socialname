@@ -2,8 +2,8 @@
 
 ## Scope
 
-The Milestone 2 console is a small operator-facing web client for the existing
-monitoring loop. It lets an authenticated workspace:
+The console is a small operator-facing web client for the monitoring loop and
+the first Team organization workflow. It lets an authenticated workspace:
 
 - list bounded watch summaries;
 - create a watch from an already provisioned consent grant and notification
@@ -13,12 +13,18 @@ monitoring loop. It lets an authenticated workspace:
 - distinguish confirmation state from delivery state and retry/dead-letter
   outcomes;
 - inspect tenant-wide operational backlog and fixed software objectives over
-  a closed reporting window.
+  a closed reporting window;
+- inspect public organization members and manage eligible roles/lifecycle;
+- assign, acknowledge, and resolve confirmed account-transition reviews;
+- narrow the organization watch-retention range without silently rewriting
+  existing watches;
+- inspect the target-free owner/administrator audit projection.
 
 Endpoint provisioning, destination verification, consent administration,
-account login, billing, Team review workflow, and production hosting remain
-outside this slice. The console cannot make a discovery-only rule eligible or
-turn measurement failure into account change.
+account login, identity-provider invitation/federation, billing, collaboration
+integrations, and production hosting remain outside this slice. The console
+cannot make a discovery-only rule eligible or turn measurement failure into
+account change.
 
 ## Topcoat evaluation
 
@@ -49,6 +55,15 @@ Two bounded read resources complete the existing single-watch API:
 GET /v1/watches?limit=50&after=<watch-id>
 GET /v1/watches/{watch-id}/transitions?limit=50&after=<transition-id>
 GET /v1/operations/report?window=24h
+GET /v1/organization
+GET /v1/organization/members?limit=50&after=<membership-id>
+POST /v1/organization/members
+PATCH /v1/organization/members/{membership-id}
+GET /v1/reviews?limit=50&after=<review-id>
+PATCH /v1/reviews/{review-id}
+GET /v1/organization/retention-policy
+PATCH /v1/organization/retention-policy
+GET /v1/organization/audit-events?limit=50&after=<audit-event-id>
 ```
 
 Pages are closed `socialname.dev/api/v1` DTOs with at most 50 items. A cursor is
@@ -73,6 +88,14 @@ authorized transaction, set the tenant locally, and execute through the
 non-owner runtime role; the UI never receives database access. Exact reporting
 semantics and the production-evidence boundary are in
 [Operational reporting and software objectives](operational-reporting.md).
+
+Team routes compose those existing scopes with the active organization role.
+Organization/member and retention use `workspace:read`; reviews use
+`watch:read`/`watch:write`; audit uses `operations:read`. Only an eligible
+owner/administrator can mutate membership, policy, or assignment, and only the
+exact assigned non-viewer can acknowledge or resolve a review. The role matrix,
+private-subject boundary, and failure behavior are in
+[Team organizations, review, audit, and retention](team-workflows.md).
 
 ## Browser credential and data policy
 
@@ -108,7 +131,10 @@ It presents:
 - a keyboard-selectable watch list with target/site scope and next run;
 - a chronological timeline whose visual language keeps account state,
   measurement health, confirmation, and delivery separate;
-- a compact create form and revision-safe pause/resume action.
+- a compact create form and revision-safe pause/resume action;
+- a responsive Team directory and confirmed-account-only review queue;
+- a separate reviewer responsibility acknowledgement, closed resolution
+  choices, revisioned retention range, and recent target-free audit list.
 
 Timeline labels explicitly say "Loaded page context" because the watch and
 transition APIs are paginated. The separately authorized operational report is
@@ -129,11 +155,16 @@ The real PostgreSQL 18 integration test proves:
 - deterministic ordering, limits, and cursor continuation;
 - account and measurement transitions remain separate;
 - delivery state and bounded retry/dead-letter metadata are exposed without
-  destination/body/signature/attempt-audit data.
+  destination/body/signature/attempt-audit data;
+- Team role/scope denial, private-subject exclusion, membership lifecycle,
+  review state transitions, audit projection, and retention enforcement.
 
 The console runs deterministic model tests, TypeScript checking, a production
 Vite build, and local browser checks at desktop and 375-pixel widths. The
-PostgreSQL gate also proves delivered-only, idempotent acknowledgement, private
+responsive check verifies single-column Team/governance layout and no
+horizontal overflow; the desktop check covers live organization, review,
+policy, and audit data. The PostgreSQL gate also proves delivered-only,
+idempotent acknowledgement, private
 audit attribution, target-free operational aggregation, exact-scope denial,
 and cross-tenant isolation. Deployed TLS/CSP, endpoint ownership, retained
 production SLO history, and production accessibility evidence remain external

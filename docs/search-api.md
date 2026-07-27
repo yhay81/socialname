@@ -223,7 +223,7 @@ retention-function permission.
 ## Verification and remaining gate
 
 The PostgreSQL 18 integration test resets its disposable fixture database so
-back-to-back runs cover replay-safe migrations, 54 product tables, 42
+back-to-back runs cover replay-safe migrations, 57 product tables, 45
 forced-RLS policies, exact and conflicting idempotency replay,
 read-only/write scope separation, required consent purpose, unknown sites,
 target-free errors, two-tenant isolation, digest-only idempotency storage,

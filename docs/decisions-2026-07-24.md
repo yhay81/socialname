@@ -216,7 +216,7 @@ so status does not diverge across design records.
   compliance claim; production SLA history remains external evidence.
 - API v1 publication is generator-owned and committed as OpenAPI 3.1.2,
   independent Draft 2020-12 roots, an exact SocialName SSE contract, and a
-  SHA-256 drift manifest. One closed registry owns the 29 published
+  SHA-256 drift manifest. One closed registry owns the 38 published
   method/path/schema/scope descriptions; Axum keeps an independent
   operation-to-scope mapping and tests route registration plus exact scope
   agreement. The publication declares no production origin or availability.
@@ -245,6 +245,15 @@ so status does not diverge across design records.
   cancellation, watch pause/delete, privacy work, and exact replay remain
   available. Payment-provider state and the measurement engine remain outside
   this model.
+- One workspace is one Team organization; no second hierarchy or cross-tenant
+  membership is introduced. Existing API-key scopes remain purpose-specific
+  and the active owner/administrator/member/viewer role is a second
+  authorization boundary. Member subjects are write-only private provisioning
+  inputs. Confirmed account transitions create one review whose assignment,
+  reviewer acknowledgement, and resolution are distinct from notification
+  receipt and cannot relabel truth. Organization watch-retention policy may
+  narrow the 30–730 day range only after existing watches comply, with
+  database-enforced serialization.
 - Developer usage records are append-only, target-free
   `search_target_admitted` facts written atomically with a newly admitted
   search and hidden after a fixed 400-day database deadline. The public API
@@ -300,6 +309,7 @@ so status does not diverge across design records.
 - [Developer quota, usage, and service reporting](developer-usage-reporting.md)
 - [Search-completion webhooks](search-completion-webhooks.md)
 - [Plan entitlements and billing boundary](plan-entitlements-billing.md)
+- [Team organizations, review, audit, and retention](team-workflows.md)
 
 ## Implementation baseline
 
@@ -407,6 +417,11 @@ so status does not diverge across design records.
     watch scheduling, suspension-safe recovery/privacy behavior, and
     PostgreSQL 18 least-privilege evidence without adding billing concepts to
     the measurement engine.
+31. **Done:** Add the first Team organization workflow with role-and-scope
+    authorization, private member provisioning, safe lifecycle/key
+    invalidation, confirmed-transition review and reviewer acknowledgement,
+    target-free audit projection, and enforced organization watch-retention
+    policy.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -422,3 +437,6 @@ idempotency, quota, usage-report, search-completion webhook, consent-bound
 remote client boundaries, private search history, bounded export,
 adoption-focused examples, and provider-neutral plan entitlements. Payment
 provider integration and hosted commercial evidence remain external.
+Milestone 5 has its first repository-complete Team organization workflow;
+collaboration integrations, consented shared observations, quorum
+corroboration, and any community daemon remain ordered later work.

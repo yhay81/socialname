@@ -29,6 +29,11 @@ middleware and report loader both require the exact scope. The loader starts a
 normal authorized transaction, sets the tenant locally, and reads through the
 non-owner forced-RLS application role.
 
+The later Team workflow also reuses `operations:read` for its separate
+organization audit route, but only when the active membership role is owner or
+administrator. That does not add audit events, actors, resource IDs, targets,
+or details to this report and does not make the aggregate an audit-log read.
+
 One PostgreSQL statement computes the complete report. A materialized bounds
 row supplies `statement_timestamp()` and the exact window start, so every
 aggregate shares one database snapshot and one evaluation time. Client time

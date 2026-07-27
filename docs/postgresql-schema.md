@@ -49,7 +49,11 @@ tenant/creation-time search-history index. It adds no product table, policy,
 payload copy, or privilege. Migration `0020_plan_entitlements.sql` adds one
 current and one append-only plan table, provider-neutral capability
 evaluation, new-workspace bootstrap, existing-workspace evaluation migration,
-and plan-aware due-watch scheduling.
+and plan-aware due-watch scheduling. Migration `0021_team_workflows.sql` adds
+public membership names and revisions, one organization retention policy,
+confirmed-transition review/current and append-only history, private member
+provisioning, last-owner and assignee safety, and serialized watch-retention
+enforcement.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -78,7 +82,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 54 product tables:
+The migrations create 57 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -88,6 +92,7 @@ The migrations create 54 product tables:
 | Interactive work | `searches`, `search_targets`, `search_events` |
 | Developer capacity | `developer_quota_policies`, `developer_usage_records` |
 | Plan access | `tenant_plan_entitlements`, `plan_entitlement_events` |
+| Team governance | `organization_retention_policies`, `transition_reviews`, `transition_review_events` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `search_completion_webhooks`, `notification_deliveries`, `notification_delivery_attempts`, `notification_acknowledgements` |
@@ -99,7 +104,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Forty-two tenant-owned tables have row-level security both enabled and
+Forty-five tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -321,7 +326,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 52 tables and 40
+It applies the embedded migrations twice, inventories all 57 tables and 45
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
@@ -355,6 +360,11 @@ worker-only expiry. Plan checks cover bootstrap/migration defaults, closed
 pending/grace/suspended/restored states, optimistic digest-only
 reconciliation, admission rollback, suspension-safe reads/cancellation, due
 watch suppression, two-tenant isolation, and event-history least privilege.
+Team checks cover private-subject provisioning/replay, role-and-scope
+composition, last-owner and unresolved-assignee safety, member key
+invalidation, confirmed-account-only reviews, exact-assignee acknowledgement
+and resolution, immutable review history, target-free audit projection, and
+HTTP plus direct-SQL organization retention enforcement.
 The same real-database test also pins initial rule trust, applies
 canary then general metadata, rejects persistent replay, stages an overlapping
 key generation without replacing the active root, activates a second pack,

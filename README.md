@@ -101,21 +101,26 @@ person.
 - Provider-neutral plan entitlements with closed managed-search/monitoring
   capabilities, digest-only optimistic reconciliation, suspension-safe
   read/cancel paths, and admission/scheduler gates outside the engine.
-- Deterministic API v1 publication with 29 scoped operations, OpenAPI 3.1.2,
-  34 Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
+- Tenant-local Team organizations with closed roles, member lifecycle, a
+  confirmed-transition review queue, distinct reviewer acknowledgement,
+  target-free audit projection, and enforced watch-retention ranges.
+- Deterministic API v1 publication with 38 scoped operations, OpenAPI 3.1.2,
+  45 Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
   SHA-256 drift manifest.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-Milestone 3's repository-completable software is implemented, and Milestone 4
-now has stable REST/JSON and SSE publication, batch admission, quota, usage,
-service reporting, search-completion webhooks, consent-bound remote clients,
-private search history, bounded export examples, and provider-neutral plan
+Milestone 3's repository-completable software is implemented, Milestone 4 has
+stable REST/JSON and SSE publication, batch admission, quota, usage, service
+reporting, search-completion webhooks, consent-bound remote clients, private
+search history, bounded export examples, and provider-neutral plan
 entitlements. Real regional deployment, retained production SLO history,
 production notification/export evidence, a payment-provider integration, and
-a hosted Developer API remain external gates.
+a hosted Developer API remain external gates. Milestone 5 has begun with its
+repository-complete Team organization, role, review, audit, and retention
+workflow; collaboration and shared-evidence work remain ordered next.
 
 ## Build and verify
 

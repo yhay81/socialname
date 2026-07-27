@@ -849,7 +849,7 @@ External evidence gate:
 
 ## Milestone 3 — Trust, governance, and multi-region operation
 
-Status: **Current; external deployment evidence pending**
+Status: **Software gate complete; external deployment evidence pending**
 
 - [ ] Deploy managed canaries and workers in the required regions.
 - [x] Add region-aware assertions, conflict escalation, and managed
@@ -1732,9 +1732,9 @@ Acceptance gate:
 
 ## Milestone 5 — Team workflows and quality network
 
-Status: **Planned**
+Status: **Current**
 
-- [ ] Add organizations, roles, audit, review, acknowledgement, and retention
+- [x] Add organizations, roles, audit, review, acknowledgement, and retention
       controls.
 - [ ] Add collaboration and incident integrations based on demonstrated
       customer workflow demand.
@@ -1744,6 +1744,65 @@ Status: **Planned**
       verification escalation.
 - [ ] Evaluate a separately installed community measurement daemon only after
       managed regional workers are proven.
+
+Team organization workflow software evidence:
+
+```console
+cargo fmt --all -- --check
+# passed
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified exact committed OpenAPI with 38 operations, 45 JSON Schema roots,
+# SSE, and manifest
+cargo test --locked --workspace --all-targets
+# passed against PostgreSQL 18, including protocol 64 unit + 20 wire +
+# 1 publication; server 47 library + 2 binary + 1 full integration
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+node --test examples/api-v1/client.test.mjs
+# 5 passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# passed; npm reported 0 vulnerabilities
+cd ../console
+npm ci
+npm run check
+npm test
+npm run build
+# 6 passed; npm reported 0 vulnerabilities
+```
+
+Migration `0021` treats one workspace as one organization and adds forced-RLS
+retention policy, current transition review, and append-only review history.
+The unchanged API-key scope set composes with closed
+owner/administrator/member/viewer roles on every authenticated request. A
+private fixed-search-path provisioning function prevents the application role
+from reading member subject references; membership lifecycle guards preserve
+an active owner, unresolved assignees, and immediate key invalidation.
+
+Only confirmed account-state transitions enter the human queue.
+Assignment/reassignment, exact-assignee responsibility acknowledgement, and a
+closed resolution disposition are revisioned and audited without relabelling
+the underlying transition. Notification receipt remains independent.
+Organization policy narrows the existing 30–730 day watch-retention range only
+after current watches comply, and serialized database triggers enforce both
+policy/watch update orders.
+
+The PostgreSQL 18 test inventories 57 tables and 45 forced-RLS policies and
+proves two-tenant isolation, least privilege, role denial despite a matching
+scope, provisioning replay/conflict, subject/audit redaction, lifecycle/key
+invalidation, last-owner and assignee safety, review history/state fencing, and
+HTTP plus direct-SQL retention enforcement. The same-origin console consumes
+the nine new published routes and was verified with live fixture data at
+desktop and 375-by-812 viewports with no console errors or horizontal overflow.
+Exact behavior is in
+[`docs/team-workflows.md`](docs/team-workflows.md).
 
 Acceptance gate:
 
@@ -1962,3 +2021,10 @@ Choose these only when their trigger is measured:
   least-privilege evidence. Kept provider integration, pricing, checkout,
   invoicing, hosted deployment, and live commercial evidence external, and
   selected Milestone 5 team workflows next.
+- **2026-07-27:** Added the first Milestone 5 Team workflow: one-workspace
+  organizations, role-and-scope authorization, private replay-safe member
+  provisioning and safe lifecycle/key invalidation, confirmed-transition
+  review with distinct reviewer acknowledgement, target-free audit, and
+  serialized organization watch-retention policy. Published nine routes and
+  eleven schema roots, proved the boundary under PostgreSQL 18, and kept
+  collaboration/shared-evidence work in roadmap order.

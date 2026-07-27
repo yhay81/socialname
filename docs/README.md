@@ -203,6 +203,10 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Plan entitlements and billing boundary](plan-entitlements-billing.md) —
   closed capabilities, effective/suspended access, digest-only reconciliation,
   admission gates, least privilege, and external payment-provider boundary.
+- [Team organizations, review, audit, and retention](team-workflows.md) —
+  one-workspace organization boundary, closed role authorization, member
+  lifecycle, confirmed-transition review, target-free audit, and enforced
+  watch-retention policy.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native

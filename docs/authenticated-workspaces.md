@@ -64,11 +64,19 @@ Migrations `0002_api_key_authentication.sql` and
 evolve the same closed set and reject null or duplicate array entries. Every
 scope now has an exact HTTP consumer. `data:export` protects only terminal
 private-search event export and does not grant history listing or Evidence
-Capsule reads. `operations:read`
-protects only the target-free tenant operations aggregate. `usage:read`
-protects only the Developer quota, usage, backlog, and search-objective
-aggregate. Neither grants access to watches, notification resources, deletion
-resources, evidence, or the other's report.
+Capsule reads. `operations:read` protects the target-free tenant operations
+aggregate and, only for an owner or administrator, the separate target-free
+organization audit page. `usage:read` protects only the Developer quota, usage,
+backlog, and search-objective aggregate. These scopes do not grant access to
+watches, notification resources, deletion resources, evidence, or one
+another's reports.
+
+API-key scopes are necessary but not sufficient authority. Each request also
+rechecks the active membership's closed organization role. Owner and
+administrator keys may use every scope they contain, members may use product
+read/write and owned privacy scopes, and viewers may use read/report/export
+scopes only. The exact Team route matrix is in
+[Team organizations, review, audit, and retention](team-workflows.md).
 
 ## Operator lifecycle
 
@@ -99,7 +107,9 @@ Issue a rotation or purpose-specific key:
 
 ```powershell
 $env:SOCIALNAME_WORKSPACE_ID = "<workspace UUID>"
-$env:SOCIALNAME_MEMBERSHIP_ID = "<active owner/administrator membership UUID>"
+$env:SOCIALNAME_MEMBERSHIP_ID = "<active owner/administrator actor UUID>"
+# Optional active target; defaults to the actor:
+$env:SOCIALNAME_TARGET_MEMBERSHIP_ID = "<target membership UUID>"
 $env:SOCIALNAME_API_KEY_SCOPES = "workspace:read"
 cargo run --locked -p socialname-server -- issue-api-key
 ```
@@ -113,7 +123,10 @@ cargo run --locked -p socialname-server -- revoke-api-key
 
 Issue and revoke require an active owner or administrator membership in an
 active workspace, execute under transaction-local tenant RLS, and append
-`api_key.issue` or `api_key.revoke` audit events. Unknown, inactive,
+`api_key.issue` or `api_key.revoke` audit events. Issuance may target an active
+membership: an owner may target any role, while an administrator may target
+self, member, or viewer. Every requested scope must be permitted by the target
+role, so provisioning cannot create a viewer write key. Unknown, inactive,
 insufficient-role, duplicate, malformed, and database-failure paths return
 fixed classes without echoing supplied values. Dropped or cancelled futures
 roll back their transaction.
@@ -127,8 +140,8 @@ $env:SOCIALNAME_SERVER_DATABASE_URL = "postgres://SOCIALNAME_APP:...@HOST/DATABA
 cargo run --locked -p socialname-server
 ```
 
-The role must be `NOSUPERUSER NOBYPASSRLS` and must not own product tables. For
-the current route it needs only:
+The role must be `NOSUPERUSER NOBYPASSRLS` and must not own product tables. The
+base authentication route needs only:
 
 ```sql
 GRANT USAGE ON SCHEMA public TO socialname_app;
@@ -138,11 +151,15 @@ GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
     TO socialname_app;
 ```
 
-It must not receive `SELECT` on `api_key_credentials`, membership mutation,
-schema creation, or migration rights. The integration test creates this exact
-kind of login and proves that the credential table remains unreadable. The
-additional column-limited grants for private search are specified in
-[Private search API and ordered event stream](search-api.md).
+It must not receive `SELECT` on `api_key_credentials`, schema creation, or
+migration rights. Team routes receive only the public membership columns,
+column-limited lifecycle updates, and execution of the fixed
+`socialname_provision_organization_member` function. They cannot select
+`memberships.subject_id`, directly insert/delete memberships, read internal
+review history, or read audit details. The integration test creates this exact
+kind of login and proves those denials. Additional route grants are specified
+in [Private search API and ordered event stream](search-api.md) and
+[Team organizations, review, audit, and retention](team-workflows.md).
 
 ## Authentication and RLS flow
 
@@ -154,8 +171,9 @@ Each protected request:
    prefix/digest table and returns only tenant/key IDs;
 4. starts a runtime-role transaction and sets `socialname.tenant_id` with
    `set_config(..., true)`;
-5. under forced RLS, rechecks active tenant, active key-creating membership,
-   active/nonexpired key, and the required scope, then records `last_used_at`;
+5. under forced RLS, rechecks active tenant, active key-creating membership and
+   role, active/nonexpired key, and the required scope, then records
+   `last_used_at`;
 6. starts the route data transaction with the same transaction-local tenant and
    reads only that workspace.
 
@@ -205,7 +223,7 @@ bounded database probe shorter than the outer request deadline and returns
 
 The PostgreSQL 18 integration gate covers:
 
-- replay-safe migrations, 54 product tables, and 42 forced-RLS policies;
+- replay-safe migrations, 57 product tables, and 45 forced-RLS policies;
 - credential-table and definer-function `PUBLIC` privilege revocation;
 - a real `LOGIN NOSUPERUSER NOBYPASSRLS` runtime role;
 - transaction-local tenant separation for two valid keys;
@@ -215,7 +233,10 @@ The PostgreSQL 18 integration gate covers:
 - transactional bootstrap, issuance, revocation, audit, conflict rollback, and
   digest-only persistence;
 - default and owner/admin-updated Developer quota policies with idempotent,
-  target-free audit output.
+  target-free audit output;
+- role-bounded target-key issuance, private membership subjects, member
+  lifecycle and key invalidation, review assignment/acknowledgement/resolution,
+  target-free audit projection, and organization watch-retention enforcement.
 
 TLS termination, ingress trust, per-source authentication throttling, external
 identity proofing, production secret-manager capture, and deployed credential
