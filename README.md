@@ -1,7 +1,7 @@
 # SocialName
 
 SocialName is being rebuilt as a Rust-based public-identifier observability
-platform. The current implementation provides private local clients, one
+platform. The current implementation provides local and consent-bound managed clients, one
 shared probe/classification engine, strict rule and trust artifacts, a local
 cache, authenticated managed search persistence, and a signed worker connected
 through fenced PostgreSQL jobs and atomic observation ingestion, plus a
@@ -61,6 +61,10 @@ person.
 - An Axum/PostgreSQL server with private workspaces, hashed scoped API keys,
   consent-bound idempotent searches, polling/cancellation, and ordered
   resumable SSE under forced tenant RLS.
+- CLI and desktop `local`, `cache`, `remote`, and cached-first `hybrid`
+  execution with independent visible `never`, `private`, and `shared` policy,
+  memory-only managed credentials, typed SSE resumption, and remote
+  cancellation.
 - Purpose/profile/notice-versioned account and installation consent resources
   with bounded reads, installation non-override, and immutable immediate
   withdrawal.
@@ -201,6 +205,8 @@ The managed update trust and rollout contract is in
 The desktop boundary and platform policy are recorded in
 [Desktop application](docs/desktop-application.md). The web monitoring
 boundary is recorded in [Minimal monitoring console](docs/monitoring-console.md).
+Managed CLI/desktop transport and its closed source/sync matrix are recorded in
+[Remote and remote-assisted clients](docs/remote-clients.md).
 
 ## Legacy implementation
 

@@ -1,13 +1,18 @@
 use anyhow::{Result, bail};
 use chrono::Utc;
 use serde::Serialize;
-use socialname_app_core::{LocalObservationProducer, local_observation_from_result};
+use socialname_app_core::{
+    LocalObservationProducer, ManagedSearchAccess, ManagedSearchRun, local_observation_from_result,
+    run_managed_search,
+};
 pub use socialname_app_core::{
-    RefreshState, SearchPolicy, SearchRuleHealth, SearchSource, SearchStatus, SyncPolicy,
+    RefreshState, ResultSource, SearchPolicy, SearchRuleHealth, SearchSource, SearchStatus,
+    SyncPolicy,
 };
 use socialname_cache::{CacheEligibilityQuery, CacheMetadata, CacheVerdictPolicy, LocalCache};
 use socialname_domain::{Observation, RuleHealth, SiteId, TargetKey, Verdict};
 use socialname_engine::{SearchEngine, SearchResult};
+use socialname_protocol::{SearchEvent, SearchProgress, SearchTerminalState};
 use socialname_rule_compiler::{CompiledSiteRule, render_url_template};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -37,6 +42,7 @@ pub struct SearchObservationOutput {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SearchCommandOutput {
     pub source: SearchSource,
+    pub result_source: ResultSource,
     pub sync: SyncPolicy,
     pub status: SearchStatus,
     pub refresh_state: RefreshState,
@@ -50,6 +56,8 @@ pub struct SearchCommandOutput {
     pub observations: Vec<SearchObservationOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live_result: Option<SearchResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_phase: Option<Box<SearchCommandOutput>>,
 }
 
 impl SearchCommandOutput {
@@ -63,16 +71,27 @@ impl SearchCommandOutput {
                 RuleHealth::Recovering => "recovering",
             })
             .unwrap_or("unavailable");
-        let mut lines = vec![format!(
-            "{}\tstatus={}\tsource={}\tsync={}\trefresh={}\tpromoted={}\thealth={health}\trule={}",
+        let mut lines = self
+            .cached_phase
+            .as_deref()
+            .map(|cached| {
+                let mut phase = vec!["phase\tcache".to_owned()];
+                phase.extend(cached.human().lines().map(str::to_owned));
+                phase.push("phase\trefresh".to_owned());
+                phase
+            })
+            .unwrap_or_default();
+        lines.push(format!(
+            "{}\tstatus={}\trequested_source={}\tresult_source={}\tsync={}\trefresh={}\tpromoted={}\thealth={health}\trule={}",
             self.site_id,
             self.status,
             self.source,
+            self.result_source,
             self.sync,
             self.refresh_state,
             self.rule_promoted,
             self.rule_hash
-        )];
+        ));
         for cached in &self.observations {
             lines.push(format!(
                 "observation\t{:?}\t{:?}\tobserved={}\texpires={}\tregion={}",
@@ -88,6 +107,133 @@ impl SearchCommandOutput {
         }
         lines.join("\n")
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ManagedSearchCommandOutput {
+    pub source: SearchSource,
+    pub sync: SyncPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_phase: Option<SearchCommandOutput>,
+    pub search_id: String,
+    pub terminal_state: SearchTerminalState,
+    pub progress: SearchProgress,
+    pub events: Vec<SearchEvent>,
+}
+
+impl ManagedSearchCommandOutput {
+    pub fn human(&self) -> String {
+        let mut lines = vec![format!(
+            "managed-search\tsource={}\tsync={}",
+            self.source, self.sync
+        )];
+        if let Some(cached) = &self.cached_phase {
+            lines.push("phase\tlocal-cache".to_owned());
+            lines.extend(cached.human().lines().map(str::to_owned));
+            lines.push("phase\tmanaged-service".to_owned());
+        }
+        for event in &self.events {
+            lines.push(match &event.data {
+                socialname_protocol::SearchEventData::Started { total_targets } => {
+                    format!("event\tstarted\ttotal={total_targets}")
+                }
+                socialname_protocol::SearchEventData::DefinitiveResult { result } => format!(
+                    "event\tdefinitive_result\tsite={}\tverdict={:?}\tsource={:?}",
+                    result.target.site_id, result.verdict, result.source
+                ),
+                socialname_protocol::SearchEventData::UncertainResult { result } => format!(
+                    "event\tuncertain_result\tsite={}\treason={:?}\tsource={:?}",
+                    result.target.site_id, result.reason, result.source
+                ),
+                socialname_protocol::SearchEventData::OperationalFailure { failure } => format!(
+                    "event\toperational_failure\tsite={}\tkind={:?}\tretryable={}",
+                    failure.target.site_id, failure.kind, failure.retryable
+                ),
+                socialname_protocol::SearchEventData::AssertionUpdated { .. } => {
+                    "event\tassertion_updated".to_owned()
+                }
+                socialname_protocol::SearchEventData::Finished { state, progress } => format!(
+                    "event\tfinished\tstate={state:?}\tcompleted={}/{}",
+                    progress.completed_targets, progress.total_targets
+                ),
+            });
+        }
+        lines.push(format!(
+            "managed-search\tid={}\tstate={:?}",
+            self.search_id, self.terminal_state
+        ));
+        lines.join("\n")
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_managed_search(
+    rule: &CompiledSiteRule,
+    username: &str,
+    policy: SearchPolicy,
+    health: Option<SearchRuleHealth>,
+    cache: Option<&LocalCache>,
+    access: ManagedSearchAccess,
+) -> Result<ManagedSearchCommandOutput> {
+    policy.validate_relation()?;
+    if !policy.uses_managed_service() {
+        bail!("managed execution requires a remote-assisted policy");
+    }
+    let cached_phase = if policy.source == SearchSource::Hybrid {
+        let mut cached = execute_cache_search(
+            rule,
+            username,
+            policy.clone(),
+            health,
+            cache,
+            Utc::now().timestamp_millis(),
+        )
+        .await?;
+        cached.refresh_state = RefreshState::Pending;
+        Some(cached)
+    } else {
+        None
+    };
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let events = std::sync::Mutex::new(Vec::new());
+    let outcome = {
+        let run = run_managed_search(
+            ManagedSearchRun {
+                username: username.trim().to_owned(),
+                site_ids: vec![rule.source.id.clone()],
+                source: policy.source,
+                sync: policy.sync,
+                maximum_age_ms: policy.maximum_age_ms,
+                region_class: policy.region_class.clone(),
+                access,
+            },
+            cancellation.clone(),
+            |event| {
+                events
+                    .lock()
+                    .expect("managed event lock poisoned")
+                    .push(event);
+            },
+        );
+        tokio::pin!(run);
+        tokio::select! {
+            outcome = &mut run => outcome?,
+            signal = tokio::signal::ctrl_c() => {
+                signal?;
+                cancellation.cancel();
+                run.await?
+            }
+        }
+    };
+    Ok(ManagedSearchCommandOutput {
+        source: policy.source,
+        sync: policy.sync,
+        cached_phase,
+        search_id: outcome.search_id.as_str().to_owned(),
+        terminal_state: outcome.terminal_state,
+        progress: outcome.progress,
+        events: events.into_inner().expect("managed event lock poisoned"),
+    })
 }
 
 pub async fn execute_search<F>(
@@ -142,10 +288,12 @@ where
             };
             local_output(rule, policy, health, cache, now_unix_ms, result).await
         }
+        SearchSource::Remote => bail!("remote search requires managed API access"),
         SearchSource::Hybrid => {
-            let cached =
+            let mut cached =
                 execute_cache_search(rule, username, policy.clone(), health, cache, now_unix_ms)
                     .await?;
+            cached.refresh_state = RefreshState::Pending;
             let engine = engine_factory()?;
             let search = engine.search(rule, username);
             tokio::pin!(search);
@@ -157,9 +305,10 @@ where
                 }
             };
             let mut output = local_output(rule, policy, health, cache, now_unix_ms, result).await?;
-            let mut observations = cached.observations;
+            let mut observations = std::mem::take(&mut cached.observations);
             observations.append(&mut output.observations);
             output.observations = observations;
+            output.cached_phase = Some(Box::new(cached));
             Ok(output)
         }
     }
@@ -333,6 +482,13 @@ fn base_output(
 ) -> SearchCommandOutput {
     SearchCommandOutput {
         source: policy.source,
+        result_source: if policy.source == SearchSource::Cache
+            || policy.source == SearchSource::Hybrid && refresh_state != RefreshState::Completed
+        {
+            ResultSource::Cache
+        } else {
+            ResultSource::Local
+        },
         sync: policy.sync,
         status,
         refresh_state,
@@ -346,6 +502,7 @@ fn base_output(
             .and_then(|health| health.evidence_expires_at_unix_ms),
         observations: Vec::new(),
         live_result: None,
+        cached_phase: None,
     }
 }
 

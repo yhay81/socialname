@@ -24,6 +24,7 @@ socialname-canary = { path = "../socialname-canary" }
 socialname-cache = { path = "../socialname-cache" }
 socialname-domain = { path = "../socialname-domain" }
 socialname-engine = { path = "../socialname-engine" }
+socialname-protocol = { path = "../socialname-protocol" }
 socialname-rule-compiler = { path = "../socialname-rule-compiler" }
 socialname-testkit = { path = "../socialname-testkit" }
 tokio.workspace = true

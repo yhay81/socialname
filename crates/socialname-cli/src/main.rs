@@ -54,7 +54,7 @@ enum Command {
     Canaries(Box<CanaryArgs>),
     /// Verify deterministic response fixtures against the rule pack.
     Fixtures(FixtureArgs),
-    /// Search one site using an explicit local or cache source.
+    /// Search one site with an explicit source and independent sync policy.
     Search(SearchArgs),
 }
 
@@ -357,14 +357,10 @@ struct SearchArgs {
     site: String,
     #[arg(long, default_value = "rules/sites")]
     rules_dir: PathBuf,
-    /// Select live local probing or strictly offline cache lookup.
-    #[arg(
-        long,
-        default_value_t = SearchSource::Local,
-        value_parser = parse_cli_search_source
-    )]
+    /// Select local, cache, remote, or hybrid execution.
+    #[arg(long, default_value_t = SearchSource::Local)]
     source: SearchSource,
-    /// Synchronization is independent of source; only never is implemented.
+    /// Select never, private, or shared synchronization independently.
     #[arg(long, default_value_t = SyncPolicy::Never)]
     sync: SyncPolicy,
     /// User-controlled SQLite cache path. Required by cache source.
@@ -380,18 +376,17 @@ struct SearchArgs {
     /// Permit a live probe for a rule that is still discovery-only.
     #[arg(long)]
     allow_disabled: bool,
+    /// Managed SocialName API base URL. Required when the policy uses remote service.
+    #[arg(long)]
+    api_url: Option<String>,
+    /// Environment variable containing the managed API key.
+    #[arg(long, default_value = "SOCIALNAME_API_KEY")]
+    api_key_env: String,
+    /// Purpose-specific private-history or shared-observation consent grant.
+    #[arg(long)]
+    consent_grant_id: Option<String>,
     #[arg(long)]
     json: bool,
-}
-
-fn parse_cli_search_source(value: &str) -> Result<SearchSource, String> {
-    let source = value
-        .parse::<SearchSource>()
-        .map_err(|error| error.to_string())?;
-    if source == SearchSource::Hybrid {
-        return Err("hybrid cached-first streaming is currently desktop-only".to_owned());
-    }
-    Ok(source)
 }
 
 #[tokio::main]
@@ -1279,6 +1274,21 @@ fn run_fixtures(arguments: FixtureArgs) -> Result<()> {
 }
 
 async fn run_search(arguments: SearchArgs) -> Result<()> {
+    let policy = SearchPolicy {
+        source: arguments.source,
+        sync: arguments.sync,
+        region_class: arguments.region_class.clone(),
+        maximum_age_ms: arguments.maximum_age_ms,
+    };
+    policy.validate_relation()?;
+    if !policy.uses_managed_service()
+        && (arguments.api_url.is_some() || arguments.consent_grant_id.is_some())
+    {
+        bail!("managed API options are only accepted by a remote-assisted policy");
+    }
+    if arguments.source == SearchSource::Remote && arguments.cache_path.is_some() {
+        bail!("remote source does not use --cache-path; choose hybrid for a local-cache phase");
+    }
     let rules = RuleCompiler::new()
         .load_directory(&arguments.rules_dir)
         .map_err(format_compile_errors)?;
@@ -1327,15 +1337,47 @@ async fn run_search(arguments: SearchArgs) -> Result<()> {
         }
         None => None,
     };
+    if policy.uses_managed_service() {
+        let api_url = arguments
+            .api_url
+            .context("remote-assisted search requires --api-url")?;
+        let consent_grant_id = arguments
+            .consent_grant_id
+            .context("remote-assisted search requires --consent-grant-id")?;
+        let api_key = std::env::var(&arguments.api_key_env).map_err(|_| {
+            anyhow::anyhow!(
+                "remote-assisted search requires an API key in environment variable {:?}",
+                arguments.api_key_env
+            )
+        })?;
+        let execution = search_command::execute_managed_search(
+            rule,
+            &arguments.username,
+            policy,
+            health,
+            cache.as_ref(),
+            socialname_app_core::ManagedSearchAccess {
+                api_url,
+                api_key,
+                consent_grant_id,
+            },
+        )
+        .await;
+        if let Some(cache) = cache {
+            cache.close().await;
+        }
+        let output = execution?;
+        if arguments.json {
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        } else {
+            println!("{}", output.human());
+        }
+        return Ok(());
+    }
     let execution = search_command::execute_search(
         rule,
         &arguments.username,
-        SearchPolicy {
-            source: arguments.source,
-            sync: arguments.sync,
-            region_class: arguments.region_class,
-            maximum_age_ms: arguments.maximum_age_ms,
-        },
+        policy,
         health,
         cache.as_ref(),
         || socialname_engine::SearchEngine::new().map_err(Into::into),
@@ -1404,7 +1446,7 @@ mod cli_tests {
     }
 
     #[test]
-    fn cache_source_is_explicit_and_unknown_sync_is_rejected() {
+    fn cache_source_is_explicit_and_invalid_policy_relation_is_rejected_at_runtime() {
         let cli = Cli::try_parse_from([
             "socialname",
             "search",
@@ -1429,22 +1471,56 @@ mod cli_tests {
             Some(Path::new("cache.sqlite3"))
         );
 
+        let cli = Cli::try_parse_from([
+            "socialname",
+            "search",
+            "octocat",
+            "--site",
+            "github",
+            "--sync",
+            "private",
+        ])
+        .unwrap();
+        let Command::Search(arguments) = cli.command else {
+            panic!("expected search command");
+        };
         assert!(
-            Cli::try_parse_from([
-                "socialname",
-                "search",
-                "octocat",
-                "--site",
-                "github",
-                "--sync",
-                "private",
-            ])
+            SearchPolicy {
+                source: arguments.source,
+                sync: arguments.sync,
+                region_class: arguments.region_class,
+                maximum_age_ms: arguments.maximum_age_ms,
+            }
+            .validate_relation()
             .is_err()
         );
     }
 
     #[test]
-    fn hybrid_source_is_rejected_until_cli_streaming_has_an_event_contract() {
+    fn remote_and_hybrid_sources_have_explicit_independent_inputs() {
+        let cli = Cli::try_parse_from([
+            "socialname",
+            "search",
+            "octocat",
+            "--site",
+            "github",
+            "--source",
+            "remote",
+            "--sync",
+            "private",
+            "--api-url",
+            "https://api.example.test",
+            "--consent-grant-id",
+            "grant_1",
+        ])
+        .unwrap();
+        let Command::Search(arguments) = cli.command else {
+            panic!("expected search command");
+        };
+        assert_eq!(arguments.source, SearchSource::Remote);
+        assert_eq!(arguments.sync, SyncPolicy::Private);
+        assert_eq!(arguments.api_key_env, "SOCIALNAME_API_KEY");
+
         assert!(
             Cli::try_parse_from([
                 "socialname",
@@ -1454,8 +1530,10 @@ mod cli_tests {
                 "github",
                 "--source",
                 "hybrid",
+                "--sync",
+                "never",
             ])
-            .is_err()
+            .is_ok()
         );
     }
 }

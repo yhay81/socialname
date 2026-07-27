@@ -76,29 +76,31 @@ and state transitions. A large static site list is not a moat.
 
 ## CLI execution model
 
-The CLI must make the source of every answer visible. Four execution modes are
-proposed:
+The CLI makes the source of every answer visible. Four execution modes are
+implemented:
 
 | Mode | Reads | Performs live probes | Sends target to SocialName | Typical use |
 | --- | --- | --- | --- | --- |
 | `local` | Local cache | On the user's machine | No | Default private search |
-| `cache` | Local cache and permitted cloud cache | No | Only if cloud cache is enabled | Fast, no-new-probe lookup |
+| `cache` | Local cache | No | No | Fast, no-new-probe lookup |
 | `remote` | Private cloud and managed cache | On managed workers | Yes | Stable server vantage/API parity |
-| `hybrid` | Local, private cloud, and eligible shared assertions | Locally for stale/missing results | Yes | Fastest complete interactive search |
+| `hybrid` | Local cache, then the source selected by sync | Locally for `never`; managed for `private`/`shared` | Only for `private`/`shared` | Explicit cached-first interaction |
 
 Illustrative commands:
 
 ```console
-socialname search alice
-socialname search alice --mode cache --max-age 30m
-socialname search alice --mode remote --region jp
-socialname search alice --mode hybrid --sync private
+socialname search alice --site github
+socialname search alice --site github --source cache --cache-path observations.sqlite3
+socialname search alice --site github --source remote --sync private \
+  --api-url https://api.example.com --consent-grant-id grant_1 --region-class jp
+socialname search alice --site github --source hybrid --sync private \
+  --api-url https://api.example.com --consent-grant-id grant_1
 ```
 
 The default is equivalent to:
 
 ```console
-socialname search alice --mode local --sync never
+socialname search alice --site github --source local --sync never
 ```
 
 No installation should upload search targets or results until the user signs in
@@ -116,6 +118,12 @@ Execution and synchronization are independent:
 
 `shared` is explicit opt-in. It is not implied by `hybrid`, telemetry consent,
 authentication, or payment.
+
+The implemented relation is closed: `local` and `cache` accept only `never`;
+`remote` accepts only `private` or `shared`; `hybrid` accepts all three without
+changing the sync choice. Managed execution additionally requires an API
+origin, API key, and a purpose-specific consent grant. See
+[Remote and remote-assisted clients](remote-clients.md).
 
 The active mode and sync policy must be shown in normal CLI output and machine
 readable results.

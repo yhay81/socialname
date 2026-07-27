@@ -11,19 +11,24 @@ repository.workspace = true
 [dependencies]
 futures-util.workspace = true
 hex.workspace = true
+reqwest.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 socialname-cache = { path = "../socialname-cache" }
 socialname-domain = { path = "../socialname-domain" }
 socialname-engine = { path = "../socialname-engine" }
+socialname-protocol = { path = "../socialname-protocol" }
 socialname-rule-compiler = { path = "../socialname-rule-compiler" }
 socialname-rule-schema = { path = "../socialname-rule-schema" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+url.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
+axum.workspace = true
 
 [lints]
 workspace = true

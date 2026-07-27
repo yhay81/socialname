@@ -3998,19 +3998,24 @@ dependencies = [
 name = "socialname-app-core"
 version = "0.2.0"
 dependencies = [
+ "axum",
  "futures-util",
  "hex",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "socialname-cache",
  "socialname-domain",
  "socialname-engine",
+ "socialname-protocol",
  "socialname-rule-compiler",
  "socialname-rule-schema",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -4065,6 +4070,7 @@ dependencies = [
  "socialname-canary",
  "socialname-domain",
  "socialname-engine",
+ "socialname-protocol",
  "socialname-rule-compiler",
  "socialname-testkit",
  "tokio",

@@ -63,7 +63,7 @@ microservice for each box.
 The CLI and desktop shell depend on `socialname-app-core`, which owns:
 
 - Rule-pack verification and local fallback.
-- Query planning for local/cache/hybrid modes.
+- Query planning for local/cache/remote/hybrid modes.
 - Local probe execution.
 - Explicit synchronization policy.
 - Machine-readable event streaming.
@@ -71,7 +71,8 @@ The CLI and desktop shell depend on `socialname-app-core`, which owns:
 Each application owns its presentation and command boundary. The native desktop
 shell, not its webview, resolves and opens the local SQLite observation cache.
 The CLI owns command parsing, filesystem arguments, and normal/JSON output.
-The core engine must not import CLI, database, or cloud-API concerns.
+The application core owns the typed managed-search transport; the measurement
+engine still imports no CLI, database, or cloud-API concerns.
 
 ### Control plane
 
@@ -156,13 +157,15 @@ refresh it. The API must distinguish `provisional`, `refreshing`, and `final for
 requested policy`; it must not imply that Internet state is ever permanently
 final.
 
-The local desktop implementation makes this concrete with a requested `hybrid`
-mode and actual per-event `cache` or `local` origins. It emits the cache phase
-before invoking the local executor, labels the refresh as pending, and then
-emits a completed local-refresh phase without discarding the cached observation
-set. Cancellation after the first phase is checked before executor invocation.
-The CLI rejects `hybrid` until its output boundary can express the same ordered
-event contract.
+The client implementation makes this concrete with a closed source/sync
+matrix. `hybrid+never` emits local cache before invoking the local executor.
+`hybrid+private/shared` emits the same eligible local-cache phase before a
+managed search; `remote` goes directly to managed search. Managed clients
+validate and resume the ordered SSE protocol, retain actual cloud/assertion/
+probe origins, and turn cancellation into the existing idempotent API delete.
+CLI machine output preserves the cache phase and ordered managed events; the
+desktop streams the same phases through typed IPC. See
+[Remote and remote-assisted clients](remote-clients.md).
 
 ## Observation and assertion model
 

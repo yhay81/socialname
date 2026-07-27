@@ -1391,7 +1391,7 @@ Status: **In progress**
 - [x] Publish stable versioned REST/JSON and SSE contracts.
 - [x] Add batch search, polling, webhooks, idempotency, quotas, usage records,
       and service-level reporting.
-- [ ] Implement `remote` and remote-assisted source combinations in CLI and
+- [x] Implement `remote` and remote-assisted source combinations in CLI and
       desktop with visible, independent sync policies.
 - [ ] Add private cloud history, exports, API examples, and integration SDK
       generation only where it reduces real adoption friction.
@@ -1549,6 +1549,56 @@ Quality run
 passed Rust core including API contract drift and PostgreSQL 18 webhook tests,
 Windows/macOS desktop, monitoring console, and managed-worker OCI for commit
 `6fca1f3`.
+
+Remote and remote-assisted client software evidence:
+
+```console
+cargo fmt --all -- --check
+# passed
+cargo test --locked --workspace --all-targets
+# passed; app-core includes 21 policy/transport/mapping tests and CLI includes
+# 6 source/output tests (the unchanged PostgreSQL test is environment-gated)
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified committed API v1 contracts without drift
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# passed; npm reported 0 vulnerabilities
+```
+
+The shared app-core policy now closes all source/sync relations without
+choosing sync implicitly: `local`/`cache` require `never`, `remote` requires
+`private` or `shared`, and `hybrid` retains the user's explicit choice.
+`hybrid+never` remains local cache then local probe;
+`hybrid+private/shared` emits the eligible local cache before one managed
+search. Actual `local_cache`, `local_probe`, `private_cloud`,
+`shared_assertion`, and `managed_probe` origins survive CLI JSON and desktop
+IPC. Uncertainty and operational failure remain distinct from absence.
+
+The managed client permits HTTPS plus loopback development HTTP, refuses
+redirects and URL credentials, redacts API keys, bounds body/stream/time/retry
+work, reuses one idempotency key after an ambiguous create, validates exact SSE
+sequence and identity across `Last-Event-ID` reconnection, and requires a
+validated terminal resource to confirm cancellation. Loopback integration
+tests prove authenticated creation, typed terminal SSE, and cancellation
+without external credentials.
+
+CLI keys come from a named environment variable rather than argv. Desktop
+source and sync controls remain visibly independent; API origin, key, consent
+grant, and region stay in session memory, while `shared` adds an explicit
+acknowledgement. Browser verification covered the normal layout and the
+configured 920x640 minimum with no horizontal overflow or console warnings.
+Exact behavior and the external hosted/TLS/credential/multi-region evidence
+gates are documented in
+[`docs/remote-clients.md`](docs/remote-clients.md).
 
 Acceptance gate:
 
@@ -1769,3 +1819,9 @@ Choose these only when their trigger is measured:
   schema roots and proved the boundary under PostgreSQL 18. Selected remote
   and remote-assisted CLI/desktop source combinations next while keeping
   hosted delivery/availability evidence external.
+- **2026-07-27:** Connected CLI and desktop remote and cached-first
+  remote-assisted policies to the managed API with an explicit source/sync
+  matrix, purpose-specific consent inputs, memory-only/redacted credentials,
+  bounded resumable SSE, actual-source output, and confirmed cancellation.
+  Selected private cloud history, exports, and adoption-focused API examples
+  next while keeping hosted service evidence external.

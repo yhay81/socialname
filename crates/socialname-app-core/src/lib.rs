@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod local_observation;
+mod managed_search;
 mod source_policy;
 
 use std::{
@@ -17,14 +18,25 @@ use socialname_domain::{
     SiteId, TargetKey, Verdict,
 };
 use socialname_engine::{MatcherTrace, ProbeSummary, SearchEngine, SearchResult};
+use socialname_protocol::{
+    DefinitiveResult as ManagedDefinitiveResult, DefinitiveVerdict,
+    OperationalFailure as ManagedOperationalFailure, ResultSource as ProtocolResultSource,
+    RuleHealthStatus, SearchEventData as ManagedSearchEventData,
+    SearchTerminalState as ManagedSearchTerminalState, UncertainResult as ManagedUncertainResult,
+    UncertaintyReason,
+};
 use socialname_rule_compiler::{CompiledSiteRule, RuleCompiler, render_url_template};
 use socialname_rule_schema::AccountNamespace;
 use tokio_util::sync::CancellationToken;
 
 pub use local_observation::{LocalObservationProducer, local_observation_from_result};
+pub use managed_search::{
+    ManagedSearchAccess, ManagedSearchClientError, ManagedSearchOutcome, ManagedSearchRun,
+    run_managed_search,
+};
 pub use source_policy::{
     DEFAULT_MAXIMUM_AGE_MS, DEFAULT_REGION_CLASS, RefreshState, ResultSource, SearchPolicy,
-    SearchRuleHealth, SearchSource, SearchStatus, SyncPolicy,
+    SearchPolicyRelationError, SearchRuleHealth, SearchSource, SearchStatus, SyncPolicy,
 };
 
 const MAX_SELECTED_SITES: usize = 64;
@@ -72,6 +84,8 @@ pub struct SearchRequest {
     pub allow_discovery: bool,
     #[serde(default)]
     pub policy: SearchPolicy,
+    #[serde(default)]
+    pub managed_access: Option<ManagedSearchAccess>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -114,9 +128,14 @@ impl SearchCompletion {
                 Verdict::Inconclusive => self.inconclusive += 1,
                 Verdict::InvalidUsername => self.invalid_username += 1,
             }
-        } else {
+        } else if result.operational_failure.is_some()
+            || result.status == SearchStatus::OperationalFailure
+        {
+            self.unavailable += 1;
+        } else if result.source == ResultSource::Cache {
             match result.status {
                 SearchStatus::Complete => self.cache_hits += 1,
+                SearchStatus::OperationalFailure => self.unavailable += 1,
                 SearchStatus::CacheMiss => self.cache_misses += 1,
                 SearchStatus::CacheUnavailable => self.unavailable += 1,
                 SearchStatus::InvalidUsername => self.invalid_username += 1,
@@ -125,6 +144,15 @@ impl SearchCompletion {
                 | SearchStatus::RuleNotHealthy
                 | SearchStatus::RuleHealthStale => self.unavailable += 1,
             }
+        } else if let Some(observation) = result.observations.last() {
+            match observation.verdict {
+                Verdict::Found => self.found += 1,
+                Verdict::NotFound => self.not_found += 1,
+                Verdict::Inconclusive => self.inconclusive += 1,
+                Verdict::InvalidUsername => self.invalid_username += 1,
+            }
+        } else {
+            self.unavailable += 1;
         }
     }
 }
@@ -138,7 +166,7 @@ impl SearchCompletion {
 )]
 pub enum SearchEvent {
     Started { total: usize },
-    Result { result: SearchResultView },
+    Result { result: Box<SearchResultView> },
     Finished { summary: SearchCompletion },
 }
 
@@ -156,10 +184,79 @@ pub struct SearchResultView {
     pub profile_url: Option<String>,
     pub rule_hash: String,
     pub rule_promoted: bool,
-    pub rule_health: Option<RuleHealth>,
+    pub rule_health: Option<SearchResultRuleHealth>,
     pub rule_health_expires_at_unix_ms: Option<i64>,
     pub observations: Vec<SearchObservationView>,
     pub live_result: Option<LiveSearchResultView>,
+    pub operational_failure: Option<ManagedOperationalFailureView>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchResultRuleHealth {
+    Healthy,
+    Degraded,
+    Quarantined,
+    Recovering,
+    Unavailable,
+    Stale,
+}
+
+impl From<RuleHealth> for SearchResultRuleHealth {
+    fn from(value: RuleHealth) -> Self {
+        match value {
+            RuleHealth::Healthy => Self::Healthy,
+            RuleHealth::Degraded => Self::Degraded,
+            RuleHealth::Quarantined => Self::Quarantined,
+            RuleHealth::Recovering => Self::Recovering,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchInconclusiveReason {
+    Blocked,
+    RateLimited,
+    Timeout,
+    Dns,
+    Connect,
+    Tls,
+    RedirectRejected,
+    ResponseTooLarge,
+    Decode,
+    SiteChanged,
+    NoRuleMatched,
+    ConflictingEvidence,
+    ClassificationAmbiguous,
+}
+
+impl From<InconclusiveReason> for SearchInconclusiveReason {
+    fn from(value: InconclusiveReason) -> Self {
+        match value {
+            InconclusiveReason::Blocked => Self::Blocked,
+            InconclusiveReason::RateLimited => Self::RateLimited,
+            InconclusiveReason::Timeout => Self::Timeout,
+            InconclusiveReason::Dns => Self::Dns,
+            InconclusiveReason::Connect => Self::Connect,
+            InconclusiveReason::Tls => Self::Tls,
+            InconclusiveReason::RedirectRejected => Self::RedirectRejected,
+            InconclusiveReason::ResponseTooLarge => Self::ResponseTooLarge,
+            InconclusiveReason::Decode => Self::Decode,
+            InconclusiveReason::SiteChanged => Self::SiteChanged,
+            InconclusiveReason::NoRuleMatched => Self::NoRuleMatched,
+            InconclusiveReason::ConflictingEvidence => Self::ConflictingEvidence,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedOperationalFailureView {
+    pub kind: socialname_protocol::OperationalFailureKind,
+    pub occurred_at_unix_ms: i64,
+    pub retryable: bool,
+    pub region_class: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -168,7 +265,7 @@ pub struct SearchObservationView {
     pub observation_id: String,
     pub source: ResultSource,
     pub verdict: Verdict,
-    pub inconclusive_reason: Option<InconclusiveReason>,
+    pub inconclusive_reason: Option<SearchInconclusiveReason>,
     pub evidence_class: EvidenceClass,
     pub evidence_digest: String,
     pub observed_at_unix_ms: i64,
@@ -191,7 +288,7 @@ impl SearchObservationView {
             observation_id: observation.id.as_str().to_owned(),
             source,
             verdict: observation.verdict,
-            inconclusive_reason: observation.inconclusive_reason,
+            inconclusive_reason: observation.inconclusive_reason.map(Into::into),
             evidence_class: observation.evidence_class,
             evidence_digest: observation.evidence_digest,
             observed_at_unix_ms: observation.observed_at_unix_ms,
@@ -446,6 +543,19 @@ impl AppCore {
             total: selected.len(),
         });
 
+        if request.policy.uses_managed_service() {
+            return self
+                .run_managed_search_at(
+                    request,
+                    selected,
+                    cancellation,
+                    now_unix_ms,
+                    summary,
+                    on_event,
+                )
+                .await;
+        }
+
         let policy = request.policy;
         let mut pending = stream::iter(selected.into_iter().map(|rule| {
             let cancellation = cancellation.clone();
@@ -462,7 +572,11 @@ impl AppCore {
                         &policy,
                         now_unix_ms,
                         &cancellation,
-                        |result| on_event(SearchEvent::Result { result }),
+                        |result| {
+                            on_event(SearchEvent::Result {
+                                result: Box::new(result),
+                            });
+                        },
                     ) => result,
                 }
             }
@@ -472,7 +586,9 @@ impl AppCore {
         while let Some(result) = pending.next().await {
             if let Some(result) = result? {
                 summary.record(&result);
-                on_event(SearchEvent::Result { result });
+                on_event(SearchEvent::Result {
+                    result: Box::new(result),
+                });
             }
         }
         summary.cancelled = cancellation.is_cancelled();
@@ -480,6 +596,320 @@ impl AppCore {
             summary: summary.clone(),
         });
         Ok(summary)
+    }
+
+    async fn run_managed_search_at<F>(
+        &self,
+        mut request: SearchRequest,
+        selected: Vec<Arc<CompiledSiteRule>>,
+        cancellation: CancellationToken,
+        now_unix_ms: i64,
+        summary: SearchCompletion,
+        on_event: Arc<F>,
+    ) -> Result<SearchCompletion, AppCoreError>
+    where
+        F: Fn(SearchEvent) + Send + Sync,
+    {
+        let access = request
+            .managed_access
+            .take()
+            .ok_or(AppCoreError::MissingManagedAccess)?;
+        let mut cached_by_site = BTreeMap::new();
+        let mut cached_results = BTreeMap::new();
+        if request.policy.source == SearchSource::Hybrid {
+            for rule in &selected {
+                if cancellation.is_cancelled() {
+                    let mut summary = summary;
+                    summary.cancelled = true;
+                    on_event(SearchEvent::Finished {
+                        summary: summary.clone(),
+                    });
+                    return Ok(summary);
+                }
+                let mut cached = self
+                    .execute_cache_rule(rule, request.username.trim(), &request.policy, now_unix_ms)
+                    .await?;
+                cached.refresh_state = RefreshState::Pending;
+                cached_by_site.insert(rule.source.id.clone(), cached.observations.clone());
+                cached_results.insert(rule.source.id.clone(), cached.clone());
+                on_event(SearchEvent::Result {
+                    result: Box::new(cached),
+                });
+            }
+        }
+
+        let rules = selected
+            .iter()
+            .map(|rule| (rule.source.id.clone(), Arc::clone(rule)))
+            .collect::<BTreeMap<_, _>>();
+        let expected_username = request.username.trim().to_owned();
+        let policy = request.policy.clone();
+        let summary = Arc::new(std::sync::Mutex::new(summary));
+        let completed = Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+        let callback_error = Arc::new(std::sync::Mutex::new(None));
+        let callback_summary = Arc::clone(&summary);
+        let callback_completed = Arc::clone(&completed);
+        let callback_error_slot = Arc::clone(&callback_error);
+        let callback_on_event = Arc::clone(&on_event);
+        let callback_cached_by_site = cached_by_site.clone();
+
+        let outcome = run_managed_search(
+            ManagedSearchRun {
+                username: expected_username.clone(),
+                site_ids: selected.iter().map(|rule| rule.source.id.clone()).collect(),
+                source: policy.source,
+                sync: policy.sync,
+                maximum_age_ms: policy.maximum_age_ms,
+                region_class: policy.region_class.clone(),
+                access,
+            },
+            cancellation,
+            move |managed_event| {
+                let converted = match managed_event.data {
+                    ManagedSearchEventData::DefinitiveResult { result } => {
+                        Self::managed_definitive_result(
+                            &rules,
+                            &callback_cached_by_site,
+                            &expected_username,
+                            &policy,
+                            result,
+                        )
+                    }
+                    ManagedSearchEventData::UncertainResult { result } => {
+                        Self::managed_uncertain_result(
+                            &rules,
+                            &callback_cached_by_site,
+                            &expected_username,
+                            &policy,
+                            result,
+                        )
+                    }
+                    ManagedSearchEventData::OperationalFailure { failure } => {
+                        Self::managed_operational_failure(
+                            &rules,
+                            &callback_cached_by_site,
+                            &expected_username,
+                            &policy,
+                            failure,
+                        )
+                    }
+                    ManagedSearchEventData::Started { .. }
+                    | ManagedSearchEventData::AssertionUpdated { .. }
+                    | ManagedSearchEventData::Finished { .. } => return,
+                };
+                let result = match converted {
+                    Ok(result) => result,
+                    Err(error) => {
+                        if let Ok(mut slot) = callback_error_slot.lock() {
+                            *slot = Some(error);
+                        }
+                        return;
+                    }
+                };
+                let unique = callback_completed
+                    .lock()
+                    .map(|mut completed| completed.insert(result.site_id.clone()))
+                    .unwrap_or(false);
+                if !unique {
+                    if let Ok(mut slot) = callback_error_slot.lock() {
+                        *slot = Some(AppCoreError::DuplicateManagedTarget);
+                    }
+                    return;
+                }
+                if let Ok(mut summary) = callback_summary.lock() {
+                    summary.record(&result);
+                }
+                callback_on_event(SearchEvent::Result {
+                    result: Box::new(result),
+                });
+            },
+        )
+        .await;
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                for mut cached in cached_results.into_values() {
+                    cached.refresh_state = RefreshState::Failed;
+                    on_event(SearchEvent::Result {
+                        result: Box::new(cached),
+                    });
+                }
+                return Err(error.into());
+            }
+        };
+
+        if let Some(error) = callback_error
+            .lock()
+            .map_err(|_| AppCoreError::ManagedTarget)?
+            .take()
+        {
+            return Err(error);
+        }
+        let completed_count = completed
+            .lock()
+            .map_err(|_| AppCoreError::ManagedTarget)?
+            .len();
+        if completed_count
+            != usize::try_from(outcome.progress.completed_targets)
+                .map_err(|_| AppCoreError::ManagedTarget)?
+        {
+            return Err(AppCoreError::ManagedTarget);
+        }
+        let mut summary = Arc::try_unwrap(summary)
+            .map_err(|_| AppCoreError::ManagedTarget)?
+            .into_inner()
+            .map_err(|_| AppCoreError::ManagedTarget)?;
+        summary.cancelled = outcome.terminal_state == ManagedSearchTerminalState::Cancelled;
+        if outcome.terminal_state == ManagedSearchTerminalState::Failed {
+            summary.unavailable = summary
+                .unavailable
+                .saturating_add(summary.total.saturating_sub(summary.completed));
+        }
+        on_event(SearchEvent::Finished {
+            summary: summary.clone(),
+        });
+        Ok(summary)
+    }
+
+    fn managed_definitive_result(
+        rules: &BTreeMap<String, Arc<CompiledSiteRule>>,
+        cached_by_site: &BTreeMap<String, Vec<SearchObservationView>>,
+        expected_username: &str,
+        policy: &SearchPolicy,
+        result: ManagedDefinitiveResult,
+    ) -> Result<SearchResultView, AppCoreError> {
+        let rule = managed_rule(rules, expected_username, &result.target)?;
+        let source = managed_result_source(result.source);
+        let mut observations = cached_by_site
+            .get(result.target.site_id.as_str())
+            .cloned()
+            .unwrap_or_default();
+        observations.push(SearchObservationView {
+            observation_id: result.observation_id.as_str().to_owned(),
+            source,
+            verdict: match result.verdict {
+                DefinitiveVerdict::Found => Verdict::Found,
+                DefinitiveVerdict::NotFound => Verdict::NotFound,
+            },
+            inconclusive_reason: None,
+            evidence_class: managed_evidence_class(result.evidence_class),
+            evidence_digest: result.evidence_digest.as_str().to_owned(),
+            observed_at_unix_ms: result.freshness.observed_at_unix_ms,
+            expires_at_unix_ms: result.freshness.expires_at_unix_ms,
+            region_class: result.region_class.as_str().to_owned(),
+            rule_hash: result.rule_hash.as_str().to_owned(),
+            rule_health_green: result.rule_health == RuleHealthStatus::Healthy,
+            cached_at_unix_ms: None,
+            last_accessed_at_unix_ms: None,
+            access_count: None,
+        });
+        Ok(SearchResultView {
+            site_id: rule.source.id.clone(),
+            site_name: rule.source.name.clone(),
+            username: result.target.username.as_str().to_owned(),
+            source,
+            requested_source: policy.source,
+            sync: policy.sync,
+            status: SearchStatus::Complete,
+            refresh_state: managed_refresh_state(policy),
+            profile_url: result.profile_url.map(|url| url.as_str().to_owned()),
+            rule_hash: result.rule_hash.as_str().to_owned(),
+            rule_promoted: true,
+            rule_health: Some(managed_rule_health(result.rule_health)),
+            rule_health_expires_at_unix_ms: None,
+            observations,
+            live_result: None,
+            operational_failure: None,
+        })
+    }
+
+    fn managed_uncertain_result(
+        rules: &BTreeMap<String, Arc<CompiledSiteRule>>,
+        cached_by_site: &BTreeMap<String, Vec<SearchObservationView>>,
+        expected_username: &str,
+        policy: &SearchPolicy,
+        result: ManagedUncertainResult,
+    ) -> Result<SearchResultView, AppCoreError> {
+        let rule = managed_rule(rules, expected_username, &result.target)?;
+        let source = managed_result_source(result.source);
+        let mut observations = cached_by_site
+            .get(result.target.site_id.as_str())
+            .cloned()
+            .unwrap_or_default();
+        observations.push(SearchObservationView {
+            observation_id: result.observation_id.as_str().to_owned(),
+            source,
+            verdict: Verdict::Inconclusive,
+            inconclusive_reason: Some(managed_uncertainty_reason(result.reason)),
+            evidence_class: managed_evidence_class(result.evidence_class),
+            evidence_digest: result.evidence_digest.as_str().to_owned(),
+            observed_at_unix_ms: result.freshness.observed_at_unix_ms,
+            expires_at_unix_ms: result.freshness.expires_at_unix_ms,
+            region_class: result.region_class.as_str().to_owned(),
+            rule_hash: result.rule_hash.as_str().to_owned(),
+            rule_health_green: result.rule_health == RuleHealthStatus::Healthy,
+            cached_at_unix_ms: None,
+            last_accessed_at_unix_ms: None,
+            access_count: None,
+        });
+        Ok(SearchResultView {
+            site_id: rule.source.id.clone(),
+            site_name: rule.source.name.clone(),
+            username: result.target.username.as_str().to_owned(),
+            source,
+            requested_source: policy.source,
+            sync: policy.sync,
+            status: SearchStatus::Complete,
+            refresh_state: managed_refresh_state(policy),
+            profile_url: None,
+            rule_hash: result.rule_hash.as_str().to_owned(),
+            rule_promoted: true,
+            rule_health: Some(managed_rule_health(result.rule_health)),
+            rule_health_expires_at_unix_ms: None,
+            observations,
+            live_result: None,
+            operational_failure: None,
+        })
+    }
+
+    fn managed_operational_failure(
+        rules: &BTreeMap<String, Arc<CompiledSiteRule>>,
+        cached_by_site: &BTreeMap<String, Vec<SearchObservationView>>,
+        expected_username: &str,
+        policy: &SearchPolicy,
+        failure: ManagedOperationalFailure,
+    ) -> Result<SearchResultView, AppCoreError> {
+        let rule = managed_rule(rules, expected_username, &failure.target)?;
+        Ok(SearchResultView {
+            site_id: rule.source.id.clone(),
+            site_name: rule.source.name.clone(),
+            username: failure.target.username.as_str().to_owned(),
+            source: managed_result_source(failure.source),
+            requested_source: policy.source,
+            sync: policy.sync,
+            status: SearchStatus::OperationalFailure,
+            refresh_state: managed_refresh_state(policy),
+            profile_url: None,
+            rule_hash: failure
+                .rule_hash
+                .map_or_else(|| rule.rule_hash.clone(), |hash| hash.as_str().to_owned()),
+            rule_promoted: true,
+            rule_health: None,
+            rule_health_expires_at_unix_ms: None,
+            observations: cached_by_site
+                .get(failure.target.site_id.as_str())
+                .cloned()
+                .unwrap_or_default(),
+            live_result: None,
+            operational_failure: Some(ManagedOperationalFailureView {
+                kind: failure.kind,
+                occurred_at_unix_ms: failure.occurred_at_unix_ms,
+                retryable: failure.retryable,
+                region_class: failure
+                    .region_class
+                    .map(|region| region.as_str().to_owned()),
+            }),
+        })
     }
 
     async fn execute_rule<F>(
@@ -503,6 +933,9 @@ impl AppCore {
                 .execute_cache_rule(rule, username, policy, now_unix_ms)
                 .await
                 .map(Some),
+            SearchSource::Remote => Err(AppCoreError::InvalidPolicy(
+                "remote execution requires managed access".to_owned(),
+            )),
             SearchSource::Hybrid => {
                 let mut cached = self
                     .execute_cache_rule(rule, username, policy, now_unix_ms)
@@ -720,11 +1153,12 @@ impl AppCore {
             profile_url: None,
             rule_hash: rule.rule_hash.clone(),
             rule_promoted: rule.source.metadata.enabled,
-            rule_health: health.map(|health| health.state),
+            rule_health: health.map(|health| health.state.into()),
             rule_health_expires_at_unix_ms: health
                 .and_then(|health| health.evidence_expires_at_unix_ms),
             observations: Vec::new(),
             live_result: None,
+            operational_failure: None,
         }
     }
 
@@ -772,6 +1206,16 @@ impl AppCore {
         if request.policy.maximum_age_ms <= 0 {
             return Err(AppCoreError::InvalidMaximumAge);
         }
+        request
+            .policy
+            .validate_relation()
+            .map_err(|error| AppCoreError::InvalidPolicy(error.to_string()))?;
+        if request.policy.uses_managed_service() && request.managed_access.is_none() {
+            return Err(AppCoreError::MissingManagedAccess);
+        }
+        if !request.policy.uses_managed_service() && request.managed_access.is_some() {
+            return Err(AppCoreError::UnexpectedManagedAccess);
+        }
 
         let mut seen = BTreeSet::new();
         let mut selected = Vec::new();
@@ -784,17 +1228,92 @@ impl AppCore {
                 .iter()
                 .find(|rule| rule.source.id == *site_id)
                 .ok_or_else(|| AppCoreError::UnknownSite(site_id.clone()))?;
-            if matches!(
-                request.policy.source,
-                SearchSource::Local | SearchSource::Hybrid
-            ) && !rule.source.metadata.enabled
-                && !request.allow_discovery
-            {
+            let performs_local_probe = request.policy.source == SearchSource::Local
+                || request.policy.source == SearchSource::Hybrid
+                    && request.policy.sync == SyncPolicy::Never;
+            if performs_local_probe && !rule.source.metadata.enabled && !request.allow_discovery {
                 return Err(AppCoreError::DiscoveryRule(site_id.clone()));
             }
             selected.push(Arc::clone(rule));
         }
         Ok(selected)
+    }
+}
+
+fn managed_rule<'a>(
+    rules: &'a BTreeMap<String, Arc<CompiledSiteRule>>,
+    expected_username: &str,
+    target: &socialname_protocol::Target,
+) -> Result<&'a CompiledSiteRule, AppCoreError> {
+    let rule = rules
+        .get(target.site_id.as_str())
+        .map(AsRef::as_ref)
+        .ok_or(AppCoreError::ManagedTarget)?;
+    let username_matches = target.username.as_str() == expected_username
+        || rule
+            .normalize_username(expected_username)
+            .as_deref()
+            .is_some_and(|normalized| normalized == target.username.as_str());
+    if username_matches {
+        Ok(rule)
+    } else {
+        Err(AppCoreError::ManagedTarget)
+    }
+}
+
+const fn managed_result_source(source: ProtocolResultSource) -> ResultSource {
+    match source {
+        ProtocolResultSource::LocalCache => ResultSource::Cache,
+        ProtocolResultSource::LocalProbe => ResultSource::Local,
+        ProtocolResultSource::PrivateCloud => ResultSource::PrivateCloud,
+        ProtocolResultSource::SharedAssertion => ResultSource::SharedAssertion,
+        ProtocolResultSource::ManagedProbe => ResultSource::ManagedProbe,
+    }
+}
+
+const fn managed_rule_health(health: RuleHealthStatus) -> SearchResultRuleHealth {
+    match health {
+        RuleHealthStatus::Healthy => SearchResultRuleHealth::Healthy,
+        RuleHealthStatus::Degraded => SearchResultRuleHealth::Degraded,
+        RuleHealthStatus::Quarantined => SearchResultRuleHealth::Quarantined,
+        RuleHealthStatus::Recovering => SearchResultRuleHealth::Recovering,
+        RuleHealthStatus::Unavailable => SearchResultRuleHealth::Unavailable,
+        RuleHealthStatus::Stale => SearchResultRuleHealth::Stale,
+    }
+}
+
+const fn managed_evidence_class(evidence: socialname_protocol::EvidenceClass) -> EvidenceClass {
+    match evidence {
+        socialname_protocol::EvidenceClass::E0NoAccountEvidence => {
+            EvidenceClass::E0NoAccountEvidence
+        }
+        socialname_protocol::EvidenceClass::E1WeakSignal => EvidenceClass::E1WeakSignal,
+        socialname_protocol::EvidenceClass::E2DifferentialTemplate => {
+            EvidenceClass::E2DifferentialTemplate
+        }
+        socialname_protocol::EvidenceClass::E3ExplicitEndpoint => EvidenceClass::E3ExplicitEndpoint,
+        socialname_protocol::EvidenceClass::E4StructuredIdentity => {
+            EvidenceClass::E4StructuredIdentity
+        }
+    }
+}
+
+const fn managed_uncertainty_reason(reason: UncertaintyReason) -> SearchInconclusiveReason {
+    match reason {
+        UncertaintyReason::SiteChanged => SearchInconclusiveReason::SiteChanged,
+        UncertaintyReason::NoRuleMatched => SearchInconclusiveReason::NoRuleMatched,
+        UncertaintyReason::ConflictingEvidence => SearchInconclusiveReason::ConflictingEvidence,
+        UncertaintyReason::ClassificationAmbiguous => {
+            SearchInconclusiveReason::ClassificationAmbiguous
+        }
+    }
+}
+
+const fn managed_refresh_state(policy: &SearchPolicy) -> RefreshState {
+    if matches!(policy.source, SearchSource::Hybrid) {
+        RefreshState::Completed
+    } else {
+        RefreshState::NotRequested
     }
 }
 
@@ -820,6 +1339,18 @@ pub enum AppCoreError {
     InvalidRegionClass { maximum: usize },
     #[error("maximum cache age must be greater than zero")]
     InvalidMaximumAge,
+    #[error("invalid source/sync policy: {0}")]
+    InvalidPolicy(String),
+    #[error("managed API access is required for this source/sync policy")]
+    MissingManagedAccess,
+    #[error("managed API access must not be supplied for a device-only policy")]
+    UnexpectedManagedAccess,
+    #[error("managed search failed: {0}")]
+    ManagedSearch(#[from] ManagedSearchClientError),
+    #[error("managed search returned an event outside the requested target set")]
+    ManagedTarget,
+    #[error("managed search returned more than one terminal result for a target")]
+    DuplicateManagedTarget,
     #[error("local cache is unavailable")]
     CacheUnavailable,
     #[error("local cache operation failed: {0}")]
@@ -992,6 +1523,7 @@ mod tests {
             site_ids: vec!["github".to_owned()],
             allow_discovery: false,
             policy: SearchPolicy::default(),
+            managed_access: None,
         };
         assert!(matches!(
             core.select_rules(&request),
@@ -1007,6 +1539,7 @@ mod tests {
             site_ids: vec!["github".to_owned(), "github".to_owned()],
             allow_discovery: true,
             policy: SearchPolicy::default(),
+            managed_access: None,
         };
         assert_eq!(core.select_rules(&request).unwrap().len(), 1);
     }
@@ -1042,6 +1575,72 @@ mod tests {
         assert_eq!(finished["data"]["summary"]["invalidUsername"], 0);
     }
 
+    #[test]
+    fn managed_result_mapping_preserves_origin_health_and_policy() {
+        let core = AppCore::from_embedded_rules().unwrap();
+        let rule = core
+            .rules
+            .iter()
+            .find(|rule| rule.source.id == "github")
+            .unwrap()
+            .clone();
+        let rules = BTreeMap::from([("github".to_owned(), rule)]);
+        let result = ManagedDefinitiveResult {
+            observation_id: socialname_protocol::ObservationId::new("observation_1").unwrap(),
+            target: socialname_protocol::Target {
+                username: socialname_protocol::Username::new("octocat").unwrap(),
+                site_id: socialname_protocol::SiteId::new("github").unwrap(),
+            },
+            verdict: DefinitiveVerdict::Found,
+            source: ProtocolResultSource::ManagedProbe,
+            freshness: socialname_protocol::Freshness::new(1_000, 10_000, 2_000, 86_400_000)
+                .unwrap(),
+            evidence_class: socialname_protocol::EvidenceClass::E4StructuredIdentity,
+            evidence_digest: socialname_protocol::EvidenceDigest::new("a".repeat(64)).unwrap(),
+            region_class: socialname_protocol::RegionClass::new("jp").unwrap(),
+            rule_hash: socialname_protocol::RuleHash::new("b".repeat(64)).unwrap(),
+            rule_health: RuleHealthStatus::Healthy,
+            profile_url: Some(
+                socialname_protocol::HttpsUrl::new("https://github.com/octocat").unwrap(),
+            ),
+        };
+        let policy = SearchPolicy {
+            source: SearchSource::Remote,
+            sync: SyncPolicy::Private,
+            region_class: "jp".to_owned(),
+            maximum_age_ms: 86_400_000,
+        };
+        let mapped = AppCore::managed_definitive_result(
+            &rules,
+            &BTreeMap::new(),
+            "octocat",
+            &policy,
+            result,
+        )
+        .unwrap();
+
+        assert_eq!(mapped.source, ResultSource::ManagedProbe);
+        assert_eq!(mapped.requested_source, SearchSource::Remote);
+        assert_eq!(mapped.sync, SyncPolicy::Private);
+        assert_eq!(mapped.rule_health, Some(SearchResultRuleHealth::Healthy));
+        assert_eq!(mapped.observations.len(), 1);
+        assert_eq!(mapped.observations[0].source, ResultSource::ManagedProbe);
+        assert!(mapped.operational_failure.is_none());
+
+        let mut failed_with_prior_evidence = mapped;
+        failed_with_prior_evidence.status = SearchStatus::OperationalFailure;
+        failed_with_prior_evidence.operational_failure = Some(ManagedOperationalFailureView {
+            kind: socialname_protocol::OperationalFailureKind::CapacityUnavailable,
+            occurred_at_unix_ms: 2_100,
+            retryable: true,
+            region_class: Some("jp".to_owned()),
+        });
+        let mut summary = SearchCompletion::new(1);
+        summary.record(&failed_with_prior_evidence);
+        assert_eq!(summary.unavailable, 1);
+        assert_eq!(summary.found, 0);
+    }
+
     #[tokio::test]
     async fn cache_source_reports_discovery_rules_without_probing() {
         let core = AppCore::from_embedded_rules().unwrap();
@@ -1056,6 +1655,7 @@ mod tests {
                         source: SearchSource::Cache,
                         ..SearchPolicy::default()
                     },
+                    managed_access: None,
                 },
                 CancellationToken::new(),
                 1_500,
@@ -1092,6 +1692,7 @@ mod tests {
                         source: SearchSource::Cache,
                         ..SearchPolicy::default()
                     },
+                    managed_access: None,
                 },
                 CancellationToken::new(),
                 1_500,
@@ -1130,6 +1731,7 @@ mod tests {
                         source: SearchSource::Hybrid,
                         ..SearchPolicy::default()
                     },
+                    managed_access: None,
                 },
                 CancellationToken::new(),
                 1_500,
@@ -1197,6 +1799,7 @@ mod tests {
                         source: SearchSource::Hybrid,
                         ..SearchPolicy::default()
                     },
+                    managed_access: None,
                 },
                 cancellation,
                 1_500,
@@ -1227,5 +1830,52 @@ mod tests {
                     && result.refresh_state == RefreshState::Pending
         ));
         assert!(matches!(&events[2], SearchEvent::Finished { .. }));
+    }
+
+    #[tokio::test]
+    async fn managed_failure_marks_the_emitted_cache_phase_failed() {
+        let core = cache_ready_core().await;
+        let events = std::sync::Mutex::new(Vec::new());
+        let result = core
+            .run_search_at(
+                SearchRequest {
+                    username: "octocat".to_owned(),
+                    site_ids: vec!["github".to_owned()],
+                    allow_discovery: false,
+                    policy: SearchPolicy {
+                        source: SearchSource::Hybrid,
+                        sync: SyncPolicy::Private,
+                        ..SearchPolicy::default()
+                    },
+                    managed_access: Some(ManagedSearchAccess {
+                        api_url: "http://api.example.test".to_owned(),
+                        api_key: "test-key".to_owned(),
+                        consent_grant_id: "grant_1".to_owned(),
+                    }),
+                },
+                CancellationToken::new(),
+                1_500,
+                |event| events.lock().unwrap().push(event),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AppCoreError::ManagedSearch(
+                ManagedSearchClientError::InvalidApiUrl
+            ))
+        ));
+        let events = events.into_inner().unwrap();
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            &events[1],
+            SearchEvent::Result { result }
+                if result.refresh_state == RefreshState::Pending
+        ));
+        assert!(matches!(
+            &events[2],
+            SearchEvent::Result { result }
+                if result.refresh_state == RefreshState::Failed
+        ));
     }
 }

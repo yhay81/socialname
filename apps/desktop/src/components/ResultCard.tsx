@@ -28,6 +28,7 @@ const verdictDetails: Record<
 
 const statusLabels: Record<SearchStatus, string> = {
   complete: "Complete",
+  operational_failure: "Managed operation failed",
   cache_miss: "No eligible cached observation",
   cache_unavailable: "Cache unavailable",
   invalid_username: "Invalid username",
@@ -36,6 +37,14 @@ const statusLabels: Record<SearchStatus, string> = {
   rule_not_healthy: "Rule not healthy",
   rule_health_stale: "Rule health evidence expired",
 };
+
+const sourceLabels = {
+  local_probe: "Local probe",
+  local_cache: "Local cache",
+  private_cloud: "Private cloud",
+  shared_assertion: "Shared assertion",
+  managed_probe: "Managed probe",
+} as const;
 
 const evidenceLabels: Record<EvidenceClass, string> = {
   e0_no_account_evidence: "E0 · No account evidence",
@@ -84,7 +93,13 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
               ? representative.inconclusiveReason.replaceAll("_", " ")
               : verdictDetails[representative.verdict].label,
         }
-      : {
+      : result.operationalFailure
+        ? {
+            label: result.operationalFailure.kind.replaceAll("_", " "),
+            icon: "warning" as const,
+            tone: "warning",
+          }
+        : {
           label: statusLabels[result.status],
           icon:
             result.status === "cache_miss"
@@ -105,13 +120,16 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
           <div className="result-card__title-row">
             <h3>{result.siteName}</h3>
             <span className={`tag tag--${result.source}`}>
-              {result.source === "local"
-                ? result.requestedSource === "hybrid"
-                  ? "Local refresh"
-                  : "Local probe"
-                : result.refreshState === "pending"
-                  ? "Cached · refreshing"
-                  : "Cached"}
+              {result.source === "local_probe" &&
+              result.requestedSource === "hybrid"
+                ? "Local refresh"
+                : result.source === "local_cache" &&
+                    result.refreshState === "pending"
+                  ? "Local cache · refreshing"
+                  : result.source === "local_cache" &&
+                      result.refreshState === "failed"
+                    ? "Local cache · refresh failed"
+                  : sourceLabels[result.source]}
             </span>
             {researchRule && (
               <span className="tag tag--research">Research rule</span>
@@ -134,9 +152,13 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
                 ? `${result.observations.length} observation${result.observations.length === 1 ? "" : "s"} · ${
                     result.refreshState === "pending"
                       ? "refresh pending"
+                      : result.refreshState === "failed"
+                        ? "refresh failed"
                       : "offline"
                   }`
-                : statusLabels[result.status]}
+                : result.operationalFailure
+                  ? `${result.operationalFailure.retryable ? "Retryable" : "Terminal"} · managed service`
+                  : statusLabels[result.status]}
           </span>
         </div>
 
@@ -157,8 +179,10 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
             <div>
               <dt>Source</dt>
               <dd>
-                {result.source === "local" ? "Local probe" : "Local cache"}
-                {result.requestedSource === "hybrid" ? " · cached-first" : ""}
+                {sourceLabels[result.source]}
+                {result.requestedSource === "hybrid"
+                  ? " · hybrid sequence"
+                  : ""}
               </dd>
             </div>
             <div>
@@ -184,6 +208,24 @@ export function ResultCard({ researchRule, result }: ResultCardProps) {
                 <div>
                   <dt>Transport</dt>
                   <dd>{primaryProbe?.transport ?? "—"}</dd>
+                </div>
+              </>
+            )}
+            {result.operationalFailure && (
+              <>
+                <div>
+                  <dt>Operational failure</dt>
+                  <dd>
+                    {result.operationalFailure.kind.replaceAll("_", " ")}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Retry</dt>
+                  <dd>
+                    {result.operationalFailure.retryable
+                      ? "Retryable"
+                      : "Not retryable"}
+                  </dd>
                 </div>
               </>
             )}

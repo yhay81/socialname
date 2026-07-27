@@ -111,14 +111,15 @@ so status does not diverge across design records.
   corrupt current data and sidecars move to an adjacent quarantine before a
   new empty cache is created. Complete deletion consumes the cache and removes
   its journal, SHM, WAL, and main file without claiming secure media erasure.
-- CLI source and synchronization are orthogonal. `local` and strictly offline
-  `cache` sources currently accept only `sync=never`; unsupported sync values
-  fail parsing. Cache lookup never constructs the network engine or falls back
-  to a probe, and requires both a promoted rule and fresh exact regional health
-  evidence. Human and JSON envelopes identify source, freshness, health, rule,
-  and refresh state.
-- `socialname-app-core` is the shared local/cache policy boundary for CLI and
-  desktop. Its result envelope keeps the complete cached observation set
+- CLI and desktop source and synchronization are orthogonal. `local` and
+  strictly offline `cache` accept only `sync=never`; `remote` requires
+  `private` or `shared`; `hybrid` retains the explicit sync choice. Cache lookup
+  never constructs a network client or falls through to a probe, and requires
+  both a promoted rule and fresh exact regional health evidence. Human, JSON,
+  and desktop envelopes identify requested source, actual result source,
+  freshness, health, rule, sync, and refresh state.
+- `socialname-app-core` is the shared local/cache/managed policy boundary for
+  CLI and desktop. Its result envelope keeps the complete cached observation set
   separate from an optional live result. The Tauri shell resolves the
   application-local database path and reports cache availability; the webview
   receives neither a path nor filesystem/database capabilities. Cache opening
@@ -126,11 +127,12 @@ so status does not diverge across design records.
 - Cache schema v2 distinguishes `local_cli` and `local_desktop` producer
   lineage. The v1-to-v2 migration rebuilds the constrained table while
   preserving immutable observations and access metadata.
-- Desktop cached-first execution uses requested source `hybrid` while preserving
-  the actual `cache` or `local` origin on each emitted result and observation.
-  The cache phase is emitted before the local executor starts; cancellation
-  after that phase retains cached evidence and prevents the local call. The CLI
-  rejects `hybrid` until it has a versioned ordered-event output contract.
+- Cached-first execution uses requested source `hybrid` while preserving the
+  actual `local_cache`, `local_probe`, private-cloud, shared-assertion, or
+  managed-probe origin on each emitted result and observation. `sync=never`
+  continues to a local executor; `private` or `shared` continues to the managed
+  API. The CLI terminal envelope embeds the cache phase before local refresh,
+  while managed CLI output retains ordered protocol events.
 - Public API v1 is an independent, closed wire contract in
   `socialname-protocol`, not direct serialization of mutable domain or app-core
   types. Ordered search events structurally separate definitive observations,
@@ -372,6 +374,11 @@ so status does not diverge across design records.
     OpenAPI 3.1.2, Draft 2020-12 JSON Schema, exact resumable SSE, and
     digest-manifest artifacts with committed-byte, route, and scope drift
     gates.
+28. **Done:** Connect CLI and desktop `remote` and cached-first
+    remote-assisted policies to managed search with a closed source/sync
+    relation, purpose-specific consent, memory-only/redacted credentials,
+    redirect refusal, bounded idempotent creation, strict resumable
+    SSE, actual-source result mapping, and confirmed API cancellation.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -383,6 +390,6 @@ notification acknowledgement, email delivery, and operational reporting are
 repository-complete, while actual multi-region deployment, retained production
 SLO history, and mail-provider evidence remain external gates. Milestone 4 has
 stable REST/JSON and SSE publication plus its bounded batch, polling,
-idempotency, quota, usage-report, and search-completion webhook boundary. The
-next ordered repository-completable work is remote and remote-assisted
-CLI/desktop source combinations with independent sync policy.
+idempotency, quota, usage-report, search-completion webhook, and consent-bound
+remote client boundaries. The next ordered repository-completable work is
+private cloud history, exports, and adoption-focused API examples.

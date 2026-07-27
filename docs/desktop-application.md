@@ -70,7 +70,7 @@ creation, ownership validation, migration, or integrity checking fails,
 `get_app_info` reports cache mode unavailable while independent local probing
 remains available. A cache lookup never falls through to the engine.
 
-## Implemented local product slice
+## Implemented client product slice
 
 The implemented desktop slice supports:
 
@@ -78,8 +78,10 @@ The implemented desktop slice supports:
 - selecting and filtering sites;
 - explicit opt-in before discovery-only rules can execute;
 - fully local probes with a maximum of eight concurrent sites;
-- an explicit choice among `local` probing, strictly offline `cache` lookup,
-  and cached-first `hybrid`, all with `sync=never`;
+- independent, visible `local`, `cache`, `remote`, and `hybrid` source controls
+  plus `never`, `private`, and `shared` sync controls with a closed relation;
+- device-only cached-first `hybrid+never` and remote-assisted cached-first
+  `hybrid+private/shared`;
 - immutable local observations with distinct `local_desktop` producer lineage;
 - cache eligibility bound to exact target, region, rule hash, promoted rule,
   fresh healthy rule evidence, expiry, and requested maximum age;
@@ -91,21 +93,25 @@ The implemented desktop slice supports:
 - cancellation while retaining completed results;
 - dark and light system themes;
 - reduced-motion and keyboard-focus behavior;
-- a visible source and `not synchronized` state.
+- visible requested source, actual result origin, and sync policy;
+- session-only managed API origin, key, consent grant, and region inputs, with
+  an additional acknowledgement for `shared`; and
+- bounded, redirect-free managed creation, resumable SSE, and confirmed remote
+  cancellation through app-core.
 
-It does not authenticate, synchronize observations, or call the central server.
 No production rule-health record or signed promoted pack is bundled, so all ten
 repository rules remain discovery-only and offline cache lookup reports
 `rule_not_promoted`. This preserves the external live-acceptance gate instead of
 turning stored discovery observations into trusted cached results.
 
-In `hybrid`, app-core emits the cache phase before invoking the local executor.
-The UI marks that phase as cached and refreshing, then replaces the site card
-with a separately labelled local refresh while retaining every cached
-observation and its origin. Requested mode and actual event origin are distinct.
-If the event channel closes after the cached phase, app-core checks cancellation
-before the local call so the cached evidence remains completed without starting
-a probe.
+In device-only `hybrid`, app-core emits the cache phase before invoking the
+local executor. With `private` or `shared`, it emits the cache phase before
+creating a managed search and replaces the card with the typed remote result
+while retaining eligible cached observations. Requested mode, sync, and actual
+event origin remain distinct. Closing the event channel cancels local work or
+requests idempotent remote cancellation. Credentials remain in application
+memory and are not persisted in the cache. See
+[Remote and remote-assisted clients](remote-clients.md).
 
 ## Platform policy
 
@@ -122,7 +128,7 @@ silently simulated by development builds.
 
 ## Next desktop slices
 
-1. Add authenticated private synchronization as a separate consented action.
+1. Add private history and exports against the authenticated API.
 2. Add watches, transition history, and notification configuration against the
    central API.
 3. Add narrowly validated profile opening and export commands rather than

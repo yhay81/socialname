@@ -4,8 +4,9 @@ The local cache is a user-controlled SQLite database for immutable SocialName
 observations and cache-management metadata. It is an optional local product
 component: opening or using it does not contact a SocialName service. It can
 persist and read domain observations and is integrated with the CLI and
-desktop application's explicit source policy. Desktop cached-first refresh
-streaming is implemented; synchronization beyond `never` is not.
+desktop application's explicit source policy. Cached-first local and
+remote-assisted streaming are implemented, but the cache itself never performs
+networking or synchronization.
 
 ## Ownership and opening policy
 
@@ -108,7 +109,8 @@ Misses and failed or oversized queries do not touch metadata.
 
 This API establishes safe cache eligibility only. The application core labels
 cached data as cached, preserves the complete observation set, and decides
-whether a requested desktop `hybrid` search should refresh locally.
+whether a requested `hybrid` search should continue to a local executor or the
+separately configured managed client. Cache access never implies either path.
 
 ## Maintenance and size limits
 

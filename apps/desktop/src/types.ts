@@ -16,7 +16,8 @@ export type InconclusiveReason =
   | "decode"
   | "site_changed"
   | "no_rule_matched"
-  | "conflicting_evidence";
+  | "conflicting_evidence"
+  | "classification_ambiguous";
 
 export type EvidenceClass =
   | "e0_no_account_evidence"
@@ -60,13 +61,26 @@ export interface SearchRequest {
   siteIds: string[];
   allowDiscovery: boolean;
   policy: SearchPolicy;
+  managedAccess: ManagedSearchAccess | null;
 }
 
-export type SearchSource = "local" | "cache" | "hybrid";
-export type ResultSource = "local" | "cache";
-export type SyncPolicy = "never";
+export interface ManagedSearchAccess {
+  apiUrl: string;
+  apiKey: string;
+  consentGrantId: string;
+}
+
+export type SearchSource = "local" | "cache" | "remote" | "hybrid";
+export type ResultSource =
+  | "local_probe"
+  | "local_cache"
+  | "private_cloud"
+  | "shared_assertion"
+  | "managed_probe";
+export type SyncPolicy = "never" | "private" | "shared";
 export type SearchStatus =
   | "complete"
+  | "operational_failure"
   | "cache_miss"
   | "cache_unavailable"
   | "invalid_username"
@@ -74,12 +88,14 @@ export type SearchStatus =
   | "rule_health_unavailable"
   | "rule_not_healthy"
   | "rule_health_stale";
-export type RefreshState = "completed" | "not_requested" | "pending";
+export type RefreshState = "completed" | "failed" | "not_requested" | "pending";
 export type RuleHealth =
   | "healthy"
   | "degraded"
   | "quarantined"
-  | "recovering";
+  | "recovering"
+  | "unavailable"
+  | "stale";
 
 export interface SearchPolicy {
   source: SearchSource;
@@ -121,6 +137,28 @@ export interface SearchResult {
   ruleHealthExpiresAtUnixMs: number | null;
   observations: SearchObservation[];
   liveResult: LiveSearchResult | null;
+  operationalFailure: ManagedOperationalFailure | null;
+}
+
+export type OperationalFailureKind =
+  | "invalid_target"
+  | "blocked"
+  | "rate_limited"
+  | "timeout"
+  | "dns"
+  | "connect"
+  | "tls"
+  | "redirect_rejected"
+  | "response_too_large"
+  | "decode"
+  | "rule_unavailable"
+  | "capacity_unavailable";
+
+export interface ManagedOperationalFailure {
+  kind: OperationalFailureKind;
+  occurredAtUnixMs: number;
+  retryable: boolean;
+  regionClass: string | null;
 }
 
 export interface SearchObservation {
@@ -186,8 +224,8 @@ export interface AppInfo {
   version: string;
   rulePackHash: string;
   availableSources: SearchSource[];
+  availableSyncPolicies: SyncPolicy[];
   defaultPolicy: SearchPolicy;
-  synchronization: SyncPolicy;
   cacheReady: boolean;
   cacheError: string | null;
 }

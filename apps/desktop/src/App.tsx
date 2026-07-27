@@ -14,6 +14,7 @@ import type {
   SearchResult,
   SearchSource,
   SiteSummary,
+  SyncPolicy,
   Verdict,
 } from "./types";
 
@@ -36,6 +37,12 @@ function App() {
   const [siteFilter, setSiteFilter] = useState("");
   const [allowDiscovery, setAllowDiscovery] = useState(false);
   const [source, setSource] = useState<SearchSource>("local");
+  const [sync, setSync] = useState<SyncPolicy>("never");
+  const [apiUrl, setApiUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [consentGrantId, setConsentGrantId] = useState("");
+  const [regionClass, setRegionClass] = useState("local");
+  const [sharedAcknowledged, setSharedAcknowledged] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [activeSearchId, setActiveSearchId] = useState<string>();
   const [totalSites, setTotalSites] = useState(0);
@@ -85,12 +92,29 @@ function App() {
   const discoverySitesSelected = sites.some(
     (site) => selectedSites.has(site.id) && !site.enabled,
   );
+  const usesManagedService =
+    source === "remote" || (source === "hybrid" && sync !== "never");
+  const performsLocalProbe =
+    source === "local" || (source === "hybrid" && sync === "never");
+  const policyValid =
+    ((source === "local" || source === "cache") && sync === "never") ||
+    (source === "remote" && sync !== "never") ||
+    source === "hybrid";
+  const managedAccessReady =
+    !usesManagedService ||
+    (apiUrl.trim().length > 0 &&
+      apiKey.length > 0 &&
+      consentGrantId.trim().length > 0 &&
+      regionClass.trim().length > 0 &&
+      (sync !== "shared" || sharedAcknowledged));
   const canSearch =
     !running &&
+    policyValid &&
+    managedAccessReady &&
     username.trim().length > 0 &&
     selectedSites.size > 0 &&
     (source !== "cache" || appInfo?.cacheReady === true) &&
-    (source === "cache" || !discoverySitesSelected || allowDiscovery);
+    (!performsLocalProbe || !discoverySitesSelected || allowDiscovery);
 
   function handleEvent(searchId: string, event: SearchEvent) {
     if (activeSearchRef.current !== searchId) {
@@ -138,10 +162,17 @@ function App() {
           allowDiscovery,
           policy: {
             source,
-            sync: "never",
-            regionClass: "local",
+            sync,
+            regionClass: regionClass.trim(),
             maximumAgeMs: 86_400_000,
           },
+          managedAccess: usesManagedService
+            ? {
+                apiUrl: apiUrl.trim(),
+                apiKey,
+                consentGrantId: consentGrantId.trim(),
+              }
+            : null,
         },
         (event) => handleEvent(searchId, event),
       );
@@ -210,11 +241,15 @@ function App() {
               ? "Local probe"
               : source === "cache"
                 ? "Offline cache"
-                : "Cached-first refresh"}
+                : source === "remote"
+                  ? "Managed remote"
+                  : sync === "never"
+                    ? "Cached-first local"
+                    : "Remote-assisted"}
           </span>
           <span className="status-pill status-pill--muted">
             <Icon name="shield" />
-            Not synchronized
+            Sync: {sync}
           </span>
         </div>
       </header>
@@ -302,14 +337,18 @@ function App() {
 
         <section className="content">
           <div className="search-hero">
-            <p className="eyebrow">Local username search</p>
+            <p className="eyebrow">Username observation search</p>
             <h1>Trace an identity across the open web.</h1>
             <p className="search-hero__description">
               {source === "local"
                 ? "Requests run from this device. Results remain local and are stored only in this installation's cache."
                 : source === "cache"
                   ? "Cache lookup is strictly offline. It never falls through to a network probe and only returns fresh, rule-matched observations."
-                  : "Eligible cached evidence appears first, then this device performs a separately labelled local refresh."}
+                  : source === "remote"
+                    ? "The target is sent to your configured SocialName service. Managed results retain their exact cloud, assertion, or probe source."
+                    : sync === "never"
+                      ? "Eligible cached evidence appears first, then this device performs a separately labelled local refresh."
+                      : "Eligible device cache appears first, then the target is sent to your configured SocialName service for a separately labelled managed result."}
             </p>
 
             <div
@@ -347,6 +386,18 @@ function App() {
                 </span>
               </button>
               <button
+                aria-pressed={source === "remote"}
+                disabled={running}
+                onClick={() => setSource("remote")}
+                type="button"
+              >
+                <Icon name="globe" />
+                <span>
+                  <strong>Managed remote</strong>
+                  <small>Target leaves this device</small>
+                </span>
+              </button>
+              <button
                 aria-pressed={source === "hybrid"}
                 disabled={running}
                 onClick={() => setSource("hybrid")}
@@ -354,11 +405,131 @@ function App() {
               >
                 <Icon name="clock" />
                 <span>
-                  <strong>Cached-first</strong>
-                  <small>Then refresh locally</small>
+                  <strong>Hybrid</strong>
+                  <small>Cache first, then selected assist</small>
                 </span>
               </button>
             </div>
+
+            <div
+              aria-label="Synchronization policy"
+              className="sync-policy"
+              role="group"
+            >
+              {(["never", "private", "shared"] as const).map((value) => (
+                <button
+                  aria-pressed={sync === value}
+                  disabled={running}
+                  key={value}
+                  onClick={() => {
+                    setSync(value);
+                    if (value !== "shared") {
+                      setSharedAcknowledged(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  <strong>{value}</strong>
+                  <small>
+                    {value === "never"
+                      ? "No SocialName sync"
+                      : value === "private"
+                        ? "Private history"
+                        : "Eligible shared evidence"}
+                  </small>
+                </button>
+              ))}
+            </div>
+
+            {!policyValid && (
+              <p className="policy-note" role="status">
+                {source === "remote"
+                  ? "Remote sends the target to SocialName, so choose private or shared sync."
+                  : "Local and cache sources do not upload; choose sync never or use hybrid."}
+              </p>
+            )}
+
+            {usesManagedService && (
+              <div className="managed-access">
+                <div>
+                  <label>
+                    <span>API URL</span>
+                    <input
+                      autoCapitalize="none"
+                      autoComplete="off"
+                      disabled={running}
+                      onChange={(event) => setApiUrl(event.target.value)}
+                      placeholder="https://api.example.com/"
+                      spellCheck={false}
+                      value={apiUrl}
+                    />
+                  </label>
+                  <label>
+                    <span>Region class</span>
+                    <input
+                      autoCapitalize="none"
+                      autoComplete="off"
+                      disabled={running}
+                      onChange={(event) => setRegionClass(event.target.value)}
+                      placeholder="jp"
+                      spellCheck={false}
+                      value={regionClass}
+                    />
+                  </label>
+                </div>
+                <div>
+                  <label>
+                    <span>API key · session only</span>
+                    <input
+                      autoComplete="off"
+                      disabled={running}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      type="password"
+                      value={apiKey}
+                    />
+                  </label>
+                  <label>
+                    <span>Consent grant ID</span>
+                    <input
+                      autoCapitalize="none"
+                      autoComplete="off"
+                      disabled={running}
+                      onChange={(event) =>
+                        setConsentGrantId(event.target.value)
+                      }
+                      spellCheck={false}
+                      value={consentGrantId}
+                    />
+                  </label>
+                </div>
+                <p>
+                  Credentials stay in this app session and are sent only to the
+                  configured API origin. The native client refuses redirects.
+                </p>
+              </div>
+            )}
+
+            {usesManagedService && sync === "shared" && (
+              <label className="research-consent">
+                <input
+                  checked={sharedAcknowledged}
+                  disabled={running}
+                  onChange={(event) =>
+                    setSharedAcknowledged(event.target.checked)
+                  }
+                  type="checkbox"
+                />
+                <span className="toggle" />
+                <span>
+                  <strong>Use the shared-observation consent grant</strong>
+                  <small>
+                    Shared sync may contribute eligible evidence under the
+                    selected purpose-specific grant. Matching usernames still
+                    do not prove common ownership.
+                  </small>
+                </span>
+              </label>
+            )}
 
             <form
               className="search-form"
@@ -402,7 +573,7 @@ function App() {
               )}
             </form>
 
-            {source !== "cache" && discoverySitesSelected && (
+            {performsLocalProbe && discoverySitesSelected && (
               <label className="research-consent">
                 <input
                   checked={allowDiscovery}
@@ -445,7 +616,11 @@ function App() {
                     ? "Local evidence"
                     : source === "cache"
                       ? "Cached evidence"
-                      : "Cached-first evidence"}
+                      : source === "remote"
+                        ? "Managed evidence"
+                        : sync === "never"
+                          ? "Cached-first local evidence"
+                          : "Remote-assisted evidence"}
                 </p>
                 <h2>
                   {running
