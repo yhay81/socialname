@@ -1544,6 +1544,12 @@ Production endpoint ownership, DNS/TLS operation, hosted availability,
 retained successful-delivery/SLA evidence, plans, and billing remain external
 or later gates and are not implied by this software completion.
 
+Quality run
+[`30235166753`](https://github.com/yhay81/socialname/actions/runs/30235166753)
+passed Rust core including API contract drift and PostgreSQL 18 webhook tests,
+Windows/macOS desktop, monitoring console, and managed-worker OCI for commit
+`6fca1f3`.
+
 Acceptance gate:
 
 - Local test behavior and managed API behavior use the same engine, rule pack,
