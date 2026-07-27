@@ -39,12 +39,12 @@ use socialname_protocol::{
     EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
     EvidenceTransportOutcome, EvidenceVantage, InstallationId,
     NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
-    NotificationEndpointId, OperationalFailure, OperationalFailureKind, ProbeBudget,
-    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent,
-    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState,
-    SearchTerminalState, SiteId, SyncPolicy, Target, TargetSelection, Username, Validate,
-    WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource, WatchSchedule, WatchState,
-    WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
+    NotificationEndpointId, OperationalFailure, OperationalFailureKind, OperationalReportResource,
+    ProbeBudget, ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest,
+    SearchEvent, SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource,
+    SearchState, SearchTerminalState, SiteId, SloStatus, SyncPolicy, Target, TargetSelection,
+    Username, Validate, WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource,
+    WatchSchedule, WatchState, WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
@@ -102,6 +102,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_evidence_capsule_retention_boundary(&pool).await;
     assert_notification_acknowledgement_boundary(&pool).await;
     assert_monitoring_console_boundary(&pool).await;
+    assert_operational_reporting_boundary(&pool).await;
     assert_lineage_backed_deletion_boundary(&pool).await;
 
     pool.close().await;
@@ -513,6 +514,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "consent:read",
                 "consent:write",
                 "evidence:read",
+                "operations:read",
                 "data:delete",
                 "notification:read",
                 "notification:write",
@@ -535,6 +537,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "consent:read",
                 "consent:write",
                 "evidence:read",
+                "operations:read",
                 "data:delete",
                 "notification:read",
                 "notification:write",
@@ -6289,6 +6292,203 @@ async fn assert_monitoring_console_boundary(administrator_pool: &PgPool) {
     assert_eq!(
         i64::try_from(timeline_page.entries.len()).unwrap(),
         direct_transition_count
+    );
+
+    application_pool.close().await;
+}
+
+async fn assert_operational_reporting_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let tenant_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let reader_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+    let wrong_scope_token = api_key_token("cccccccccccccccc", 0x33);
+    let watch_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM watches WHERE tenant_id = $1 ORDER BY created_at LIMIT 1",
+    )
+    .bind(tenant_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let (transition_id, confirmation_basis): (Uuid, String) = sqlx::query_as(
+        "SELECT id, confirmation_basis \
+         FROM transitions \
+         WHERE tenant_id = $1 AND confirmation_status = 'confirmed' \
+         ORDER BY detected_at LIMIT 1",
+    )
+    .bind(tenant_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO watch_runs (\
+            id, tenant_id, watch_id, watch_revision, scheduled_for, state, \
+            maximum_probes, maximum_bytes, reserved_probes, reserved_bytes, \
+            created_at, completed_at\
+         ) VALUES \
+         ($1, $3, $4, 1, statement_timestamp() - interval '12 minutes', \
+          'completed', 1, 1024, 0, 0, \
+          statement_timestamp() - interval '10 minutes', \
+          statement_timestamp() - interval '9 minutes'), \
+         ($2, $3, $4, 1, statement_timestamp() - interval '8 minutes', \
+          'failed', 1, 1024, 0, 0, \
+          statement_timestamp() - interval '7 minutes', \
+          statement_timestamp() - interval '6 minutes')",
+    )
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-0000000000e1").unwrap())
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-0000000000e2").unwrap())
+    .bind(tenant_id)
+    .bind(watch_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO notification_deliveries (\
+            id, tenant_id, transition_id, endpoint_id, \
+            logical_notification_key, confirmation_basis, state, \
+            attempt_count, created_at, delivered_at\
+         ) VALUES (\
+            $1, $2, $3, '00000000-0000-0000-0000-000000000072', \
+            $5, $4, 'delivered', 1, \
+            statement_timestamp() - interval '4 minutes', \
+            statement_timestamp() - interval '2 minutes'\
+         )",
+    )
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-0000000000d1").unwrap())
+    .bind(tenant_id)
+    .bind(transition_id)
+    .bind(&confirmation_basis)
+    .bind(Sha256::digest(b"operational-report-email").to_vec())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO notification_deliveries (\
+            id, tenant_id, transition_id, endpoint_id, \
+            logical_notification_key, confirmation_basis, state, \
+            attempt_count, created_at, last_error_code\
+         ) VALUES (\
+            $1, $2, $3, '00000000-0000-0000-0000-000000000071', \
+            $5, $4, 'permanently_failed', 1, \
+            statement_timestamp() - interval '3 minutes', 'http_permanent'\
+         )",
+    )
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-0000000000d2").unwrap())
+    .bind(tenant_id)
+    .bind(transition_id)
+    .bind(confirmation_basis)
+    .bind(Sha256::digest(b"operational-report-webhook").to_vec())
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    let wrong_scope = server_request(
+        &application_pool,
+        "/v1/operations/report",
+        Some(&wrong_scope_token),
+    )
+    .await;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+    assert_api_error(wrong_scope, ApiErrorCode::Forbidden).await;
+
+    let invalid_window = server_request(
+        &application_pool,
+        "/v1/operations/report?window=private-window",
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(invalid_window.status(), StatusCode::BAD_REQUEST);
+    let invalid_window_json = json_body(invalid_window).await;
+    assert_eq!(invalid_window_json["error"]["code"], "invalid_request");
+    assert!(
+        !serde_json::to_string(&invalid_window_json)
+            .unwrap()
+            .contains("private-window")
+    );
+
+    let unknown_query = server_request(
+        &application_pool,
+        "/v1/operations/report?window=24h&target=private-target",
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(unknown_query.status(), StatusCode::BAD_REQUEST);
+    let unknown_query_json = json_body(unknown_query).await;
+    assert_eq!(unknown_query_json["error"]["code"], "invalid_request");
+    assert!(
+        !serde_json::to_string(&unknown_query_json)
+            .unwrap()
+            .contains("private-target")
+    );
+
+    let response = server_request(
+        &application_pool,
+        "/v1/operations/report?window=24h",
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let report_json = json_body(response).await;
+    let report: OperationalReportResource = serde_json::from_value(report_json.clone()).unwrap();
+    assert!(report.validate().is_ok());
+    assert_eq!(
+        report.generated_at_unix_ms - report.window_started_at_unix_ms,
+        24 * 60 * 60 * 1_000
+    );
+    assert!(report.objectives.watch_run_success.total_events >= 2);
+    assert!(report.objectives.delivery_success.email.total_events >= 1);
+    assert!(report.objectives.delivery_success.webhook.total_events >= 1);
+    assert!(
+        report
+            .objectives
+            .transition_to_delivery_latency
+            .email
+            .samples
+            >= 1
+    );
+    assert_ne!(
+        report.objectives.delivery_success.webhook.status,
+        SloStatus::NoData
+    );
+    let serialized = serde_json::to_string(&report_json).unwrap();
+    for forbidden in [
+        "alice",
+        "private-alerts",
+        "hooks.example",
+        "tenant_id",
+        "workspace_id",
+        "delivery_id",
+        "deletion_request_id",
+    ] {
+        assert!(!serialized.contains(forbidden));
+    }
+
+    let other_response = server_request(
+        &application_pool,
+        "/v1/operations/report?window=24h",
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(other_response.status(), StatusCode::OK);
+    let other_report: OperationalReportResource =
+        serde_json::from_value(json_body(other_response).await).unwrap();
+    assert!(other_report.validate().is_ok());
+    assert_eq!(other_report.backlog.active_watches, 0);
+    assert_eq!(
+        other_report.objectives.watch_run_success.status,
+        SloStatus::NoData
+    );
+    assert_eq!(
+        other_report.objectives.delivery_success.email.status,
+        SloStatus::NoData
     );
 
     application_pool.close().await;

@@ -8,6 +8,7 @@ export type ApiKeyScope =
   | "watch:write"
   | "notification:read"
   | "notification:write"
+  | "operations:read"
   | "data:export"
   | "data:delete";
 
@@ -159,6 +160,74 @@ export interface NotificationAcknowledgementResource {
   schema: typeof API_SCHEMA;
   delivery_id: string;
   acknowledged_at_unix_ms: number;
+}
+
+export type OperationalReportWindow = "24h" | "7d" | "30d";
+export type SloStatus = "no_data" | "meeting" | "breached";
+
+export interface RatioSlo {
+  status: SloStatus;
+  good_events: number;
+  total_events: number;
+  target_basis_points: number;
+}
+
+export interface LatencySlo {
+  status: SloStatus;
+  samples: number;
+  p95_ms: number | null;
+  target_ms: number;
+}
+
+export interface DeletionDeadlineSlo {
+  status: SloStatus;
+  open_requests: number;
+  failed_requests: number;
+  overdue: {
+    hide: number;
+    support_withdrawal: number;
+    primary_delete: number;
+    derived_rebuild: number;
+    backup_expiry: number;
+  };
+  target_max_overdue_milestones: number;
+}
+
+export interface OperationalReportResource {
+  schema: typeof API_SCHEMA;
+  window: OperationalReportWindow;
+  generated_at_unix_ms: number;
+  window_started_at_unix_ms: number;
+  backlog: {
+    active_watches: number;
+    paused_watches: number;
+    deleting_watches: number;
+    planned_watch_runs: number;
+    running_watch_runs: number;
+    queued_probe_jobs: number;
+    leased_probe_jobs: number;
+    retry_wait_probe_jobs: number;
+    oldest_pending_probe_job_age_ms: number | null;
+    queued_email_deliveries: number;
+    delivering_email_deliveries: number;
+    retry_scheduled_email_deliveries: number;
+    queued_webhook_deliveries: number;
+    delivering_webhook_deliveries: number;
+    retry_scheduled_webhook_deliveries: number;
+    oldest_pending_delivery_age_ms: number | null;
+  };
+  objectives: {
+    watch_run_success: RatioSlo;
+    delivery_success: {
+      email: RatioSlo;
+      webhook: RatioSlo;
+    };
+    transition_to_delivery_latency: {
+      email: LatencySlo;
+      webhook: LatencySlo;
+    };
+    deletion_deadline_health: DeletionDeadlineSlo;
+  };
 }
 
 export interface WatchTransitionEntry {

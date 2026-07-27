@@ -33,6 +33,8 @@ pub enum ApiKeyScope {
     ConsentWrite,
     #[serde(rename = "evidence:read")]
     EvidenceRead,
+    #[serde(rename = "operations:read")]
+    OperationsRead,
 }
 
 impl ApiKeyScope {
@@ -51,6 +53,7 @@ impl ApiKeyScope {
             Self::ConsentRead => "consent:read",
             Self::ConsentWrite => "consent:write",
             Self::EvidenceRead => "evidence:read",
+            Self::OperationsRead => "operations:read",
         }
     }
 
@@ -68,6 +71,7 @@ impl ApiKeyScope {
             "consent:read" => Ok(Self::ConsentRead),
             "consent:write" => Ok(Self::ConsentWrite),
             "evidence:read" => Ok(Self::EvidenceRead),
+            "operations:read" => Ok(Self::OperationsRead),
             _ => Err(ValidationErrors::new(
                 "scopes",
                 ValidationCode::InvalidFormat,
@@ -224,6 +228,10 @@ mod tests {
         assert_eq!(
             ApiKeyScope::parse("evidence:read").unwrap(),
             ApiKeyScope::EvidenceRead
+        );
+        assert_eq!(
+            ApiKeyScope::parse("operations:read").unwrap(),
+            ApiKeyScope::OperationsRead
         );
         let error = ApiKeyScope::parse("secret-scope").unwrap_err();
         assert!(!error.to_string().contains("secret-scope"));

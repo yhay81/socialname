@@ -10,6 +10,7 @@ mod deletion_operator;
 mod evidence;
 mod monitoring;
 mod notification;
+mod operations;
 mod rule_registry_operator;
 mod search;
 mod target_deletion_operator;
@@ -289,6 +290,15 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let operations_routes = Router::new()
+        .route("/v1/operations/report", get(operations::operational_report))
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: ApiKeyScope::OperationsRead,
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
@@ -304,6 +314,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(deletion_routes)
         .merge(notification_write_routes)
         .merge(notification_read_routes)
+        .merge(operations_routes)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state.clone());

@@ -53,16 +53,18 @@ Keys contain a nonempty, duplicate-free subset of at most 16 values from:
 - `search:read`, `search:write`
 - `watch:read`, `watch:write`
 - `consent:read`, `consent:write`
+- `evidence:read`
 - `notification:read`, `notification:write`
+- `operations:read`
 - `data:export`, `data:delete`
 
 Migrations `0002_api_key_authentication.sql` and
-`0010_purpose_specific_consent.sql` enforce the same closed set and
-reject null or duplicate array entries. `workspace:read`, `search:read`, and
-`search:write`, watch read/write, and consent read/write now have exact HTTP
-consumers; `data:delete` now protects contributor request creation and
-owner-only status reads. `notification:*` and `data:export` still do not create
-a route ahead of their roadmap items.
+`0010_consent_grant_lifecycle.sql`, `0011_evidence_capsule_retention.sql`, and
+`0016_operational_reporting.sql` evolve the same closed set and reject null or
+duplicate array entries. All scopes except `data:export` now have exact HTTP
+consumers. `operations:read` protects only the target-free tenant aggregate; it
+does not grant access to watches, notification resources, deletion resources,
+or evidence.
 
 ## Operator lifecycle
 

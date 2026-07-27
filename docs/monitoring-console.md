@@ -11,7 +11,9 @@ monitoring loop. It lets an authenticated workspace:
 - pause or resume a watch with revision fencing;
 - select one watch and inspect its account/measurement transition history;
 - distinguish confirmation state from delivery state and retry/dead-letter
-  outcomes.
+  outcomes;
+- inspect tenant-wide operational backlog and fixed software objectives over
+  a closed reporting window.
 
 Endpoint provisioning, destination verification, consent administration,
 account login, billing, Team review workflow, and production hosting remain
@@ -46,6 +48,7 @@ Two bounded read resources complete the existing single-watch API:
 ```text
 GET /v1/watches?limit=50&after=<watch-id>
 GET /v1/watches/{watch-id}/transitions?limit=50&after=<transition-id>
+GET /v1/operations/report?window=24h
 ```
 
 Pages are closed `socialname.dev/api/v1` DTOs with at most 50 items. A cursor is
@@ -63,10 +66,13 @@ destination, signing material, attempt body digest, worker label, audit
 details, tenant ID, and database IDs not already in the public resources are
 not returned.
 
-`watch:read` protects both page routes. Existing `watch:write` protects create
-and revisioned pause/resume operations. Reads begin a normal authorized
-transaction, set the tenant locally, and execute through the non-owner runtime
-role; the UI never receives database access.
+`watch:read` protects both page routes, while the target-free tenant aggregate
+requires the independent `operations:read` scope. Existing `watch:write`
+protects create and revisioned pause/resume operations. Reads begin a normal
+authorized transaction, set the tenant locally, and execute through the
+non-owner runtime role; the UI never receives database access. Exact reporting
+semantics and the production-evidence boundary are in
+[Operational reporting and software objectives](operational-reporting.md).
 
 ## Browser credential and data policy
 
@@ -88,10 +94,13 @@ not repository evidence.
 
 ## Presentation and accessibility
 
-The initial viewport centers the monitored coverage rather than generic
-navigation chrome. It presents:
+The viewport centers monitored coverage rather than generic navigation chrome.
+It presents:
 
-- active/paused/deleting counts for loaded watch pages;
+- tenant-wide active/paused/deleting and operational backlog counts from the
+  report;
+- explicit `no_data`, `meeting`, or `breached` watch-run, channel delivery,
+  latency, and deletion-deadline objectives;
 - account-change and measurement-health counts for the loaded selected
   timeline;
 - delivered, acknowledged, retrying, and permanently failed counts for that
@@ -101,8 +110,10 @@ navigation chrome. It presents:
   measurement health, confirmation, and delivery separate;
 - a compact create form and revision-safe pause/resume action.
 
-The labels explicitly say "loaded" because the API is paginated; the console
-does not present a partial page as a workspace-wide total.
+Timeline labels explicitly say "Loaded page context" because the watch and
+transition APIs are paginated. The separately authorized operational report is
+the only workspace-wide aggregate, and the console states that it is a
+software objective rather than production SLA evidence.
 
 All actions have explicit labels, status does not rely on color alone, focus is
 visible, motion respects `prefers-reduced-motion`, layouts collapse for narrow
@@ -120,8 +131,10 @@ The real PostgreSQL 18 integration test proves:
 - delivery state and bounded retry/dead-letter metadata are exposed without
   destination/body/signature/attempt-audit data.
 
-The console runs deterministic model tests, TypeScript checking, and a
-production Vite build. The PostgreSQL gate also proves delivered-only,
-idempotent acknowledgement and private audit attribution. Browser automation,
-deployed TLS/CSP, endpoint ownership, and production accessibility evidence
-remain external gates.
+The console runs deterministic model tests, TypeScript checking, a production
+Vite build, and local browser checks at desktop and 375-pixel widths. The
+PostgreSQL gate also proves delivered-only, idempotent acknowledgement, private
+audit attribution, target-free operational aggregation, exact-scope denial,
+and cross-tenant isolation. Deployed TLS/CSP, endpoint ownership, retained
+production SLO history, and production accessibility evidence remain external
+gates.

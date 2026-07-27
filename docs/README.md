@@ -93,8 +93,8 @@ The first vertical slice is implemented in the repository:
   payloads, bounded retry/dead-letter handling, append-only attempt history,
   audit, and lineage;
 - bounded tenant-RLS watch-list and transition/delivery timeline resources plus
-  a same-origin React/Vite monitoring console whose pasted scoped key remains
-  only in page memory;
+  a target-free operational report and same-origin React/Vite monitoring
+  console whose pasted scoped key remains only in page memory;
 - a Tauri 2 Windows/macOS desktop slice with explicit local/offline-cache and
   cached-first sources, immutable observation persistence, source-preserving
   refresh streaming, freshness display, cancellation, and explicit
@@ -181,6 +181,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Minimal monitoring console](monitoring-console.md) — Topcoat evaluation,
   bounded read API, memory-only browser credential policy, presentation, and
   deployment gates.
+- [Operational reporting and software objectives](operational-reporting.md) —
+  exact cohorts, fixed targets, current backlog/deletion health, independent
+  scope, no-data semantics, and production evidence boundary.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native
@@ -216,11 +219,14 @@ signed rule-pack distribution, purpose-specific consent lifecycle, bounded
 Evidence Capsule retention, and lineage-backed contributor/target deletion are
 repository-complete. Deterministic daily delete-through scheduling, completed
 receipts, restore-ledger replay, and backup-expiry verification are also
-implemented; hosted schedule history and provider inventory evidence remain
-external. The remaining ordered software item covers notification
-acknowledgement, email delivery, operational dashboards, and SLO reporting.
-Delivery-scoped, authenticated acknowledgement is now repository-complete;
-email delivery is next.
+implemented. Notification acknowledgement, provider-neutral email delivery,
+and target-free operational reporting with a responsive dashboard complete
+the remaining repository software item. Hosted schedule history, provider
+inventory, multi-region deployment, retained production SLO history, and live
+notification evidence remain external.
+
+The next ordered repository-completable work is Milestone 4's stable versioned
+REST/JSON and SSE contract publication.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

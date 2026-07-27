@@ -472,6 +472,7 @@ GET    /v1/watches/{watch_id}
 PATCH  /v1/watches/{watch_id}
 DELETE /v1/watches/{watch_id}
 GET    /v1/watches/{watch_id}/transitions
+GET    /v1/operations/report?window=24h
 ```
 
 The implemented console consumes only these versioned same-origin resources.
@@ -482,6 +483,15 @@ memory and is dropped on reload or disconnect. Topcoat 0.4.0 was evaluated at
 this replaceable boundary but not adopted because a second direct-data path
 would duplicate Axum authentication and forced-RLS authorization. See
 [Minimal monitoring console](monitoring-console.md).
+
+The tenant-wide report uses the independent `operations:read` scope and one
+database-time PostgreSQL statement under forced RLS. It keeps `no_data`,
+`meeting`, and `breached` distinct for watch-run success, channel-specific
+delivery success, channel-specific transition-to-delivery p95, and current
+deletion-deadline health. Its backlog is current state while its terminal
+cohorts use one of three closed windows; neither is presented as production
+SLA evidence. See
+[Operational reporting and software objectives](operational-reporting.md).
 
 ### Rules and health
 

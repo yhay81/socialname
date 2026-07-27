@@ -81,17 +81,21 @@ person.
   deduplicated webhook delivery, provider-neutral HTTPS email delivery, and
   bounded retry/dead-letter audit lineage.
 - A React/TypeScript/Vite monitoring console using tenant-RLS watch and
-  transition/delivery pages without direct database access or browser key
-  persistence.
+  transition/delivery pages plus a target-free operational report without
+  direct database access or browser key persistence.
+- Database-time 24-hour, 7-day, and 30-day operational reporting with an
+  independent scope, current backlog, explicit no-data state,
+  channel-separated delivery success/latency, and deletion deadline health.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-The next repository-completable slice adds operational dashboards and SLO
-reporting over the existing monitoring, deletion, acknowledgement, webhook,
-and email delivery state. Real regional deployment and production notification
-evidence remain external gates.
+Milestone 3's repository-completable software is now implemented. Real
+regional deployment, retained production SLO history, and production
+notification evidence remain external gates. The next ordered repository
+slice publishes the stable versioned REST/JSON and SSE contracts for
+Milestone 4 without changing the local-first engine semantics.
 
 ## Build and verify
 

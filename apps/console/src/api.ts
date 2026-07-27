@@ -1,6 +1,7 @@
 import {
   parseTransitionPage,
   parseNotificationAcknowledgement,
+  parseOperationalReport,
   parseWatchPage,
   parseWorkspace,
 } from "./model";
@@ -8,6 +9,8 @@ import {
   API_SCHEMA,
   type ApiErrorResponse,
   type WatchCreateRequest,
+  type OperationalReportResource,
+  type OperationalReportWindow,
   type WatchListPage,
   type WatchResource,
   type WatchTransitionPage,
@@ -59,6 +62,16 @@ async function request(
 
 export async function loadWorkspace(token: string): Promise<WorkspaceResource> {
   return parseWorkspace(await request("/v1/workspace", token));
+}
+
+export async function loadOperationalReport(
+  token: string,
+  window: OperationalReportWindow,
+): Promise<OperationalReportResource> {
+  const query = new URLSearchParams({ window });
+  return parseOperationalReport(
+    await request(`/v1/operations/report?${query}`, token),
+  );
 }
 
 export async function loadWatches(

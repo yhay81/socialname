@@ -3,6 +3,7 @@ import {
   acknowledgeDelivery,
   ApiFailure,
   createWatch,
+  loadOperationalReport,
   loadTransitions,
   loadWatches,
   loadWorkspace,
@@ -10,11 +11,16 @@ import {
 } from "./api";
 import {
   deliveryLabel,
+  latencyText,
+  ratioText,
   readableToken,
+  sloLabel,
   summarizeTimeline,
 } from "./model";
 import {
   API_SCHEMA,
+  type OperationalReportResource,
+  type OperationalReportWindow,
   type WatchCreateRequest,
   type WatchResource,
   type WatchTransitionEntry,
@@ -53,11 +59,28 @@ function shortId(value: string): string {
   return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 }
 
+function formatAge(value: number | null): string {
+  if (value === null) {
+    return "No pending work";
+  }
+  if (value < 60_000) {
+    return `${Math.round(value / 1_000)}s old`;
+  }
+  if (value < 3_600_000) {
+    return `${Math.round(value / 60_000)}m old`;
+  }
+  return `${(value / 3_600_000).toFixed(1)}h old`;
+}
+
 function App() {
   const tokenRef = useRef("");
   const timelineRequestRef = useRef(0);
+  const operationsRequestRef = useRef(0);
   const [tokenInput, setTokenInput] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceResource>();
+  const [operations, setOperations] = useState<OperationalReportResource>();
+  const [operationsWindow, setOperationsWindow] =
+    useState<OperationalReportWindow>("24h");
   const [watches, setWatches] = useState<WatchResource[]>([]);
   const [watchCursor, setWatchCursor] = useState<string | null>(null);
   const [selectedWatchId, setSelectedWatchId] = useState<string>();
@@ -65,6 +88,7 @@ function App() {
   const [timelineCursor, setTimelineCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [timelineBusy, setTimelineBusy] = useState(false);
+  const [operationsBusy, setOperationsBusy] = useState(false);
   const [acknowledgementBusy, setAcknowledgementBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [showCreate, setShowCreate] = useState(false);
@@ -86,6 +110,11 @@ function App() {
     }),
     [watches],
   );
+  const overdueMilestones = operations
+    ? Object.values(
+        operations.objectives.deletion_deadline_health.overdue,
+      ).reduce((sum, count) => sum + count, 0)
+    : 0;
 
   function describeFailure(reason: unknown): string {
     if (reason instanceof ApiFailure) {
@@ -96,7 +125,7 @@ function App() {
         return `The API key was not accepted.${suffix}`;
       }
       if (reason.status === 403) {
-        return `This key does not grant the required workspace and watch scopes.${suffix}`;
+        return `This key does not grant the required workspace, watch, and operations scopes.${suffix}`;
       }
       if (reason.status === 409) {
         return `The watch changed before this action completed. Refresh and try again.${suffix}`;
@@ -179,13 +208,15 @@ function App() {
     setBusy(true);
     setError(undefined);
     try {
-      const [loadedWorkspace, watchPage] = await Promise.all([
+      const [loadedWorkspace, watchPage, operationalReport] = await Promise.all([
         loadWorkspace(candidate),
         loadWatches(candidate),
+        loadOperationalReport(candidate, operationsWindow),
       ]);
       tokenRef.current = candidate;
       setTokenInput("");
       setWorkspace(loadedWorkspace);
+      setOperations(operationalReport);
       setWatches(watchPage.watches);
       setWatchCursor(watchPage.next_cursor);
       const first = watchPage.watches[0];
@@ -206,9 +237,12 @@ function App() {
 
   function disconnect() {
     timelineRequestRef.current += 1;
+    operationsRequestRef.current += 1;
     tokenRef.current = "";
     setTokenInput("");
     setWorkspace(undefined);
+    setOperations(undefined);
+    setOperationsBusy(false);
     setWatches([]);
     setWatchCursor(null);
     setSelectedWatchId(undefined);
@@ -216,6 +250,30 @@ function App() {
     setTimelineCursor(null);
     setError(undefined);
     setShowCreate(false);
+  }
+
+  async function selectOperationsWindow(window: OperationalReportWindow) {
+    if (operationsBusy) {
+      return;
+    }
+    const request = ++operationsRequestRef.current;
+    setOperationsBusy(true);
+    setError(undefined);
+    try {
+      const report = await loadOperationalReport(tokenRef.current, window);
+      if (request === operationsRequestRef.current) {
+        setOperationsWindow(window);
+        setOperations(report);
+      }
+    } catch (reason: unknown) {
+      if (request === operationsRequestRef.current) {
+        setError(describeFailure(reason));
+      }
+    } finally {
+      if (request === operationsRequestRef.current) {
+        setOperationsBusy(false);
+      }
+    }
   }
 
   async function loadMoreWatches() {
@@ -352,8 +410,8 @@ function App() {
           <h1 id="connect-title">See what changed—and why it matters.</h1>
           <p className="connection-copy">
             Connect an issued API key to review watches, evidence-backed
-            transitions, and delivery health. The key stays in this page only
-            and disappears on reload.
+            transitions, delivery health, and operational objectives. The key
+            stays in this page only and disappears on reload.
           </p>
           <form
             className="connection-form"
@@ -458,36 +516,65 @@ function App() {
               remain separate—and traceable to their evidence.
             </p>
           </div>
-          <div className="metric-grid">
-            <article>
-              <span>Loaded active watches</span>
-              <strong>{watchCounts.active}</strong>
-              <small>
-                {watchCounts.paused} paused · {watchCounts.deleting} deleting
-                {" "}in loaded pages
-              </small>
-            </article>
-            <article>
-              <span>Loaded account changes</span>
-              <strong>{totals.accountChanges}</strong>
-              <small>{totals.measurementChanges} measurement events</small>
-            </article>
-            <article>
-              <span>Loaded deliveries</span>
-              <strong>{totals.delivered}</strong>
-              <small>
-                {totals.acknowledged} acknowledged · {totals.retrying} queued or
-                retrying
-              </small>
-            </article>
-            <article className={totals.failed > 0 ? "metric--alert" : ""}>
-              <span>Loaded dead letters</span>
-              <strong>{totals.failed}</strong>
-              <small>
-                {totals.failed > 0 ? "Needs operator review" : "No failed delivery"}
-              </small>
-            </article>
-          </div>
+          {operations && (
+            <div className="metric-grid">
+              <article
+                className={`metric--${operations.objectives.watch_run_success.status}`}
+              >
+                <span>Watch run success</span>
+                <strong>
+                  {ratioText(operations.objectives.watch_run_success)}
+                </strong>
+                <small>
+                  {sloLabel(operations.objectives.watch_run_success.status)} ·
+                  target 99.0%
+                </small>
+              </article>
+              <article
+                className={`metric--${operations.objectives.delivery_success.email.status}`}
+              >
+                <span>Email delivery</span>
+                <strong>
+                  {ratioText(operations.objectives.delivery_success.email)}
+                </strong>
+                <small>
+                  {sloLabel(operations.objectives.delivery_success.email.status)}
+                  {" "}· terminal outcomes
+                </small>
+              </article>
+              <article
+                className={`metric--${operations.objectives.delivery_success.webhook.status}`}
+              >
+                <span>Webhook delivery</span>
+                <strong>
+                  {ratioText(operations.objectives.delivery_success.webhook)}
+                </strong>
+                <small>
+                  {sloLabel(
+                    operations.objectives.delivery_success.webhook.status,
+                  )}{" "}
+                  · terminal outcomes
+                </small>
+              </article>
+              <article
+                className={`metric--${operations.objectives.deletion_deadline_health.status}`}
+              >
+                <span>Deletion deadlines</span>
+                <strong>
+                  {operations.objectives.deletion_deadline_health.status ===
+                  "no_data"
+                    ? "No data"
+                    : overdueMilestones}
+                </strong>
+                <small>
+                  {sloLabel(
+                    operations.objectives.deletion_deadline_health.status,
+                  )}{" "}
+                  · overdue milestones
+                </small>
+              </article>
+            </div>
+          )}
         </section>
 
         {error && (
@@ -502,6 +589,136 @@ function App() {
               ×
             </button>
           </div>
+        )}
+
+        {operations && (
+          <section
+            aria-labelledby="operations-title"
+            className="operations-report"
+          >
+            <div className="operations-heading">
+              <div>
+                <p className="eyebrow">Database-time report</p>
+                <h2 id="operations-title">Operational health</h2>
+                <p>
+                  Generated {formatTime(operations.generated_at_unix_ms)}. No
+                  target, destination, or request identifier is included.
+                </p>
+              </div>
+              <div className="window-picker" aria-label="SLO reporting window">
+                {(["24h", "7d", "30d"] as OperationalReportWindow[]).map(
+                  (window) => (
+                    <button
+                      aria-pressed={operationsWindow === window}
+                      disabled={operationsBusy}
+                      key={window}
+                      onClick={() => void selectOperationsWindow(window)}
+                      type="button"
+                    >
+                      {window}
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
+            <div className="operations-grid">
+              <article>
+                <span>Current watches</span>
+                <strong>{operations.backlog.active_watches} active</strong>
+                <small>
+                  {operations.backlog.paused_watches} paused ·{" "}
+                  {operations.backlog.deleting_watches} deleting
+                </small>
+              </article>
+              <article>
+                <span>Watch scheduler</span>
+                <strong>
+                  {operations.backlog.planned_watch_runs +
+                    operations.backlog.running_watch_runs}{" "}
+                  open
+                </strong>
+                <small>
+                  {operations.backlog.running_watch_runs} running
+                </small>
+              </article>
+              <article>
+                <span>Probe backlog</span>
+                <strong>
+                  {operations.backlog.queued_probe_jobs +
+                    operations.backlog.leased_probe_jobs +
+                    operations.backlog.retry_wait_probe_jobs}
+                </strong>
+                <small>
+                  {formatAge(
+                    operations.backlog.oldest_pending_probe_job_age_ms,
+                  )}
+                </small>
+              </article>
+              <article>
+                <span>Delivery backlog</span>
+                <strong>
+                  {operations.backlog.queued_email_deliveries +
+                    operations.backlog.delivering_email_deliveries +
+                    operations.backlog.retry_scheduled_email_deliveries +
+                    operations.backlog.queued_webhook_deliveries +
+                    operations.backlog.delivering_webhook_deliveries +
+                    operations.backlog.retry_scheduled_webhook_deliveries}
+                </strong>
+                <small>
+                  {formatAge(operations.backlog.oldest_pending_delivery_age_ms)}
+                </small>
+              </article>
+              <article
+                className={`operation-slo operation-slo--${operations.objectives.transition_to_delivery_latency.email.status}`}
+              >
+                <span>Email transition → delivery p95</span>
+                <strong>
+                  {latencyText(
+                    operations.objectives.transition_to_delivery_latency.email,
+                  )}
+                </strong>
+                <small>
+                  {sloLabel(
+                    operations.objectives.transition_to_delivery_latency.email
+                      .status,
+                  )}{" "}
+                  · target ≤ 5m
+                </small>
+              </article>
+              <article
+                className={`operation-slo operation-slo--${operations.objectives.transition_to_delivery_latency.webhook.status}`}
+              >
+                <span>Webhook transition → delivery p95</span>
+                <strong>
+                  {latencyText(
+                    operations.objectives.transition_to_delivery_latency
+                      .webhook,
+                  )}
+                </strong>
+                <small>
+                  {sloLabel(
+                    operations.objectives.transition_to_delivery_latency
+                      .webhook.status,
+                  )}{" "}
+                  · target ≤ 5m
+                </small>
+              </article>
+            </div>
+            <div className="loaded-context">
+              <span>Loaded page context</span>
+              <p>
+                {watchCounts.active} active watches · {totals.accountChanges}{" "}
+                account changes · {totals.measurementChanges} measurement
+                events · {totals.delivered} delivered · {totals.acknowledged}{" "}
+                acknowledged · {totals.failed} dead letters
+              </p>
+            </div>
+            <p className="operations-disclaimer">
+              These are tenant-local software objectives over the selected
+              window. No data is not success, and this report is not production
+              SLA evidence.
+            </p>
+          </section>
         )}
 
         <section className="monitoring-grid">

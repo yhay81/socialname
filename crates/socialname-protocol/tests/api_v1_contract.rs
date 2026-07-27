@@ -1,22 +1,26 @@
 use socialname_protocol::{
-    API_V1_SCHEMA, AccountState, ConfirmationBasis, ConsentCollectionProfileVersion,
+    API_V1_SCHEMA, AccountState, ChannelSlo, ConfirmationBasis, ConsentCollectionProfileVersion,
     ConsentGrantCreateRequest, ConsentGrantId, ConsentNoticeVersion, ConsentPurpose,
-    ConsentSubjectKind, ContributorDeletionCreateRequest, DefinitiveVerdict,
-    DeletionReceiptResource, DeletionReceiptState, DeletionRequestId, DeletionRequestResource,
-    DeletionRequestState, DeletionScope, DeletionStoreKind, DeletionStoreReceipt,
-    DeletionStoreState, EmailNotification, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
-    EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
-    EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
-    EvidenceTransportOutcome, EvidenceVantage, InstallationId,
+    ConsentSubjectKind, ContributorDeletionCreateRequest, DELIVERY_SUCCESS_TARGET_BASIS_POINTS,
+    DefinitiveVerdict, DeletionDeadlineSlo, DeletionOverdueMilestones, DeletionReceiptResource,
+    DeletionReceiptState, DeletionRequestId, DeletionRequestResource, DeletionRequestState,
+    DeletionScope, DeletionStoreKind, DeletionStoreReceipt, DeletionStoreState, EmailNotification,
+    EventId, EvidenceCapsuleId, EvidenceCapsuleProfile, EvidenceCapsuleResource,
+    EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest, EvidenceMatcherTrace,
+    EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
+    EvidenceTransportOutcome, EvidenceVantage, InstallationId, LatencySlo,
     NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
     NotificationChannel, NotificationDelivery, NotificationDeliveryId, NotificationEndpointId,
-    NotificationLogicalKey, ObservationId, OperationalFailure, OperationalFailureKind, ProbeBudget,
-    ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest, SearchEvent,
-    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId,
-    SuppressionReason, SyncPolicy, Target, TargetSelection, Transition, TransitionChange,
-    TransitionConfirmation, TransitionId, Username, Validate, WatchCreateRequest, WatchId,
-    WatchListPage, WatchResource, WatchSchedule, WatchState, WatchTransitionEntry,
-    WatchTransitionPage, WebhookNotification,
+    NotificationLogicalKey, ObservationId, OperationalBacklog, OperationalFailure,
+    OperationalFailureKind, OperationalObjectives, OperationalReportResource,
+    OperationalReportWindow, ProbeBudget, ProtocolVersion, RatioSlo, RegionClass, ResultSource,
+    RuleHash, SearchCreateRequest, SearchEvent, SearchEventData, SearchId, SearchMode,
+    SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason, SyncPolicy,
+    TRANSITION_TO_DELIVERY_P95_TARGET_MS, Target, TargetSelection, Transition, TransitionChange,
+    TransitionConfirmation, TransitionId, Username, Validate,
+    WATCH_RUN_SUCCESS_TARGET_BASIS_POINTS, WatchCreateRequest, WatchId, WatchListPage,
+    WatchResource, WatchSchedule, WatchState, WatchTransitionEntry, WatchTransitionPage,
+    WebhookNotification,
 };
 
 fn target() -> Target {
@@ -633,6 +637,135 @@ fn monitoring_pages_have_one_exact_v1_wire_shape() {
     );
     assert_eq!(json["entries"][0]["deliveries"], serde_json::json!([]));
     assert_eq!(json["next_cursor"], serde_json::Value::Null);
+}
+
+#[test]
+fn operational_report_has_one_target_free_v1_wire_shape() {
+    let report = OperationalReportResource {
+        schema: ProtocolVersion::ApiV1,
+        window: OperationalReportWindow::Last24Hours,
+        generated_at_unix_ms: 100_000_000,
+        window_started_at_unix_ms: 13_600_000,
+        backlog: OperationalBacklog {
+            active_watches: 2,
+            paused_watches: 1,
+            deleting_watches: 0,
+            planned_watch_runs: 1,
+            running_watch_runs: 0,
+            queued_probe_jobs: 1,
+            leased_probe_jobs: 0,
+            retry_wait_probe_jobs: 0,
+            oldest_pending_probe_job_age_ms: Some(1_000),
+            queued_email_deliveries: 0,
+            delivering_email_deliveries: 0,
+            retry_scheduled_email_deliveries: 0,
+            queued_webhook_deliveries: 0,
+            delivering_webhook_deliveries: 0,
+            retry_scheduled_webhook_deliveries: 0,
+            oldest_pending_delivery_age_ms: None,
+        },
+        objectives: OperationalObjectives {
+            watch_run_success: RatioSlo::from_counts(
+                99,
+                100,
+                WATCH_RUN_SUCCESS_TARGET_BASIS_POINTS,
+            ),
+            delivery_success: ChannelSlo {
+                email: RatioSlo::from_counts(1, 1, DELIVERY_SUCCESS_TARGET_BASIS_POINTS),
+                webhook: RatioSlo::from_counts(0, 0, DELIVERY_SUCCESS_TARGET_BASIS_POINTS),
+            },
+            transition_to_delivery_latency: ChannelSlo {
+                email: LatencySlo::from_samples(
+                    1,
+                    Some(250_000),
+                    TRANSITION_TO_DELIVERY_P95_TARGET_MS,
+                ),
+                webhook: LatencySlo::from_samples(0, None, TRANSITION_TO_DELIVERY_P95_TARGET_MS),
+            },
+            deletion_deadline_health: DeletionDeadlineSlo::from_counts(
+                0,
+                0,
+                DeletionOverdueMilestones::default(),
+            ),
+        },
+    };
+    assert!(report.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(report).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "window": "24h",
+            "generated_at_unix_ms": 100_000_000,
+            "window_started_at_unix_ms": 13_600_000,
+            "backlog": {
+                "active_watches": 2,
+                "paused_watches": 1,
+                "deleting_watches": 0,
+                "planned_watch_runs": 1,
+                "running_watch_runs": 0,
+                "queued_probe_jobs": 1,
+                "leased_probe_jobs": 0,
+                "retry_wait_probe_jobs": 0,
+                "oldest_pending_probe_job_age_ms": 1_000,
+                "queued_email_deliveries": 0,
+                "delivering_email_deliveries": 0,
+                "retry_scheduled_email_deliveries": 0,
+                "queued_webhook_deliveries": 0,
+                "delivering_webhook_deliveries": 0,
+                "retry_scheduled_webhook_deliveries": 0,
+                "oldest_pending_delivery_age_ms": null
+            },
+            "objectives": {
+                "watch_run_success": {
+                    "status": "meeting",
+                    "good_events": 99,
+                    "total_events": 100,
+                    "target_basis_points": 9_900
+                },
+                "delivery_success": {
+                    "email": {
+                        "status": "meeting",
+                        "good_events": 1,
+                        "total_events": 1,
+                        "target_basis_points": 9_900
+                    },
+                    "webhook": {
+                        "status": "no_data",
+                        "good_events": 0,
+                        "total_events": 0,
+                        "target_basis_points": 9_900
+                    }
+                },
+                "transition_to_delivery_latency": {
+                    "email": {
+                        "status": "meeting",
+                        "samples": 1,
+                        "p95_ms": 250_000,
+                        "target_ms": 300_000
+                    },
+                    "webhook": {
+                        "status": "no_data",
+                        "samples": 0,
+                        "p95_ms": null,
+                        "target_ms": 300_000
+                    }
+                },
+                "deletion_deadline_health": {
+                    "status": "no_data",
+                    "open_requests": 0,
+                    "failed_requests": 0,
+                    "overdue": {
+                        "hide": 0,
+                        "support_withdrawal": 0,
+                        "primary_delete": 0,
+                        "derived_rebuild": 0,
+                        "backup_expiry": 0
+                    },
+                    "target_max_overdue_milestones": 0
+                }
+            }
+        })
+    );
 }
 
 #[test]

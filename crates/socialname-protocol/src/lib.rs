@@ -7,6 +7,7 @@ mod error;
 mod evidence;
 mod monitoring;
 mod notification;
+mod operations;
 mod schema;
 mod search;
 mod transition;
@@ -48,6 +49,12 @@ pub use notification::{
     NotificationAcknowledgementResource, NotificationChannel, NotificationDelivery,
     NotificationDeliveryState, NotificationDestination, NotificationEndpointCreateRequest,
     NotificationEndpointResource, NotificationEndpointState, NotificationKind, WebhookNotification,
+};
+pub use operations::{
+    ChannelSlo, DELETION_MAX_OVERDUE_MILESTONES, DELIVERY_SUCCESS_TARGET_BASIS_POINTS,
+    DeletionDeadlineSlo, DeletionOverdueMilestones, LatencySlo, OperationalBacklog,
+    OperationalObjectives, OperationalReportResource, OperationalReportWindow, RatioSlo, SloStatus,
+    TRANSITION_TO_DELIVERY_P95_TARGET_MS, WATCH_RUN_SUCCESS_TARGET_BASIS_POINTS,
 };
 pub use schema::api_v1_schemas;
 pub use search::{

@@ -864,7 +864,7 @@ Status: **Current; external deployment evidence pending**
       workflows.
 - [x] Add daily delete-through tests, deletion receipts, restore-ledger replay,
       and backup-expiry verification.
-- [ ] Add notification acknowledgement, email delivery, operational dashboards,
+- [x] Add notification acknowledgement, email delivery, operational dashboards,
       and SLO reporting.
 
 Regional deployment software evidence:
@@ -1266,8 +1266,9 @@ narrow receipt is not email-open proof, webhook processing proof, destination
 ownership verification, or the later Team review workflow. The complete
 boundary is in
 [`docs/notification-acknowledgement.md`](docs/notification-acknowledgement.md).
-Email delivery is now the second completed vertical slice; operational
-dashboards and SLO reporting still keep the combined roadmap item open.
+Notification acknowledgement, email delivery, and the operational
+dashboard/report are now complete vertical slices; the combined software item
+is closed below.
 
 Quality run
 [`30212644031`](https://github.com/yhay81/socialname/actions/runs/30212644031)
@@ -1326,6 +1327,49 @@ Quality run
 [`30213884143`](https://github.com/yhay81/socialname/actions/runs/30213884143)
 passed Rust core with PostgreSQL 18 migrations/tests, Windows/macOS desktop,
 monitoring console, and managed-worker OCI for commit `80c5ff0`.
+
+Operational-reporting slice evidence:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets
+# includes protocol: 47 unit + 14 wire-contract tests;
+# server: 38 library + 2 binary tests; console: 4 model tests
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# With disposable PostgreSQL 18 administrator/application/worker URLs:
+cargo test --locked -p socialname-server --test postgres_migrations
+# 1 real PostgreSQL 18 integration test passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/console
+npm ci
+npm test
+npm run check
+npm run build
+# all passed; local browser verification passed at default and 375 px widths
+```
+
+Migration `0016` adds the independent `operations:read` scope and
+tenant/time cohort indexes without adding a product table or RLS policy. The
+closed report uses one PostgreSQL statement and database time for exact
+24-hour, 7-day, or 30-day tenant snapshots. It returns no identifiers or
+targets and derives non-relabellable `no_data`, `meeting`, or `breached`
+status for watch-run success, channel-specific terminal delivery success,
+channel-specific transition-to-delivery p95, and current deletion deadline
+health. Current backlog stays separate from windowed terminal cohorts, while
+paginated console metrics remain explicitly loaded-page context.
+
+The real PostgreSQL test proves exact-scope denial, unknown-window rejection,
+database-time bounds, non-owner forced-RLS access, two-tenant isolation,
+channel separation, latency sampling, and identifier/secret exclusion.
+Protocol and console-model tests reject partial shapes, changed targets,
+relabelling, and inconsistent no-data/backlog relations. Exact definitions and
+the remaining production-evidence boundary are documented in
+[`docs/operational-reporting.md`](docs/operational-reporting.md). Production
+multi-region, mail-provider, retained time-series, alert ownership, and elapsed
+SLA evidence remain external and are not claimed by this report.
 
 Acceptance gate:
 
@@ -1542,3 +1586,10 @@ Choose these only when their trigger is measured:
   egress, fenced retry/dead letter, and secret-free audit/lineage. Kept
   endpoint ownership, sending-domain/provider evidence, dashboards, and SLO
   reporting open.
+- **2026-07-27:** Added a target-free operational report with an independent
+  scope, database-time fixed windows, derived no-data/meeting/breached
+  objectives, channel-separated delivery success and latency, current
+  deletion deadline health, and responsive same-origin dashboard. Closed the
+  combined notification/reporting software item while keeping multi-region,
+  production provider, retained SLO history, and elapsed SLA evidence
+  external.

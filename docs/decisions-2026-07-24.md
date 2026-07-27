@@ -203,6 +203,15 @@ so status does not diverge across design records.
   client consumes only bounded same-origin Axum API v1 resources, keeps a
   pasted scoped key in page memory only, and has no CORS or direct PostgreSQL
   access.
+- Operational reporting uses an independent `operations:read` scope and one
+  target-free tenant aggregate rather than deriving workspace totals from
+  paginated watch pages. Database time defines closed 24-hour, 7-day, and
+  30-day cohorts. Initial software objectives are 99.0% terminal watch-run and
+  per-channel delivery success, five-minute per-channel
+  transition-to-delivery p95, and zero current overdue deletion milestones.
+  `no_data` is distinct from success. Deletion is a current deadline-health
+  snapshot because the existing schema does not support a complete historical
+  compliance claim; production SLA history remains external evidence.
 - Global and regional `assertion/v1` interpretations are derived from the same
   eligible exact-rule observations and evaluation time. Cross-region
   disagreement preserves definitive regional projections behind one global
@@ -327,14 +336,19 @@ so status does not diverge across design records.
     canonical DTO, channel-separated logical identity, encryption and claim
     domains, stable gateway idempotency, fixed plain text, public-only
     networking, bounded retry/dead letter, and secret-free audit/lineage.
+26. **Done:** Add a closed target-free operational report under an independent
+    scope, database-time fixed windows, derived `no_data`/`meeting`/`breached`
+    objectives, channel-separated delivery success and latency, current
+    deletion deadline health, and a responsive same-origin dashboard.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
 deployment evidence remains pending, with affected capabilities disabled.
 Milestone 3's deployment/operator artifact, regional assertion behavior,
 signed rule-pack distribution, purpose-specific consent lifecycle, bounded
-Evidence Capsule retention, lineage-backed deletion and restore drills, and
-notification acknowledgement and email delivery are repository-complete,
-while actual multi-region deployment and production mail-provider evidence
-remain external gates. The next executable work is operational dashboards and
-SLO reporting.
+Evidence Capsule retention, lineage-backed deletion and restore drills,
+notification acknowledgement, email delivery, and operational reporting are
+repository-complete, while actual multi-region deployment, retained production
+SLO history, and mail-provider evidence remain external gates. The next
+ordered repository-completable work is Milestone 4's stable versioned REST/JSON
+and SSE contract publication.

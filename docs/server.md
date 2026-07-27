@@ -99,6 +99,9 @@ GET /v1/observations/{observation_id}/evidence-capsule
 POST /v1/deletion-requests/contributor
 GET /v1/deletion-requests/{deletion_request_id}
 GET /v1/deletion-requests/{deletion_request_id}/receipt
+POST /v1/notification-deliveries/{delivery_id}/acknowledgement
+GET /v1/notification-deliveries/{delivery_id}/acknowledgement
+GET /v1/operations/report?window=24h
 ```
 
 The two health endpoints return a small `socialname.dev/api/v1` JSON document
@@ -138,6 +141,13 @@ destinations, signatures, request digests, worker labels, or audit details.
 The API process stores policy but performs no probe. See
 [Freshness-aware watch scheduling](watch-scheduling.md) and
 [Minimal monitoring console](monitoring-console.md).
+
+`GET /v1/operations/report` requires `operations:read`. The query accepts only
+`24h`, `7d`, or `30d`; one PostgreSQL statement uses database time and forced
+tenant RLS to return identifier-free backlog and derived objective status.
+Unavailable and `no_data` remain distinct, and current deletion deadline
+health is not presented as historical production compliance. See
+[Operational reporting and software objectives](operational-reporting.md).
 
 `POST /v1/notification-deliveries/{delivery_id}/acknowledgement` requires
 `notification:write`; the matching `GET` requires `notification:read`.
@@ -250,4 +260,6 @@ staged/general trust rotation, exact worker binding, signed rollback,
 monitoring read scope, tenant/cursor
 isolation, account-versus-measurement timelines, delivery retry/dead-letter
 state, delivered-only acknowledgement, exact acknowledgement replay, private
-audit attribution, and the absence of delivery secrets from public pages.
+audit attribution, target-free operational aggregation, database-time windows,
+operations-scope and tenant isolation, and the absence of delivery secrets
+from public pages.

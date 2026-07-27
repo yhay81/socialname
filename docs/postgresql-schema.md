@@ -22,7 +22,7 @@ account-confirmation work. Migration `0009_rule_pack_distribution.sql` adds
 durable signed trust roots, staged/active metadata, embedded promotion
 bindings, global and per-site anti-replay state, exact worker metadata
 resolution, and continuous version availability checks. Migration
-`0010_purpose_specific_consent.sql` closes the accepted consent versions,
+`0010_consent_grant_lifecycle.sql` closes the accepted consent versions,
 installation ownership, immutable history, and one-way withdrawal boundary.
 Migration `0011_evidence_capsule_retention.sql` adds atomic closed Evidence
 Capsules, independent database-time deadlines, payload-free purge receipts,
@@ -35,6 +35,9 @@ backup-expiry evidence, and restore-ledger readiness. Migration
 `0014_notification_acknowledgements.sql` adds one delivered-only append-only
 operator receipt. Migration `0015_email_delivery.sql` adds a channel-isolated
 email claim coordinator over the same fenced delivery and attempt state.
+Migration `0016_operational_reporting.sql` adds the closed `operations:read`
+scope and tenant/time indexes for watch-run and notification-delivery report
+cohorts. It adds no product table or RLS policy.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -316,7 +319,10 @@ timeout/retry, same-ID and same-body success, permanent 4xx, lease reclamation,
 stale fencing, final dead-letter state, attempt audit, lineage, secret
 exclusion, and bounded watch/transition page
 reads with scope, tenant, cursor, account/measurement, and secret-exclusion
-checks. The same real-database test also pins initial rule trust, applies
+checks. It also proves the target-free operational report's exact scope,
+database-time windows, channel-separated outcomes and latency samples,
+unknown-window rejection, identifier exclusion, and two-tenant isolation.
+The same real-database test also pins initial rule trust, applies
 canary then general metadata, rejects persistent replay, stages an overlapping
 key generation without replacing the active root, activates a second pack,
 removes the old key through dual-threshold rollback metadata, restores the

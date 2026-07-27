@@ -98,9 +98,9 @@ validation rejects relabelling.
 `WorkspaceResource` is the response contract for `GET /v1/workspace`. It
 contains the workspace's opaque ID, bounded slug/display name, state, and one
 `AuthenticatedApiKeyResource`. API-key scopes are a closed enum covering
-workspace, search, watch, and consent read/write plus the planned notification,
-export, and deletion capabilities. The resource rejects empty or duplicate
-scope sets and invalid public prefixes.
+workspace, search, watch, consent, notification, evidence, operations, export,
+and deletion capabilities. The resource rejects empty or duplicate scope sets
+and invalid public prefixes.
 
 This DTO represents an already authenticated principal; it does not parse a
 bearer token or grant access. The server separately verifies the token digest,
@@ -224,6 +224,16 @@ nonconfirmed transitions, and more than 16 deliveries for one transition fail
 validation. The server validates every supplied cursor in the same
 tenant-scoped forced-RLS transaction before continuing the ordering.
 
+`OperationalReportResource` is the independent `operations:read` root. Its
+window is exactly `24h`, `7d`, or `30d`, and its generated/start timestamps
+must differ by the selected duration. It contains only aggregate backlog and
+objective fields. `RatioSlo`, `LatencySlo`, and `DeletionDeadlineSlo` derive
+one of `no_data`, `meeting`, or `breached`; validation rejects inconsistent
+counts, samples, targets, status labels, pending-age relations, or timestamps.
+The fixed targets are 99.0% watch-run and delivery success, five-minute
+transition-to-delivery p95, and zero overdue deletion milestones. See
+[Operational reporting and software objectives](operational-reporting.md).
+
 ## Transitions and notifications
 
 `TransitionChange` is a closed tagged union:
@@ -321,4 +331,6 @@ absence of key secret/digest fields, exact account/installation consent wire
 shapes and redaction, exact accepted private-search resources, Cartesian
 target/progress consistency, consent and monitoring page bounds, cursor
 relations, transition/delivery ownership, acknowledgement wire shape, and
-delivered-only acknowledgement relations.
+delivered-only acknowledgement relations. Operational-report coverage pins its
+target-free exact wire shape, closed windows, fixed targets, derived status,
+deletion milestone health, and backlog-age relations.
