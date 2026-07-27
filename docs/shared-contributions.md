@@ -1,6 +1,6 @@
 # Shared contribution ingestion v1
 
-Status: **Implemented acceptance boundary; calibration and corroboration
+Status: **Implemented acceptance and calibration boundary; corroboration
 pending**
 
 This document defines the `socialname.dev/shared-contribution/v1` acceptance
@@ -114,15 +114,40 @@ the protocol has no network-group field.
 
 `contributor_reputation` rows are tenant-scoped per installation and site
 family with the closed tiers `new`, `calibrated`, `trusted`, and `suspended`.
-Database triggers enforce monotonic counters, exact revision increments, and
-the closed transition matrix (`new -> calibrated -> trusted` ascent, decay
-one step down, any tier to `suspended`, and `suspended` terminal). This slice
-implements creation, activity accounting, and violation-driven suspension.
-The calibration ascent — validated overlaps against managed or
-controlled-canary truth with the documented 20/98%/7-day and
-100/99%/30-day/5-family thresholds — is the next slice inside the same
-roadmap item and is required before any contribution can enter a
-corroboration quorum.
+Database triggers enforce exact revision increments, monotonic activity days,
+and the closed transition matrix (`new -> calibrated -> trusted` ascent,
+decay one step down per evaluation, any tier to `suspended`, and `suspended`
+terminal). Admission implements creation, activity accounting, and
+violation-driven suspension; the overlap counters are recomputable so
+lineage-backed deletion can rebuild them from the remaining validation rows.
+
+## Calibration against managed truth
+
+The bounded worker command `validate-contributions --batch-limit N
+--allow-live` runs one narrow database function under the non-owner worker
+credential. It validates unvalidated definitive contributions against managed
+truth and appends one immutable `contribution_validations` row per
+contribution, then re-evaluates a bounded set of reputation tiers. All
+parameters are initial calibration values that must be replayed against
+labeled canary history before production:
+
+- **Truth.** The nearest same-tenant managed observation with the exact rule
+  version, site, normalized username, and region, a definitive verdict,
+  `E3`/`E4` evidence, green rule health at its creation, within fifteen
+  minutes of the contribution's observation, and not deletion-hidden.
+  Same-region-only comparison keeps real regional variation out of the
+  agreement signal, and contributions of suspended reputations are excluded.
+- **Tier window.** Effectiveness is evaluated over the trailing 120 days of
+  validations — a deterministic hard-window approximation of the documented
+  60-day half-life decay.
+- **Ascent.** `new -> calibrated` needs 20 windowed overlaps, 98% agreement,
+  and 7 active days. `calibrated -> trusted` needs 100 windowed overlaps, 99%
+  agreement, 30 active days, and validated activity across at least 5 site
+  families. Each evaluation moves at most one legal step.
+- **Decay and collapse.** Falling below a tier's thresholds demotes one step;
+  rolling windowed agreement under 90% across at least ten validations
+  suspends with `agreement_collapse`. Tier changes and suspensions append
+  target-free audit events.
 
 ## Deletion and lineage
 
@@ -130,6 +155,11 @@ corroboration quorum.
   `shared_contribution` resources exactly like observations: reads hide them
   immediately, and the fenced deletion worker physically deletes matched rows
   during primary purge.
+- Validation rows are derived data: the deletion worker removes every
+  validation whose contribution or truth observation is matched, then
+  recomputes the affected non-suspended reputation counters from the
+  remaining rows before the inputs are purged. Later evaluation passes demote
+  tiers whose windowed support has shrunk.
 - Verified target-person deletion matches shared contributions by exact
   `(site, normalized username)` selectors across tenants, counts them in the
   operator output, installs the suppression tokens that block future
@@ -140,18 +170,22 @@ corroboration quorum.
 - Sequence, quota, and reputation control rows contain no target data and are
   intentionally retained.
 
-## Explicit non-goals of this slice
+## Explicit non-goals of this boundary
 
 - No contribution can create or support an assertion, transition, or
-  notification yet; the quorum `corroborated` path is separate ordered work.
+  notification yet; the quorum `corroborated` path is separate ordered work
+  that will admit only `calibrated` and `trusted` validated evidence.
 - No client signature envelope exists yet; source continuity relies on the
   authenticated API key, the tenant-separated installation digest, and the
-  monotonic sequence. A signed envelope may be added with the calibration
-  slice without changing the storage contract.
+  monotonic sequence. A signed envelope may be added later without changing
+  the storage contract.
 - Engine hashes are recorded and format-validated but not yet matched against
   a registry of client engine builds, because no such registry exists.
 - CLI and desktop submission wiring remains future client work; the server
   boundary is complete and testable without it.
+- Production calibration requires replaying the documented thresholds against
+  labeled canary history plus scheduled live operation; both remain external
+  evidence gates.
 
 ## Evidence
 
@@ -163,4 +197,9 @@ unknown-rule rejection without target echo, immediate fabricated-plan
 suspension, tenant isolation, cursor validation, seeded quota exhaustion with
 retry-after, append-only and guard-trigger enforcement, target-person
 hiding/suppression/purge, contributor-deletion hiding and purge, and the
-retained target-free control rows.
+retained target-free control rows. The calibration section additionally
+proves idempotent truth matching with exact agreement accounting, threshold
+ascent to `calibrated` and `trusted` including the activity-day and
+site-family requirements, truth-deletion validation removal with counter
+recomputation, rolling-agreement collapse suspension, and the tier-change and
+suspension audit trail.

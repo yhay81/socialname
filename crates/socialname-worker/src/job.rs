@@ -1752,6 +1752,73 @@ impl DeveloperUsageRetentionStore {
     }
 }
 
+/// Bounded validation of shared contributions against managed truth plus the
+/// deterministic reputation-tier evaluation, both performed by one narrow
+/// database function under the non-owner worker credential.
+pub struct ContributionValidationStore {
+    pool: PgPool,
+}
+
+impl fmt::Debug for ContributionValidationStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ContributionValidationStore([REDACTED DATABASE])")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContributionValidationOutcome {
+    pub validated: u32,
+    pub agreements: u32,
+    pub disagreements: u32,
+    pub tier_promotions: u32,
+    pub tier_demotions: u32,
+    pub suspensions: u32,
+}
+
+impl ContributionValidationStore {
+    pub async fn connect_from_env() -> Result<Self, JobError> {
+        Ok(Self {
+            pool: connect_worker_pool_from_env().await?,
+        })
+    }
+
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn close(&self) {
+        self.pool.close().await;
+    }
+
+    pub async fn validate(
+        &self,
+        batch_limit: u32,
+    ) -> Result<ContributionValidationOutcome, JobError> {
+        if !(1..=MAXIMUM_RETENTION_BATCH).contains(&batch_limit) {
+            return Err(JobError::InvalidConfiguration);
+        }
+        let row: (i32, i32, i32, i32, i32, i32) = sqlx::query_as(
+            "SELECT validated, agreements, disagreements, tier_promotions, \
+                    tier_demotions, suspensions \
+             FROM socialname_worker_validate_contributions($1)",
+        )
+        .bind(i32::try_from(batch_limit).map_err(|_| JobError::InvalidConfiguration)?)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+        let convert = |value: i32| u32::try_from(value).map_err(|_| JobError::StorageInvariant);
+        Ok(ContributionValidationOutcome {
+            validated: convert(row.0)?,
+            agreements: convert(row.1)?,
+            disagreements: convert(row.2)?,
+            tier_promotions: convert(row.3)?,
+            tier_demotions: convert(row.4)?,
+            suspensions: convert(row.5)?,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuleBinding {
     rule_version_id: Uuid,

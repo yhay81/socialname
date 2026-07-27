@@ -67,12 +67,12 @@ use socialname_server::{
     request_verified_target_deletion, verify_backup_expiry,
 };
 use socialname_worker::{
-    DeletionProcessOutcome, DeletionStore, DeliveryError, DeliveryProcessConfig,
-    DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, DeveloperUsageRetentionStore,
-    EmailGatewayConfig, EmailGatewayTransport, EmailRequest, EmailSendError,
-    EvidenceRetentionOutcome, ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore,
-    ManagedRule, WatchPlanOutcome, WebhookRequest, WebhookSendError, WebhookTransport,
-    process_one_delivery, process_one_email_delivery,
+    ContributionValidationStore, DeletionProcessOutcome, DeletionStore, DeliveryError,
+    DeliveryProcessConfig, DeliveryProcessOutcome, DeliverySecrets, DeliveryStore,
+    DeveloperUsageRetentionStore, EmailGatewayConfig, EmailGatewayTransport, EmailRequest,
+    EmailSendError, EvidenceRetentionOutcome, ExpandOutcome, JobDisposition, JobError,
+    JobExecutionError, JobStore, ManagedRule, WatchPlanOutcome, WebhookRequest, WebhookSendError,
+    WebhookTransport, process_one_delivery, process_one_email_delivery,
 };
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -150,7 +150,7 @@ async fn reset_test_state(pool: &PgPool) {
             plan_entitlement_events, organization_retention_policies,
             transition_reviews, transition_review_events, shared_contributions,
             contribution_sequences, contribution_quota_counters,
-            contributor_reputation
+            contributor_reputation, contribution_validations
         CASCADE;
 
         DO $$
@@ -217,7 +217,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('organization_retention_policies'), ('transition_reviews'),
                 ('transition_review_events'), ('shared_contributions'),
                 ('contribution_sequences'), ('contribution_quota_counters'),
-                ('contributor_reputation')
+                ('contributor_reputation'), ('contribution_validations')
         )
         SELECT count(*)
         FROM required
@@ -227,7 +227,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 61);
+    assert_eq!(required_tables, 62);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -236,7 +236,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 49);
+    assert_eq!(tenant_policies, 50);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -246,7 +246,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 49);
+    assert_eq!(forced_rls_tables, 50);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -795,8 +795,7 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT UPDATE (accepted_count) ON contribution_quota_counters
             TO socialname_migration_test_app;
         GRANT UPDATE (
-            tier, revision, validated_overlaps, agreement_hits,
-            agreement_misses, active_days, last_active_day, suspended_at,
+            tier, revision, active_days, last_active_day, suspended_at,
             suspension_reason, updated_at
         ) ON contributor_reputation TO socialname_migration_test_app;
         GRANT UPDATE (last_seen_at) ON clients
@@ -3022,6 +3021,297 @@ async fn assert_shared_contribution_boundary(administrator_pool: &PgPool) {
     .unwrap_err();
     assert_database_code(jumped, "23514");
 
+    // ---- Reputation calibration against managed truth ----
+    install_worker_role(administrator_pool).await;
+    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
+        .expect("worker database URL must accompany the PostgreSQL integration test");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&worker_database_url)
+        .await
+        .unwrap();
+    let validation_store = ContributionValidationStore::new(worker_pool.clone());
+    let other_member_token = api_key_token("ffffffffffffffff", 0x66);
+    let membership_one = Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap();
+    let membership_other = Uuid::parse_str("00000000-0000-0000-0000-000000000013").unwrap();
+    let installation_e = InstallationId::new("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee").unwrap();
+    let grant_e = install_backdated_installation_grant(administrator_pool, &installation_e).await;
+    let truth_grant_deleted = Uuid::new_v4();
+    let truth_grant_retained = Uuid::new_v4();
+    for (grant_id, membership_id) in [
+        (truth_grant_deleted, membership_other),
+        (truth_grant_retained, membership_one),
+    ] {
+        sqlx::query(
+            "INSERT INTO consent_grants (\
+                id, tenant_id, membership_id, subject_kind, purpose, \
+                collection_profile_version, notice_version, source, granted_at\
+             ) VALUES (\
+                $1, $2, $3, 'account', 'private_history', 'profile-v1', \
+                'notice-v1', 'api', clock_timestamp() - interval '2 hours'\
+             )",
+        )
+        .bind(grant_id)
+        .bind(tenant_one)
+        .bind(membership_id)
+        .execute(administrator_pool)
+        .await
+        .unwrap();
+    }
+    let truth_observation_deleted = Uuid::new_v4();
+    let truth_observation_retained = Uuid::new_v4();
+    install_truth_observation(
+        administrator_pool,
+        truth_observation_deleted,
+        truth_grant_deleted,
+        rule_version_id,
+        "d1",
+    )
+    .await;
+    for (sequence, verdict_found) in [(1_u64, true), (2, true), (3, false)] {
+        let mut calibration = contribution_request(
+            &installation_e,
+            &grant_e,
+            sequence,
+            "contrib-cal-1",
+            &rule_hash_hex,
+            current_unix_ms(),
+        );
+        if !verdict_found {
+            calibration.outcome = EvidenceOutcome::Definitive {
+                verdict: DefinitiveVerdict::NotFound,
+            };
+        }
+        let response = post_contribution(&application_pool, &owner_token, &calibration).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    let first_pass = validation_store.validate(256).await.unwrap();
+    assert_eq!(
+        (
+            first_pass.validated,
+            first_pass.agreements,
+            first_pass.disagreements,
+            first_pass.tier_promotions,
+            first_pass.suspensions,
+        ),
+        (3, 2, 1, 0, 0)
+    );
+    let replay_pass = validation_store.validate(256).await.unwrap();
+    assert_eq!(replay_pass.validated, 0);
+    let client_e: Uuid =
+        sqlx::query_scalar("SELECT client_id FROM consent_grants WHERE tenant_id = $1 AND id = $2")
+            .bind(tenant_one)
+            .bind(Uuid::parse_str(&grant_e).unwrap())
+            .fetch_one(administrator_pool)
+            .await
+            .unwrap();
+    let counted: (i64, i64, i64, String) = sqlx::query_as(
+        "SELECT validated_overlaps, agreement_hits, agreement_misses, tier \
+         FROM contributor_reputation \
+         WHERE tenant_id = $1 AND client_id = $2 AND site_family = 'contrib-test'",
+    )
+    .bind(tenant_one)
+    .bind(client_e)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(counted, (3, 2, 1, "new".to_owned()));
+
+    // Seeded validated overlaps plus recorded active days ascend the tier
+    // through the closed matrix one legal step per evaluation pass. The
+    // second truth observation exists only after the live validations bound
+    // to the first one, so later deletion traversal is deterministic.
+    install_truth_observation(
+        administrator_pool,
+        truth_observation_retained,
+        truth_grant_retained,
+        rule_version_id,
+        "d2",
+    )
+    .await;
+    seed_calibration_validations(
+        administrator_pool,
+        client_e,
+        truth_observation_retained,
+        1_000,
+        47,
+        "contrib-test",
+        true,
+    )
+    .await;
+    sqlx::query(
+        "UPDATE contributor_reputation \
+         SET active_days = 7, revision = revision + 1, \
+             updated_at = GREATEST(\
+                clock_timestamp(), updated_at + interval '1 microsecond'\
+             ) \
+         WHERE tenant_id = $1 AND client_id = $2 AND site_family = 'contrib-test'",
+    )
+    .bind(tenant_one)
+    .bind(client_e)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let promoted_pass = validation_store.validate(256).await.unwrap();
+    assert_eq!(promoted_pass.tier_promotions, 1);
+    let promoted_tier: String = sqlx::query_scalar(
+        "SELECT tier FROM contributor_reputation \
+         WHERE tenant_id = $1 AND client_id = $2 AND site_family = 'contrib-test'",
+    )
+    .bind(tenant_one)
+    .bind(client_e)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(promoted_tier, "calibrated");
+
+    // Deleting the truth contributor removes the derived validations and the
+    // fenced worker recomputes the cached counters from what remains.
+    let truth_deletion = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/deletion-requests/contributor",
+        Some(&other_member_token),
+        &[("content-type", "application/json")],
+        serde_json::to_string(&ContributorDeletionCreateRequest {
+            schema: ProtocolVersion::ApiV1,
+            consent_grant_id: ConsentGrantId::new(truth_grant_deleted.to_string()).unwrap(),
+        })
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(truth_deletion.status(), StatusCode::CREATED);
+    let deletion_store = DeletionStore::new(worker_pool.clone());
+    assert!(matches!(
+        deletion_store
+            .process_one("calibration-deletion-worker", Duration::from_secs(60))
+            .await
+            .unwrap(),
+        DeletionProcessOutcome::Processed { .. }
+    ));
+    let recomputed: (i64, i64, i64, String, bool) = sqlx::query_as(
+        "SELECT reputation.validated_overlaps, reputation.agreement_hits, \
+                reputation.agreement_misses, reputation.tier, \
+                EXISTS(\
+                    SELECT 1 FROM contribution_validations AS validation \
+                    WHERE validation.tenant_id = reputation.tenant_id \
+                      AND validation.observation_id = $3\
+                ) \
+         FROM contributor_reputation AS reputation \
+         WHERE reputation.tenant_id = $1 AND reputation.client_id = $2 \
+           AND reputation.site_family = 'contrib-test'",
+    )
+    .bind(tenant_one)
+    .bind(client_e)
+    .bind(truth_observation_deleted)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(recomputed, (47, 47, 0, "calibrated".to_owned(), false));
+
+    // Trusted requires the documented volume, agreement, activity, and
+    // site-family diversity thresholds together.
+    seed_calibration_validations(
+        administrator_pool,
+        client_e,
+        truth_observation_retained,
+        1_100,
+        53,
+        "contrib-test",
+        true,
+    )
+    .await;
+    for family_index in 1..=4 {
+        seed_calibration_validations(
+            administrator_pool,
+            client_e,
+            truth_observation_retained,
+            1_200 + family_index * 10,
+            1,
+            &format!("cal-family-{family_index}"),
+            true,
+        )
+        .await;
+    }
+    sqlx::query(
+        "UPDATE contributor_reputation \
+         SET active_days = 30, revision = revision + 1, \
+             updated_at = GREATEST(\
+                clock_timestamp(), updated_at + interval '1 microsecond'\
+             ) \
+         WHERE tenant_id = $1 AND client_id = $2 AND site_family = 'contrib-test'",
+    )
+    .bind(tenant_one)
+    .bind(client_e)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let trusted_pass = validation_store.validate(256).await.unwrap();
+    assert_eq!(trusted_pass.tier_promotions, 1);
+    let trusted_tier: String = sqlx::query_scalar(
+        "SELECT tier FROM contributor_reputation \
+         WHERE tenant_id = $1 AND client_id = $2 AND site_family = 'contrib-test'",
+    )
+    .bind(tenant_one)
+    .bind(client_e)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(trusted_tier, "trusted");
+
+    // Rolling agreement collapse suspends the site-family reputation.
+    seed_calibration_validations(
+        administrator_pool,
+        client_e,
+        truth_observation_retained,
+        1_300,
+        30,
+        "contrib-test",
+        false,
+    )
+    .await;
+    let collapsed_pass = validation_store.validate(256).await.unwrap();
+    assert_eq!(collapsed_pass.suspensions, 1);
+    let collapsed: (String, Option<String>) = sqlx::query_as(
+        "SELECT tier, suspension_reason FROM contributor_reputation \
+         WHERE tenant_id = $1 AND client_id = $2 AND site_family = 'contrib-test'",
+    )
+    .bind(tenant_one)
+    .bind(client_e)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        collapsed,
+        (
+            "suspended".to_owned(),
+            Some("agreement_collapse".to_owned())
+        )
+    );
+    let tier_audit: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events \
+         WHERE tenant_id = $1 \
+           AND action = 'contribution.reputation.tier_changed'",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(tier_audit, 2);
+    let collapse_audit: bool = sqlx::query_scalar(
+        "SELECT EXISTS(\
+            SELECT 1 FROM audit_events \
+            WHERE tenant_id = $1 \
+              AND action = 'contribution.reputation.suspended' \
+              AND details ->> 'reason' = 'agreement_collapse'\
+         )",
+    )
+    .bind(tenant_one)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(collapse_audit);
+
     // Verified target-person deletion hides matching contributions, blocks
     // re-ingestion fail-closed, and the fenced worker purges the rows.
     let target_person = contribution_request(
@@ -3111,15 +3401,6 @@ async fn assert_shared_contribution_boundary(administrator_pool: &PgPool) {
 
     // The fenced deletion worker physically removes every matched
     // contribution while leaving target-free control records in place.
-    install_worker_role(administrator_pool).await;
-    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
-        .expect("worker database URL must accompany the PostgreSQL integration test");
-    let worker_pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&worker_database_url)
-        .await
-        .unwrap();
-    let deletion_store = DeletionStore::new(worker_pool.clone());
     for _ in 0..2 {
         assert!(matches!(
             deletion_store
@@ -3151,10 +3432,132 @@ async fn assert_shared_contribution_boundary(administrator_pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(purged_rows, 0);
-    assert_eq!(remaining_rows, 1);
-    assert_eq!(sequence_rows, 4);
+    assert_eq!(remaining_rows, 138);
+    assert_eq!(sequence_rows, 5);
 
     application_pool.close().await;
+}
+
+async fn install_truth_observation(
+    pool: &PgPool,
+    observation_id: Uuid,
+    grant_id: Uuid,
+    rule_version_id: Uuid,
+    hash_byte: &str,
+) {
+    let tenant_one = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let probe_job_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO probe_jobs (\
+            id, tenant_id, normalized_username, site_id, rule_version_id, \
+            region_class, work_key_hash, consent_grant_id, visibility, \
+            state, available_at, created_at, updated_at, completed_at\
+         ) VALUES (\
+            $1, $2, 'contrib-cal-1', 'contrib-test', $3, 'jp', \
+            decode(repeat($4, 32), 'hex'), $5, 'private', 'succeeded', \
+            clock_timestamp(), clock_timestamp(), clock_timestamp(), \
+            clock_timestamp()\
+         )",
+    )
+    .bind(probe_job_id)
+    .bind(tenant_one)
+    .bind(rule_version_id)
+    .bind(hash_byte)
+    .bind(grant_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO observations (\
+            id, tenant_id, probe_job_id, consent_grant_id, \
+            normalized_username, site_id, rule_version_id, outcome_kind, \
+            verdict, evidence_class, evidence_digest, source, \
+            producer_kind, visibility, region_class, rule_health_green, \
+            observed_at, expires_at, created_at\
+         ) VALUES (\
+            $1, $2, $3, $4, 'contrib-cal-1', 'contrib-test', $5, \
+            'definitive', 'found', 'e4_structured_identity', \
+            decode(repeat($6, 32), 'hex'), 'managed_probe', \
+            'managed_worker', 'private', 'jp', true, clock_timestamp(), \
+            clock_timestamp() + interval '1 hour', clock_timestamp()\
+         )",
+    )
+    .bind(observation_id)
+    .bind(tenant_one)
+    .bind(probe_job_id)
+    .bind(grant_id)
+    .bind(rule_version_id)
+    .bind(hash_byte)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Seeds one bounded batch of synthetic calibration inputs: direct
+/// contribution rows for the installation plus their derived validation rows
+/// against one retained truth observation. The evaluation logic reads the
+/// validation table, so the seeds exercise the tier thresholds
+/// deterministically without thousands of HTTP submissions.
+async fn seed_calibration_validations(
+    pool: &PgPool,
+    client_id: Uuid,
+    observation_id: Uuid,
+    sequence_base: i64,
+    count: i32,
+    site_family: &str,
+    agreement: bool,
+) {
+    sqlx::query(
+        "WITH seeded AS (\
+            INSERT INTO shared_contributions (\
+                id, tenant_id, client_id, consent_grant_id, sequence_number, \
+                content_digest, normalized_username, site_id, rule_version_id, \
+                engine_hash, outcome_kind, verdict, uncertainty_reason, \
+                evidence_class, evidence_digest, region_class, network_class, \
+                network_group, influence_scope, history_reason, observed_at, \
+                received_at, expires_at, created_at\
+             ) \
+             SELECT \
+                gen_random_uuid(), '00000000-0000-0000-0000-000000000001', \
+                $1, \
+                (SELECT id FROM consent_grants \
+                 WHERE tenant_id = '00000000-0000-0000-0000-000000000001' \
+                   AND client_id = $1 AND purpose = 'shared_observation'), \
+                $2 + n, \
+                decode(lpad(to_hex($2 + n), 8, '0') || repeat('00', 28), 'hex'), \
+                'contrib-cal-1', 'contrib-test', \
+                (SELECT id FROM rule_versions WHERE site_id = 'contrib-test'), \
+                decode(repeat('ab', 32), 'hex'), 'definitive', 'found', NULL, \
+                'e3_explicit_endpoint', decode(repeat('ee', 32), 'hex'), \
+                'jp', 'residential', decode(repeat('cd', 32), 'hex'), \
+                'history_only', 'stale_upload', \
+                clock_timestamp() - interval '1 hour', \
+                clock_timestamp() - interval '50 minutes', \
+                clock_timestamp() + interval '23 hours', \
+                clock_timestamp() - interval '50 minutes' \
+             FROM generate_series(1, $3::integer) AS n \
+             RETURNING id\
+         ) \
+         INSERT INTO contribution_validations (\
+            id, tenant_id, contribution_id, observation_id, client_id, \
+            site_family, region_class, agreement, contribution_verdict, \
+            truth_verdict, validated_at\
+         ) \
+         SELECT \
+            gen_random_uuid(), '00000000-0000-0000-0000-000000000001', \
+            seeded.id, $4, $1, $5, 'jp', $6, 'found', \
+            CASE WHEN $6 THEN 'found' ELSE 'not_found' END, clock_timestamp() \
+         FROM seeded",
+    )
+    .bind(client_id)
+    .bind(sequence_base)
+    .bind(count)
+    .bind(observation_id)
+    .bind(site_family)
+    .bind(agreement)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 async fn assert_private_search_and_event_stream_boundary(administrator_pool: &PgPool) {
@@ -9854,7 +10257,8 @@ async fn install_worker_role(pool: &PgPool) {
             notification_delivery_attempts, evidence_capsules,
             evidence_retention_receipts, deletion_requests,
             deletion_resource_matches, deletion_tasks, suppression_tokens,
-            shared_contributions
+            shared_contributions, contribution_validations,
+            contributor_reputation
             TO socialname_migration_test_worker;
         GRANT INSERT ON
             search_events, probe_jobs, probe_job_consumers, observations,
@@ -9915,8 +10319,12 @@ async fn install_worker_role(pool: &PgPool) {
             notification_deliveries, transitions, regional_assertions,
             assertions, evidence_retention_receipts, evidence_capsules,
             search_events, observations, shared_contributions,
-            data_lineage_edges
+            contribution_validations, data_lineage_edges
             TO socialname_migration_test_worker;
+        GRANT UPDATE (
+            validated_overlaps, agreement_hits, agreement_misses,
+            revision, updated_at
+        ) ON contributor_reputation TO socialname_migration_test_worker;
         GRANT EXECUTE ON FUNCTION
             socialname_worker_resolve_rule(
                 text, bytea, bytea, text, bytea, bigint, bytea, bigint
@@ -9931,6 +10339,7 @@ async fn install_worker_role(pool: &PgPool) {
             socialname_worker_claim_email_delivery(text, integer, integer),
             socialname_worker_enforce_evidence_retention(integer),
             socialname_worker_enforce_developer_usage_retention(integer),
+            socialname_worker_validate_contributions(integer),
             socialname_worker_claim_deletion(text, integer)
             TO socialname_migration_test_worker;
         "#,

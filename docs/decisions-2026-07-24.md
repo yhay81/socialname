@@ -286,12 +286,22 @@ so status does not diverge across design records.
   tenant and installation ceilings; probe-plan disagreement is
   fabricated-plan evidence with immediate site-family suspension; diversity
   records a keyed coarse region/network/week independence bucket and never a
-  client IP. Reputation tiers are closed database-guarded states whose
-  calibration ascent and any corroboration influence remain later ordered
-  work; no contribution reaches `assertion_support`, `verified` truth, or a
-  notification in this slice. Contributor deletion, verified target-person
-  deletion, worker purge, and restore-ledger replay all traverse
-  contributions.
+  client IP. Reputation tiers are closed database-guarded states; no
+  contribution reaches `assertion_support`, `verified` truth, or a
+  notification. Contributor deletion, verified target-person deletion, worker
+  purge, and restore-ledger replay all traverse contributions.
+- Reputation calibration is a bounded worker evaluation against managed
+  truth: the nearest same-rule, same-region, strong, health-green managed
+  observation within fifteen minutes labels each definitive contribution
+  exactly once in append-only `contribution_validations`. Tiers evaluate over
+  a trailing 120-day window (the deterministic initial approximation of the
+  60-day half-life) with the documented 20/98%/7-day and
+  100/99%/30-day/5-family thresholds, move one legal step per pass, demote on
+  shrinking support, and suspend on rolling agreement below 90% over at least
+  ten validations. Cached reputation counters are recomputable projections so
+  lineage-backed deletion can rebuild them from remaining validations; every
+  threshold is an initial calibration parameter requiring labeled-canary
+  replay before production. Quorum corroboration remains later ordered work.
 
 ## Detailed records
 
@@ -444,8 +454,12 @@ so status does not diverge across design records.
     high-water/violation control, UTC-day quotas, probe-plan and window
     anomaly rejection, keyed coarse independence facts, guarded reputation
     tiers with violation suspension, and complete deletion/suppression/restore
-    traversal. Calibration ascent and quorum corroboration remain ordered
-    later work.
+    traversal.
+33. **Done:** Add reputation calibration: bounded worker validation of
+    definitive contributions against exact managed truth, append-only
+    validation lineage, windowed threshold ascent/demotion through the closed
+    tier matrix, rolling-agreement collapse suspension, and deletion-driven
+    counter recomputation. Quorum corroboration remains ordered later work.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -462,7 +476,9 @@ remote client boundaries, private search history, bounded export,
 adoption-focused examples, and provider-neutral plan entitlements. Payment
 provider integration and hosted commercial evidence remain external.
 Milestone 5 has its repository-complete Team organization workflow and the
-shared-contribution acceptance boundary with replay, quota, anomaly,
-diversity, and reputation-suspension controls. Collaboration integrations
-wait for demonstrated customer workflow demand; reputation calibration,
-quorum corroboration, and any community daemon remain ordered later work.
+complete shared-contribution software boundary: acceptance with replay,
+quota, anomaly, diversity, and reputation controls plus managed-truth
+calibration. Collaboration integrations wait for demonstrated customer
+workflow demand; labeled-canary threshold replay is an external calibration
+gate; quorum corroboration and any community daemon remain ordered later
+work.

@@ -502,6 +502,65 @@ async fn delete_primary_resources(
                  AND matched.resource_kind = 'observation' \
                  AND matched.resource_id = target.observation_id\
            )",
+        "DELETE FROM contribution_validations AS validation \
+         WHERE validation.tenant_id = $1 AND (\
+             EXISTS (\
+                 SELECT 1 FROM deletion_resource_matches AS matched \
+                 WHERE matched.tenant_id = validation.tenant_id \
+                   AND matched.deletion_request_id = $2 \
+                   AND matched.resource_kind = 'shared_contribution' \
+                   AND matched.resource_id = validation.contribution_id\
+             ) \
+             OR EXISTS (\
+                 SELECT 1 FROM deletion_resource_matches AS matched \
+                 WHERE matched.tenant_id = validation.tenant_id \
+                   AND matched.deletion_request_id = $2 \
+                   AND matched.resource_kind = 'observation' \
+                   AND matched.resource_id = validation.observation_id\
+             )\
+         )",
+        "UPDATE contributor_reputation AS reputation \
+         SET validated_overlaps = (\
+                SELECT count(*) FROM contribution_validations AS validation \
+                WHERE validation.tenant_id = reputation.tenant_id \
+                  AND validation.client_id = reputation.client_id \
+                  AND validation.site_family = reputation.site_family\
+             ), \
+             agreement_hits = (\
+                SELECT count(*) FROM contribution_validations AS validation \
+                WHERE validation.tenant_id = reputation.tenant_id \
+                  AND validation.client_id = reputation.client_id \
+                  AND validation.site_family = reputation.site_family \
+                  AND validation.agreement\
+             ), \
+             agreement_misses = (\
+                SELECT count(*) FROM contribution_validations AS validation \
+                WHERE validation.tenant_id = reputation.tenant_id \
+                  AND validation.client_id = reputation.client_id \
+                  AND validation.site_family = reputation.site_family \
+                  AND NOT validation.agreement\
+             ), \
+             revision = reputation.revision + 1, \
+             updated_at = GREATEST(\
+                clock_timestamp(), reputation.updated_at + interval '1 microsecond'\
+             ) \
+         WHERE reputation.tenant_id = $1 \
+           AND reputation.tier <> 'suspended' \
+           AND (\
+               reputation.validated_overlaps <> (\
+                  SELECT count(*) FROM contribution_validations AS validation \
+                  WHERE validation.tenant_id = reputation.tenant_id \
+                    AND validation.client_id = reputation.client_id \
+                    AND validation.site_family = reputation.site_family\
+               ) \
+               OR reputation.agreement_hits <> (\
+                  SELECT count(*) FROM contribution_validations AS validation \
+                  WHERE validation.tenant_id = reputation.tenant_id \
+                    AND validation.client_id = reputation.client_id \
+                    AND validation.site_family = reputation.site_family \
+                    AND validation.agreement\
+               )\
+           )",
         "DELETE FROM observations AS observation \
          WHERE observation.tenant_id = $1 AND EXISTS (\
              SELECT 1 FROM deletion_resource_matches AS matched \

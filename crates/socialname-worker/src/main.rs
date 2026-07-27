@@ -15,11 +15,11 @@ use socialname_canary::{RulePackMetadataVerifier, RulePackRolloutStage, RulePack
 use socialname_engine::SearchResult;
 use socialname_rule_compiler::RuleCompiler;
 use socialname_worker::{
-    DeletionProcessOutcome, DeletionStore, DeliveryProcessConfig, DeliveryProcessOutcome,
-    DeliverySecrets, DeliveryStore, DeveloperUsageRetentionStore, EmailGatewayConfig,
-    ExpandOutcome, JobDisposition, JobExecutionError, JobStore, ManagedEmailGatewayTransport,
-    ManagedRule, ManagedWebhookTransport, WatchPlanOutcome, WorkerError, process_one_delivery,
-    process_one_email_delivery,
+    ContributionValidationStore, DeletionProcessOutcome, DeletionStore, DeliveryProcessConfig,
+    DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, DeveloperUsageRetentionStore,
+    EmailGatewayConfig, ExpandOutcome, JobDisposition, JobExecutionError, JobStore,
+    ManagedEmailGatewayTransport, ManagedRule, ManagedWebhookTransport, WatchPlanOutcome,
+    WorkerError, process_one_delivery, process_one_email_delivery,
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -50,6 +50,9 @@ enum Command {
     EnforceRetention(EnforceRetentionArgs),
     /// Delete one bounded batch of target-free Developer usage records after 400 days.
     EnforceUsageRetention(EnforceRetentionArgs),
+    /// Validate one bounded batch of shared contributions against managed truth
+    /// and re-evaluate contributor reputation tiers.
+    ValidateContributions(ValidateContributionsArgs),
     /// Withdraw support and purge primary data for at most one deletion request.
     ProcessDeletion(ProcessDeletionArgs),
 }
@@ -127,6 +130,15 @@ struct EnforceRetentionArgs {
 }
 
 #[derive(Debug, Args)]
+struct ValidateContributionsArgs {
+    #[arg(long, default_value_t = 128)]
+    batch_limit: u32,
+    /// Acknowledge database mutation of validation and reputation records.
+    #[arg(long)]
+    allow_live: bool,
+}
+
+#[derive(Debug, Args)]
 struct ProcessDeletionArgs {
     /// Closed lowercase label recorded as the fenced deletion lease owner.
     #[arg(long)]
@@ -188,6 +200,17 @@ struct EnforceUsageRetentionOutput {
 }
 
 #[derive(Serialize)]
+struct ValidateContributionsOutput {
+    schema: &'static str,
+    validated: u32,
+    agreements: u32,
+    disagreements: u32,
+    tier_promotions: u32,
+    tier_demotions: u32,
+    suspensions: u32,
+}
+
+#[derive(Serialize)]
 struct ProcessDeletionOutput {
     schema: &'static str,
     status: &'static str,
@@ -213,8 +236,35 @@ async fn run() -> Result<()> {
         Command::DeliverEmailOne(args) => deliver_email_one(args).await,
         Command::EnforceRetention(args) => enforce_retention(args).await,
         Command::EnforceUsageRetention(args) => enforce_usage_retention(args).await,
+        Command::ValidateContributions(args) => validate_contributions(args).await,
         Command::ProcessDeletion(args) => process_deletion(args).await,
     }
+}
+
+async fn validate_contributions(args: ValidateContributionsArgs) -> Result<()> {
+    if !args.allow_live {
+        bail!("contribution validation requires --allow-live");
+    }
+    if !(1..=1_000).contains(&args.batch_limit) {
+        bail!("contribution validation batch limit must be between 1 and 1000");
+    }
+    let store = ContributionValidationStore::connect_from_env().await?;
+    let outcome = store.validate(args.batch_limit).await;
+    store.close().await;
+    let outcome = outcome?;
+    println!(
+        "{}",
+        serde_json::to_string(&ValidateContributionsOutput {
+            schema: "socialname.dev/contribution-validation-run/v1",
+            validated: outcome.validated,
+            agreements: outcome.agreements,
+            disagreements: outcome.disagreements,
+            tier_promotions: outcome.tier_promotions,
+            tier_demotions: outcome.tier_demotions,
+            suspensions: outcome.suspensions,
+        })?
+    );
+    Ok(())
 }
 
 async fn process_deletion(args: ProcessDeletionArgs) -> Result<()> {

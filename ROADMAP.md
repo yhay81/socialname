@@ -1738,7 +1738,7 @@ Status: **Current**
       controls.
 - [ ] Add collaboration and incident integrations based on demonstrated
       customer workflow demand.
-- [ ] Accept minimized, explicitly consented shared observations with replay,
+- [x] Accept minimized, explicitly consented shared observations with replay,
       quota, anomaly, diversity, and reputation controls.
 - [ ] Implement strict quorum-based `corroborated` assertions and managed
       verification escalation.
@@ -1810,10 +1810,9 @@ passed Rust core including PostgreSQL 18 Team migration, role, review, audit,
 retention, and contract-drift tests; Windows/macOS desktop, monitoring console,
 and managed-worker OCI also passed for commit `9dbca73`.
 
-Shared-contribution acceptance partial software evidence (the roadmap item
-remains open for reputation-calibration ascent; the collaboration-integration
-item stays untouched because its demonstrated-customer-demand trigger is
-external and unmet):
+Shared-contribution acceptance software evidence (the
+collaboration-integration item stays untouched because its
+demonstrated-customer-demand trigger is external and unmet):
 
 ```console
 cargo fmt --all -- --check
@@ -1871,17 +1870,66 @@ echo, exact replay convergence, counted violations and both suspension
 reasons with target-free audit, tenant isolation, cursor validation, seeded
 quota exhaustion with retry-after, append-only and guard-trigger enforcement,
 suppression-blocked resubmission, and retained target-free control rows.
-Reputation calibration ascent (managed-overlap validation toward
-`calibrated`/`trusted`) and quorum `corroborated` derivation remain ordered
-later work; no repository rule is promoted and hosted evidence is not
-claimed. The complete boundary is in
-[`docs/shared-contributions.md`](docs/shared-contributions.md).
+Quorum `corroborated` derivation remains ordered later work; no repository
+rule is promoted and hosted evidence is not claimed. The complete boundary is
+in [`docs/shared-contributions.md`](docs/shared-contributions.md).
 Quality run
 [`30303897889`](https://github.com/yhay81/socialname/actions/runs/30303897889)
 passed Rust core including PostgreSQL 18 shared-contribution migration,
 admission, suppression, deletion, and contract-drift tests; Windows/macOS
 desktop, monitoring console, and managed-worker OCI also passed for commit
 `8b6da7b`.
+
+Reputation-calibration software evidence (closing the item's software gate):
+
+```console
+cargo fmt --all -- --check
+# passed
+cargo test --locked --workspace --all-targets
+# passed against disposable PostgreSQL 18.4, including the extended
+# shared-contribution boundary with the calibration, recomputation, and
+# collapse paths; server 49 library + 2 binary + 1 full integration
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified committed API v1 contracts without drift (41 operations unchanged)
+node --test examples/api-v1/client.test.mjs
+# 5 passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cargo run --locked -p socialname-worker -- validate-contributions --help
+# bounded batch plus explicit --allow-live acknowledgement
+cd apps/desktop && npm run check && npm run build
+cd ../console && npm test && npm run check && npm run build
+# all passed
+```
+
+Migration `0023` brings the schema to 62 product tables and 50 forced-RLS
+policies. The bounded `validate-contributions` worker command labels each
+definitive contribution at most once against the nearest same-rule,
+same-region, strong, health-green managed observation within fifteen minutes,
+appends immutable `contribution_validations` lineage, and re-evaluates
+reputation tiers over a trailing 120-day window: 20 overlaps / 98% agreement
+/ 7 active days ascend to `calibrated`; 100 / 99% / 30 active days / 5 site
+families ascend to `trusted`; shrinking support demotes one legal step per
+pass; rolling agreement below 90% across at least ten validations suspends
+with `agreement_collapse`. Tier changes and suspensions append target-free
+audit events, and suspended-installation contributions are excluded from
+future validation.
+
+Cached reputation counters became recomputable projections so the deletion
+worker can remove validations whose contribution or truth observation was
+deleted and rebuild the remaining aggregates before primary purge. The real
+PostgreSQL 18 gate proves idempotent exact truth matching and agreement
+accounting, both threshold ascents including the activity-day and
+site-family requirements, truth-contributor deletion with validation removal
+and counter recomputation, collapse suspension with its audit trail, and the
+unchanged acceptance, isolation, and purge behavior. Replaying every
+threshold against labeled canary history plus scheduled production operation
+remain external calibration gates and are not claimed.
 
 Acceptance gate:
 
@@ -2111,6 +2159,13 @@ Choose these only when their trigger is measured:
   demonstrated-customer-demand trigger is external and unmet, and kept the
   shared-observation item open for reputation-calibration ascent before
   quorum corroboration.
+- **2026-07-28:** Closed the shared-observation software gate with bounded
+  managed-truth calibration: append-only per-contribution validation lineage,
+  windowed tier ascent/demotion through the closed matrix, rolling-agreement
+  collapse suspension with target-free audit, deletion-driven counter
+  recomputation, and an operable bounded worker command. Kept labeled-canary
+  threshold replay and scheduled production operation as external calibration
+  gates and selected quorum-based `corroborated` assertions next.
 - **2026-07-27:** Added the first Milestone 5 Team workflow: one-workspace
   organizations, role-and-scope authorization, private replay-safe member
   provisioning and safe lifecycle/key invalidation, confirmed-transition
