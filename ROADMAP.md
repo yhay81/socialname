@@ -1655,6 +1655,12 @@ telemetry, or observed language-specific friction. Exact behavior is in
 Hosted export handling, package distribution, adoption measurement, and
 availability remain external evidence and are not claimed.
 
+Quality run
+[`30238982627`](https://github.com/yhay81/socialname/actions/runs/30238982627)
+passed Rust core including PostgreSQL 18 history/export isolation tests,
+contract drift, and the Node.js examples; Windows/macOS desktop, monitoring
+console, and managed-worker OCI also passed for commit `2420203`.
+
 Acceptance gate:
 
 - Local test behavior and managed API behavior use the same engine, rule pack,
