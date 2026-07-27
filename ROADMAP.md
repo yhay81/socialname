@@ -1876,6 +1876,12 @@ Reputation calibration ascent (managed-overlap validation toward
 later work; no repository rule is promoted and hosted evidence is not
 claimed. The complete boundary is in
 [`docs/shared-contributions.md`](docs/shared-contributions.md).
+Quality run
+[`30303897889`](https://github.com/yhay81/socialname/actions/runs/30303897889)
+passed Rust core including PostgreSQL 18 shared-contribution migration,
+admission, suppression, deletion, and contract-drift tests; Windows/macOS
+desktop, monitoring console, and managed-worker OCI also passed for commit
+`8b6da7b`.
 
 Acceptance gate:
 
