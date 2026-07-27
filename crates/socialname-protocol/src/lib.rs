@@ -8,6 +8,7 @@ mod evidence;
 mod monitoring;
 mod notification;
 mod operations;
+mod publication;
 mod schema;
 mod search;
 mod transition;
@@ -55,6 +56,10 @@ pub use operations::{
     DeletionDeadlineSlo, DeletionOverdueMilestones, LatencySlo, OperationalBacklog,
     OperationalObjectives, OperationalReportResource, OperationalReportWindow, RatioSlo, SloStatus,
     TRANSITION_TO_DELIVERY_P95_TARGET_MS, WATCH_RUN_SUCCESS_TARGET_BASIS_POINTS,
+};
+pub use publication::{
+    API_V1_CONTRACT_VERSION, OPENAPI_VERSION, PublishedApiOperation, PublishedHttpMethod,
+    api_v1_contract_files, api_v1_openapi, api_v1_sse_contract, published_api_v1_operations,
 };
 pub use schema::api_v1_schemas;
 pub use search::{

@@ -133,6 +133,26 @@ struct ProtectedRouteState {
     required_scope: ApiKeyScope,
 }
 
+fn server_required_scope(operation_id: &str) -> ApiKeyScope {
+    match operation_id {
+        "getWorkspace" => ApiKeyScope::WorkspaceRead,
+        "createSearch" | "cancelSearch" => ApiKeyScope::SearchWrite,
+        "getSearch" | "streamSearchEvents" => ApiKeyScope::SearchRead,
+        "createWatch" | "updateWatch" | "deleteWatch" => ApiKeyScope::WatchWrite,
+        "listWatches" | "getWatch" | "listWatchTransitions" => ApiKeyScope::WatchRead,
+        "createConsentGrant" | "withdrawConsentGrant" => ApiKeyScope::ConsentWrite,
+        "listConsentGrants" | "getConsentGrant" => ApiKeyScope::ConsentRead,
+        "getEvidenceCapsule" => ApiKeyScope::EvidenceRead,
+        "createContributorDeletion" | "getDeletionRequest" | "getDeletionReceipt" => {
+            ApiKeyScope::DataDelete
+        }
+        "createNotificationAcknowledgement" => ApiKeyScope::NotificationWrite,
+        "getNotificationAcknowledgement" => ApiKeyScope::NotificationRead,
+        "getOperationalReport" => ApiKeyScope::OperationsRead,
+        _ => panic!("server route must name one published operation"),
+    }
+}
+
 pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
     let state = ServerState::new(config, database);
     let workspace_routes = Router::new()
@@ -140,7 +160,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::WorkspaceRead,
+                required_scope: server_required_scope("getWorkspace"),
             },
             authenticate_request,
         ));
@@ -149,7 +169,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::SearchWrite,
+                required_scope: server_required_scope("createSearch"),
             },
             authenticate_request,
         ));
@@ -162,7 +182,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::SearchRead,
+                required_scope: server_required_scope("getSearch"),
             },
             authenticate_request,
         ));
@@ -174,7 +194,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::SearchWrite,
+                required_scope: server_required_scope("cancelSearch"),
             },
             authenticate_request,
         ));
@@ -187,7 +207,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::WatchWrite,
+                required_scope: server_required_scope("createWatch"),
             },
             authenticate_request,
         ));
@@ -201,7 +221,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::WatchRead,
+                required_scope: server_required_scope("listWatches"),
             },
             authenticate_request,
         ));
@@ -217,7 +237,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::ConsentWrite,
+                required_scope: server_required_scope("createConsentGrant"),
             },
             authenticate_request,
         ));
@@ -230,7 +250,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::ConsentRead,
+                required_scope: server_required_scope("listConsentGrants"),
             },
             authenticate_request,
         ));
@@ -242,7 +262,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::EvidenceRead,
+                required_scope: server_required_scope("getEvidenceCapsule"),
             },
             authenticate_request,
         ));
@@ -262,7 +282,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::DataDelete,
+                required_scope: server_required_scope("createContributorDeletion"),
             },
             authenticate_request,
         ));
@@ -274,7 +294,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::NotificationWrite,
+                required_scope: server_required_scope("createNotificationAcknowledgement"),
             },
             authenticate_request,
         ));
@@ -286,7 +306,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::NotificationRead,
+                required_scope: server_required_scope("getNotificationAcknowledgement"),
             },
             authenticate_request,
         ));
@@ -295,7 +315,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .route_layer(middleware::from_fn_with_state(
             ProtectedRouteState {
                 server: state.clone(),
-                required_scope: ApiKeyScope::OperationsRead,
+                required_scope: server_required_scope("getOperationalReport"),
             },
             authenticate_request,
         ));
@@ -612,7 +632,9 @@ mod tests {
         http::{Request, StatusCode},
         routing::get,
     };
-    use socialname_protocol::{API_V1_SCHEMA, ApiErrorResponse, Validate};
+    use socialname_protocol::{
+        API_V1_SCHEMA, ApiErrorResponse, Validate, published_api_v1_operations,
+    };
     use sqlx::{PgPool, postgres::PgPoolOptions};
     use tower::ServiceExt;
 
@@ -706,6 +728,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_published_api_operation_is_registered_by_the_router() {
+        let router = build_router(test_config(Duration::from_secs(1)), test_database());
+        for operation in published_api_v1_operations() {
+            assert_eq!(
+                operation.required_scope,
+                server_required_scope(operation.operation_id),
+                "{} has a published scope different from the router",
+                operation.operation_id
+            );
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(operation.method.as_str())
+                        .uri(concrete_contract_path(operation.path))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{} {} is not registered behind authentication",
+                operation.method.as_str(),
+                operation.path
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn oversized_or_invalid_content_length_is_typed_before_routing() {
         for (content_length, expected_status) in [
             ("4097", StatusCode::PAYLOAD_TOO_LARGE),
@@ -788,5 +841,19 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
+    }
+
+    fn concrete_contract_path(template: &str) -> String {
+        template
+            .split('/')
+            .map(|segment| {
+                if segment.starts_with('{') && segment.ends_with('}') {
+                    "00000000-0000-0000-0000-000000000001"
+                } else {
+                    segment
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/")
     }
 }

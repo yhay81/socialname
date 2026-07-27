@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "NotificationDestination": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "channel": {
+              "const": "email",
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "address"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "channel": {
+              "const": "webhook",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "url"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "destination": {
+      "$ref": "#/$defs/NotificationDestination"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    }
+  },
+  "required": [
+    "schema",
+    "destination"
+  ],
+  "title": "NotificationEndpointCreateRequest",
+  "type": "object"
+}

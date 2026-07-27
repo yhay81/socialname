@@ -68,8 +68,9 @@ The first vertical slice is implemented in the repository:
   quarantine recovery, and complete local deletion;
 - an independent public API v1 crate with closed search/SSE, error,
   source/freshness, watch, transition-confirmation, notification endpoint, and
-  delivery, deletion, and authenticated-workspace DTOs plus generated JSON
-  Schema roots;
+  delivery, deletion, operations, and authenticated-workspace DTOs plus
+  deterministic OpenAPI 3.1.2, JSON Schema, SSE, and digest-manifest
+  publication;
 - an operable Axum/Tower modular monolith with loopback-safe defaults, bounded
   requests, database-aware readiness, closed errors, redacted tracing,
   transactional workspace/API-key operator lifecycle, digest-only bearer
@@ -137,6 +138,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Public protocol v1](protocol-v1.md) — closed REST/SSE DTOs, source and
   freshness, bounded watches, transition confirmation, errors, and notification
   delivery contracts.
+- [API v1 contract publication](api-contract-publication.md) — deterministic
+  OpenAPI, JSON Schema, SSE resumption/frame semantics, manifest integrity,
+  compatibility, and route/scope drift gates.
 - [Modular-monolith server shell](server.md) — process configuration, health,
   request bounds, error and logging boundaries, and graceful shutdown.
 - [PostgreSQL schema and migrations](postgresql-schema.md) — embedded migration
@@ -212,21 +216,16 @@ These terms have distinct meanings and should not be used interchangeably:
 
 The **First paid monitoring loop** software gate is complete. Managed
 observation, assertion recomputation, meaningful transitions, signed webhook
-delivery, and the minimal API-backed console form the tested loop. The current
-roadmap milestone is **Trust, governance, and multi-region operation**. Its
-regional deployment/operator boundary, regional assertion behavior, and
-signed rule-pack distribution, purpose-specific consent lifecycle, bounded
-Evidence Capsule retention, and lineage-backed contributor/target deletion are
-repository-complete. Deterministic daily delete-through scheduling, completed
-receipts, restore-ledger replay, and backup-expiry verification are also
-implemented. Notification acknowledgement, provider-neutral email delivery,
-and target-free operational reporting with a responsive dashboard complete
-the remaining repository software item. Hosted schedule history, provider
-inventory, multi-region deployment, retained production SLO history, and live
-notification evidence remain external.
+delivery, and the minimal API-backed console form the tested loop. Milestone 3,
+**Trust, governance, and multi-region operation**, has completed its
+repository-completable software. Hosted schedule history, provider inventory,
+multi-region deployment, retained production SLO history, and live notification
+evidence remain external.
 
-The next ordered repository-completable work is Milestone 4's stable versioned
-REST/JSON and SSE contract publication.
+The current roadmap milestone is **Developer platform**. Its stable versioned
+REST/JSON and SSE contract publication is repository-complete. The next
+ordered slice covers the remaining batch-search, quota, usage-record, and
+service-reporting boundary; it does not make a hosted-service claim.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

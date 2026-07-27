@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "DeletionReceiptState": {
+      "enum": [
+        "pending",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "DeletionStoreKind": {
+      "enum": [
+        "primary",
+        "derived",
+        "backup"
+      ],
+      "type": "string"
+    },
+    "DeletionStoreReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_at_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "deadline_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/DeletionStoreState"
+        },
+        "store": {
+          "$ref": "#/$defs/DeletionStoreKind"
+        }
+      },
+      "required": [
+        "store",
+        "state",
+        "deadline_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "DeletionStoreState": {
+      "enum": [
+        "pending",
+        "running",
+        "retry_wait",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "backup_expiry_by_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "completed_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "deletion_request_id": {
+      "type": "string"
+    },
+    "evaluated_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "primary_completed_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "remaining_backup_expiry_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "state": {
+      "$ref": "#/$defs/DeletionReceiptState"
+    },
+    "stores": {
+      "items": {
+        "$ref": "#/$defs/DeletionStoreReceipt"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "deletion_request_id",
+    "state",
+    "evaluated_at_unix_ms",
+    "stores",
+    "backup_expiry_by_unix_ms",
+    "remaining_backup_expiry_ms"
+  ],
+  "title": "DeletionReceiptResource",
+  "type": "object"
+}

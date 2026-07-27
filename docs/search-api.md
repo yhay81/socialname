@@ -133,6 +133,9 @@ standard defines `Last-Event-ID` as the reconnect header for that state
 ([WHATWG Server-Sent Events](https://html.spec.whatwg.org/multipage/server-sent-events.html)).
 Axum's SSE event API maps the same `id`, named event, retry hint, and keep-alive
 concepts ([Axum SSE](https://docs.rs/axum/0.8.9/axum/response/sse/)).
+The generated machine-readable form is
+[`contracts/api/v1/sse.json`](../contracts/api/v1/sse.json), linked from the
+published OpenAPI operation.
 
 The endpoint accepts zero or one strict UUID `Last-Event-ID`. It resolves that
 ID only inside the requested tenant/search and emits events after its sequence.

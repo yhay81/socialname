@@ -1,0 +1,103 @@
+{
+  "$defs": {
+    "ApiError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ApiErrorCode"
+        },
+        "retry_after_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "violations": {
+          "items": {
+            "$ref": "#/$defs/FieldViolation"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "code",
+        "retryable",
+        "violations"
+      ],
+      "type": "object"
+    },
+    "ApiErrorCode": {
+      "enum": [
+        "invalid_request",
+        "unauthenticated",
+        "forbidden",
+        "not_found",
+        "conflict",
+        "idempotency_conflict",
+        "rate_limited",
+        "quota_exceeded",
+        "unavailable",
+        "internal"
+      ],
+      "type": "string"
+    },
+    "FieldViolation": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ValidationCode"
+        },
+        "field": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "code"
+      ],
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "ValidationCode": {
+      "enum": [
+        "empty",
+        "too_many_items",
+        "duplicate",
+        "invalid_format",
+        "out_of_range",
+        "invalid_relation"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "error": {
+      "$ref": "#/$defs/ApiError"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    }
+  },
+  "required": [
+    "schema",
+    "request_id",
+    "error"
+  ],
+  "title": "ApiErrorResponse",
+  "type": "object"
+}

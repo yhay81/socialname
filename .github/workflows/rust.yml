@@ -48,6 +48,9 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --locked --workspace --exclude socialname-desktop --all-targets --all-features -- -D warnings
 
+      - name: Verify API v1 contracts
+        run: cargo run --locked -p socialname-protocol --bin socialname-api-contract -- check
+
       - name: Apply PostgreSQL migrations
         run: cargo run --locked -p socialname-server -- migrate
 

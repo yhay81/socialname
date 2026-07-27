@@ -1,0 +1,110 @@
+{
+  "$defs": {
+    "ApiKeyScope": {
+      "enum": [
+        "workspace:read",
+        "search:read",
+        "search:write",
+        "watch:read",
+        "watch:write",
+        "notification:read",
+        "notification:write",
+        "data:export",
+        "data:delete",
+        "consent:read",
+        "consent:write",
+        "evidence:read",
+        "operations:read"
+      ],
+      "type": "string"
+    },
+    "ApiKeyState": {
+      "enum": [
+        "active",
+        "revoked",
+        "expired"
+      ],
+      "type": "string"
+    },
+    "AuthenticatedApiKeyResource": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key_id": {
+          "type": "string"
+        },
+        "expires_at_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key_prefix": {
+          "type": "string"
+        },
+        "scopes": {
+          "items": {
+            "$ref": "#/$defs/ApiKeyScope"
+          },
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ApiKeyState"
+        }
+      },
+      "required": [
+        "api_key_id",
+        "key_prefix",
+        "scopes",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "WorkspaceState": {
+      "enum": [
+        "active",
+        "suspended",
+        "deleting"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authenticated_api_key": {
+      "$ref": "#/$defs/AuthenticatedApiKeyResource"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "slug": {
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/WorkspaceState"
+    },
+    "workspace_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "workspace_id",
+    "slug",
+    "display_name",
+    "state",
+    "authenticated_api_key"
+  ],
+  "title": "WorkspaceResource",
+  "type": "object"
+}

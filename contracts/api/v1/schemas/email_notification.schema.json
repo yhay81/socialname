@@ -1,0 +1,244 @@
+{
+  "$defs": {
+    "AccountState": {
+      "enum": [
+        "found",
+        "not_found"
+      ],
+      "type": "string"
+    },
+    "ConfirmationBasis": {
+      "enum": [
+        "managed_e4",
+        "managed_e3_follow_up",
+        "two_managed_independent_regions",
+        "two_managed_separated_in_time",
+        "corroborated_shared_candidate_opt_in",
+        "measurement_health_evidence"
+      ],
+      "type": "string"
+    },
+    "MeasurementState": {
+      "enum": [
+        "healthy",
+        "degraded",
+        "quarantined",
+        "recovering",
+        "unavailable"
+      ],
+      "type": "string"
+    },
+    "PendingConfirmationReason": {
+      "enum": [
+        "managed_verification_required",
+        "second_managed_observation_required",
+        "regional_conflict"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "SuppressionReason": {
+      "enum": [
+        "shared_only_absence",
+        "conflicting_evidence",
+        "watch_paused",
+        "supporting_evidence_deleted"
+      ],
+      "type": "string"
+    },
+    "Target": {
+      "additionalProperties": false,
+      "properties": {
+        "site_id": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "site_id"
+      ],
+      "type": "object"
+    },
+    "Transition": {
+      "additionalProperties": false,
+      "properties": {
+        "change": {
+          "$ref": "#/$defs/TransitionChange"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/TransitionConfirmation"
+        },
+        "detected_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "schema": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "supporting_observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        },
+        "transition_id": {
+          "type": "string"
+        },
+        "watch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "transition_id",
+        "watch_id",
+        "target",
+        "change",
+        "confirmation",
+        "supporting_observation_ids",
+        "detected_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "TransitionChange": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "class": {
+              "const": "account_state",
+              "type": "string"
+            },
+            "from": {
+              "$ref": "#/$defs/AccountState"
+            },
+            "to": {
+              "$ref": "#/$defs/AccountState"
+            }
+          },
+          "required": [
+            "class",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "class": {
+              "const": "measurement_health",
+              "type": "string"
+            },
+            "from": {
+              "$ref": "#/$defs/MeasurementState"
+            },
+            "region_class": {
+              "type": "string"
+            },
+            "rule_hash": {
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/MeasurementState"
+            }
+          },
+          "required": [
+            "class",
+            "region_class",
+            "rule_hash",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TransitionConfirmation": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/PendingConfirmationReason"
+            },
+            "status": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "basis": {
+              "$ref": "#/$defs/ConfirmationBasis"
+            },
+            "status": {
+              "const": "confirmed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "basis"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/SuppressionReason"
+            },
+            "status": {
+              "const": "suppressed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "delivery_id": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "transition": {
+      "$ref": "#/$defs/Transition"
+    }
+  },
+  "required": [
+    "schema",
+    "delivery_id",
+    "transition"
+  ],
+  "title": "EmailNotification",
+  "type": "object"
+}

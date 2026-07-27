@@ -86,16 +86,20 @@ person.
 - Database-time 24-hour, 7-day, and 30-day operational reporting with an
   independent scope, current backlog, explicit no-data state,
   channel-separated delivery success/latency, and deletion deadline health.
+- Deterministic API v1 publication with 22 scoped operations, OpenAPI 3.1.2,
+  all Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
+  SHA-256 drift manifest.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
 
-Milestone 3's repository-completable software is now implemented. Real
-regional deployment, retained production SLO history, and production
-notification evidence remain external gates. The next ordered repository
-slice publishes the stable versioned REST/JSON and SSE contracts for
-Milestone 4 without changing the local-first engine semantics.
+Milestone 3's repository-completable software is implemented, and Milestone 4
+has started with stable REST/JSON and SSE contract publication. Real regional
+deployment, retained production SLO history, production notification evidence,
+and a hosted Developer API remain external gates. The next ordered repository
+slice adds the remaining batch, quota, usage, and service-reporting boundary
+without changing the local-first engine semantics.
 
 ## Build and verify
 
@@ -114,6 +118,12 @@ cargo run -p socialname-cli -- rules validate
 cargo run -p socialname-cli -- rules list --all
 cargo run -p socialname-cli -- canaries validate
 cargo run -p socialname-cli -- fixtures
+```
+
+Verify the committed Developer API artifacts:
+
+```console
+cargo run --locked -p socialname-protocol --bin socialname-api-contract -- check
 ```
 
 Run an explicitly local live probe:

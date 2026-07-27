@@ -1,0 +1,31 @@
+{
+  "$defs": {
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acknowledged_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "delivery_id": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    }
+  },
+  "required": [
+    "schema",
+    "delivery_id",
+    "acknowledged_at_unix_ms"
+  ],
+  "title": "NotificationAcknowledgementResource",
+  "type": "object"
+}

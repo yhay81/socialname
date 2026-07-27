@@ -1,1 +1,2 @@
 *.sql text eol=lf
+contracts/api/v1/** text eol=lf

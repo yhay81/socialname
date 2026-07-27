@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "SearchCreateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "consent_grant_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "maximum_age_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "mode": {
+          "$ref": "#/$defs/SearchMode"
+        },
+        "region_classes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "sync": {
+          "$ref": "#/$defs/SyncPolicy"
+        },
+        "targets": {
+          "$ref": "#/$defs/TargetSelection"
+        }
+      },
+      "required": [
+        "schema",
+        "targets",
+        "mode",
+        "sync",
+        "maximum_age_ms",
+        "region_classes"
+      ],
+      "type": "object"
+    },
+    "SearchMode": {
+      "enum": [
+        "local",
+        "cache",
+        "remote",
+        "hybrid"
+      ],
+      "type": "string"
+    },
+    "SearchProgress": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_targets": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "definitive_results": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operational_failures": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_targets": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uncertain_results": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total_targets",
+        "completed_targets",
+        "definitive_results",
+        "uncertain_results",
+        "operational_failures"
+      ],
+      "type": "object"
+    },
+    "SearchState": {
+      "enum": [
+        "accepted",
+        "running",
+        "completed",
+        "cancelled",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "SyncPolicy": {
+      "enum": [
+        "never",
+        "private",
+        "shared"
+      ],
+      "type": "string"
+    },
+    "TargetSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "site_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "usernames": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "usernames",
+        "site_ids"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "created_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "progress": {
+      "$ref": "#/$defs/SearchProgress"
+    },
+    "request": {
+      "$ref": "#/$defs/SearchCreateRequest"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "search_id": {
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/SearchState"
+    },
+    "updated_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema",
+    "search_id",
+    "state",
+    "request",
+    "progress",
+    "created_at_unix_ms",
+    "updated_at_unix_ms"
+  ],
+  "title": "SearchResource",
+  "type": "object"
+}

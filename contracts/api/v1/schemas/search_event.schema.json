@@ -1,0 +1,662 @@
+{
+  "$defs": {
+    "Assertion": {
+      "additionalProperties": false,
+      "properties": {
+        "conflicting_observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "derivation_version": {
+          "type": "string"
+        },
+        "evidence_class": {
+          "$ref": "#/$defs/EvidenceClass"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        },
+        "managed_support": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "$ref": "#/$defs/AssertionOutcome"
+        },
+        "quality": {
+          "$ref": "#/$defs/AssertionQuality"
+        },
+        "regional_assertions": {
+          "items": {
+            "$ref": "#/$defs/RegionalAssertion"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "regions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/ResultSource"
+          },
+          "type": "array"
+        },
+        "support_group_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supporting_observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "target",
+        "outcome",
+        "quality",
+        "evidence_class",
+        "freshness",
+        "sources",
+        "regions",
+        "support_group_count",
+        "managed_support",
+        "supporting_observation_ids",
+        "conflicting_observation_ids",
+        "derivation_version"
+      ],
+      "type": "object"
+    },
+    "AssertionOutcome": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "found",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "not_found",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "inconclusive",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/UncertaintyReason"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AssertionQuality": {
+      "enum": [
+        "verified",
+        "corroborated",
+        "single_vantage",
+        "stale",
+        "conflicted",
+        "untrusted"
+      ],
+      "type": "string"
+    },
+    "DefinitiveResult": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_class": {
+          "$ref": "#/$defs/EvidenceClass"
+        },
+        "evidence_digest": {
+          "type": "string"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        },
+        "observation_id": {
+          "type": "string"
+        },
+        "profile_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "region_class": {
+          "type": "string"
+        },
+        "rule_hash": {
+          "type": "string"
+        },
+        "rule_health": {
+          "$ref": "#/$defs/RuleHealthStatus"
+        },
+        "source": {
+          "$ref": "#/$defs/ResultSource"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        },
+        "verdict": {
+          "$ref": "#/$defs/DefinitiveVerdict"
+        }
+      },
+      "required": [
+        "observation_id",
+        "target",
+        "verdict",
+        "source",
+        "freshness",
+        "evidence_class",
+        "evidence_digest",
+        "region_class",
+        "rule_hash",
+        "rule_health"
+      ],
+      "type": "object"
+    },
+    "DefinitiveVerdict": {
+      "enum": [
+        "found",
+        "not_found"
+      ],
+      "type": "string"
+    },
+    "EvidenceClass": {
+      "enum": [
+        "e0_no_account_evidence",
+        "e1_weak_signal",
+        "e2_differential_template",
+        "e3_explicit_endpoint",
+        "e4_structured_identity"
+      ],
+      "type": "string"
+    },
+    "Freshness": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "expires_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "maximum_age_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "observed_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/FreshnessState"
+        }
+      },
+      "required": [
+        "observed_at_unix_ms",
+        "expires_at_unix_ms",
+        "evaluated_at_unix_ms",
+        "maximum_age_ms",
+        "state"
+      ],
+      "type": "object"
+    },
+    "FreshnessState": {
+      "enum": [
+        "current",
+        "stale",
+        "expired"
+      ],
+      "type": "string"
+    },
+    "OperationalFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/OperationalFailureKind"
+        },
+        "occurred_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "region_class": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "rule_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/ResultSource"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "target",
+        "kind",
+        "source",
+        "occurred_at_unix_ms",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "OperationalFailureKind": {
+      "enum": [
+        "invalid_target",
+        "blocked",
+        "rate_limited",
+        "timeout",
+        "dns",
+        "connect",
+        "tls",
+        "redirect_rejected",
+        "response_too_large",
+        "decode",
+        "rule_unavailable",
+        "capacity_unavailable"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "RegionalAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "conflicting_observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "evidence_class": {
+          "$ref": "#/$defs/EvidenceClass"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        },
+        "managed_support": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "$ref": "#/$defs/AssertionOutcome"
+        },
+        "quality": {
+          "$ref": "#/$defs/AssertionQuality"
+        },
+        "region_class": {
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/ResultSource"
+          },
+          "type": "array"
+        },
+        "support_group_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supporting_observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "region_class",
+        "outcome",
+        "quality",
+        "evidence_class",
+        "freshness",
+        "sources",
+        "support_group_count",
+        "managed_support",
+        "supporting_observation_ids",
+        "conflicting_observation_ids"
+      ],
+      "type": "object"
+    },
+    "ResultSource": {
+      "enum": [
+        "local_cache",
+        "local_probe",
+        "private_cloud",
+        "shared_assertion",
+        "managed_probe"
+      ],
+      "type": "string"
+    },
+    "RuleHealthStatus": {
+      "enum": [
+        "healthy",
+        "degraded",
+        "quarantined",
+        "recovering",
+        "unavailable",
+        "stale"
+      ],
+      "type": "string"
+    },
+    "SearchEventData": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "total_targets": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "started",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "total_targets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "result": {
+              "$ref": "#/$defs/DefinitiveResult"
+            },
+            "type": {
+              "const": "definitive_result",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "result": {
+              "$ref": "#/$defs/UncertainResult"
+            },
+            "type": {
+              "const": "uncertain_result",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "failure": {
+              "$ref": "#/$defs/OperationalFailure"
+            },
+            "type": {
+              "const": "operational_failure",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "failure"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "assertion": {
+              "$ref": "#/$defs/Assertion"
+            },
+            "type": {
+              "const": "assertion_updated",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "assertion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "progress": {
+              "$ref": "#/$defs/SearchProgress"
+            },
+            "state": {
+              "$ref": "#/$defs/SearchTerminalState"
+            },
+            "type": {
+              "const": "finished",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "state",
+            "progress"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SearchProgress": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_targets": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "definitive_results": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operational_failures": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_targets": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uncertain_results": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total_targets",
+        "completed_targets",
+        "definitive_results",
+        "uncertain_results",
+        "operational_failures"
+      ],
+      "type": "object"
+    },
+    "SearchTerminalState": {
+      "enum": [
+        "completed",
+        "cancelled",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "Target": {
+      "additionalProperties": false,
+      "properties": {
+        "site_id": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "site_id"
+      ],
+      "type": "object"
+    },
+    "UncertainResult": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_class": {
+          "$ref": "#/$defs/EvidenceClass"
+        },
+        "evidence_digest": {
+          "type": "string"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        },
+        "observation_id": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/UncertaintyReason"
+        },
+        "region_class": {
+          "type": "string"
+        },
+        "rule_hash": {
+          "type": "string"
+        },
+        "rule_health": {
+          "$ref": "#/$defs/RuleHealthStatus"
+        },
+        "source": {
+          "$ref": "#/$defs/ResultSource"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "observation_id",
+        "target",
+        "reason",
+        "source",
+        "freshness",
+        "evidence_class",
+        "evidence_digest",
+        "region_class",
+        "rule_hash",
+        "rule_health"
+      ],
+      "type": "object"
+    },
+    "UncertaintyReason": {
+      "enum": [
+        "site_changed",
+        "no_rule_matched",
+        "conflicting_evidence",
+        "classification_ambiguous"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/SearchEventData"
+    },
+    "emitted_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "search_id": {
+      "type": "string"
+    },
+    "sequence": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema",
+    "event_id",
+    "search_id",
+    "sequence",
+    "emitted_at_unix_ms",
+    "data"
+  ],
+  "title": "SearchEvent",
+  "type": "object"
+}

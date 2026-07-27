@@ -1,0 +1,75 @@
+{
+  "api_schema": "socialname.dev/api/v1",
+  "contract_version": "1.0.0",
+  "events": {
+    "search_event": {
+      "data": {
+        "encoding": "json",
+        "schema": {
+          "$ref": "./schemas/search_event.schema.json"
+        }
+      },
+      "event": "search_event",
+      "id": {
+        "format": "uuid",
+        "replay_cursor": true,
+        "required": true
+      },
+      "persisted": true,
+      "retry_ms": 1000
+    },
+    "stream_error": {
+      "data": {
+        "encoding": "json",
+        "schema": {
+          "$ref": "./schemas/api_error_response.schema.json"
+        }
+      },
+      "event": "stream_error",
+      "id": {
+        "forbidden": true
+      },
+      "persisted": false,
+      "retry": {
+        "forbidden": true
+      },
+      "terminal_for_connection": true
+    }
+  },
+  "operation_id": "streamSearchEvents",
+  "request": {
+    "headers": {
+      "Last-Event-ID": {
+        "format": "uuid",
+        "maximum_instances": 1,
+        "meaning": "Resume strictly after this tenant-and-search-local persisted event.",
+        "required": false
+      }
+    },
+    "method": "GET",
+    "path": "/v1/searches/{search_id}/events",
+    "required_scope": "search:read"
+  },
+  "response": {
+    "authorization_rechecked_each_poll": true,
+    "content_type": "text/event-stream",
+    "delivery": "at_least_once",
+    "keep_alive": {
+      "interval_ms": 10000,
+      "kind": "comment",
+      "text": "keep-alive"
+    },
+    "maximum_connection_lifetime_ms": 30000,
+    "maximum_events_per_query": 128,
+    "ordering": "sequence_ascending",
+    "poll_interval_ms": 250,
+    "status": 200
+  },
+  "resumption": {
+    "cursor": "search_event.id",
+    "deduplicate_by": "search_event.id",
+    "header": "Last-Event-ID",
+    "malformed_duplicate_foreign_or_unknown_cursor": "invalid_request_before_stream"
+  },
+  "schema": "socialname.dev/sse-contract/v1"
+}

@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "DeletionRequestState": {
+      "enum": [
+        "hidden",
+        "withdrawing_support",
+        "deleting",
+        "rebuilding",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "DeletionScope": {
+      "enum": [
+        "contributor",
+        "target"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "backup_expiry_by_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "completed_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "deletion_request_id": {
+      "type": "string"
+    },
+    "derived_rebuild_by_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "hidden_resources": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "hide_by_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "matched_observations": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "primary_completed_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "primary_delete_by_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "requested_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "scope": {
+      "$ref": "#/$defs/DeletionScope"
+    },
+    "state": {
+      "$ref": "#/$defs/DeletionRequestState"
+    },
+    "support_withdrawal_by_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "support_withdrawn_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "deletion_request_id",
+    "scope",
+    "state",
+    "requested_at_unix_ms",
+    "hide_by_unix_ms",
+    "support_withdrawal_by_unix_ms",
+    "primary_delete_by_unix_ms",
+    "derived_rebuild_by_unix_ms",
+    "backup_expiry_by_unix_ms",
+    "matched_observations",
+    "hidden_resources"
+  ],
+  "title": "DeletionRequestResource",
+  "type": "object"
+}

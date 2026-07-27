@@ -1,0 +1,207 @@
+{
+  "$defs": {
+    "ProbeBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum_bytes_per_run": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maximum_probes_per_run": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maximum_probes_per_run",
+        "maximum_bytes_per_run"
+      ],
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "TargetSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "site_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "usernames": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "usernames",
+        "site_ids"
+      ],
+      "type": "object"
+    },
+    "WatchCreateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum_age_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "notification_endpoint_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "private_history_consent_grant_id": {
+          "type": "string"
+        },
+        "probe_budget": {
+          "$ref": "#/$defs/ProbeBudget"
+        },
+        "region_classes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "retention_days": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schedule": {
+          "$ref": "#/$defs/WatchSchedule"
+        },
+        "schema": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "targets": {
+          "$ref": "#/$defs/TargetSelection"
+        }
+      },
+      "required": [
+        "schema",
+        "targets",
+        "region_classes",
+        "maximum_age_ms",
+        "schedule",
+        "probe_budget",
+        "notification_endpoint_ids",
+        "private_history_consent_grant_id",
+        "retention_days"
+      ],
+      "type": "object"
+    },
+    "WatchResource": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "$ref": "#/$defs/WatchCreateRequest"
+        },
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "next_run_at_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "state": {
+          "$ref": "#/$defs/WatchState"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "watch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "watch_id",
+        "state",
+        "revision",
+        "configuration",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "WatchSchedule": {
+      "additionalProperties": false,
+      "properties": {
+        "interval_seconds": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "jitter_percent": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "interval_seconds",
+        "jitter_percent"
+      ],
+      "type": "object"
+    },
+    "WatchState": {
+      "enum": [
+        "active",
+        "paused",
+        "deleting"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "next_cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "watches": {
+      "items": {
+        "$ref": "#/$defs/WatchResource"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "watches"
+  ],
+  "title": "WatchListPage",
+  "type": "object"
+}

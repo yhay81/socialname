@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "ConsentCollectionProfileVersion": {
+      "enum": [
+        "profile-v1"
+      ],
+      "type": "string"
+    },
+    "ConsentNoticeVersion": {
+      "enum": [
+        "notice-v1"
+      ],
+      "type": "string"
+    },
+    "ConsentPurpose": {
+      "enum": [
+        "private_history",
+        "shared_observation",
+        "shared_research"
+      ],
+      "type": "string"
+    },
+    "ConsentSubjectKind": {
+      "enum": [
+        "account",
+        "installation"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "collection_profile_version": {
+      "$ref": "#/$defs/ConsentCollectionProfileVersion"
+    },
+    "expires_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "installation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "notice_version": {
+      "$ref": "#/$defs/ConsentNoticeVersion"
+    },
+    "purpose": {
+      "$ref": "#/$defs/ConsentPurpose"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "subject_kind": {
+      "$ref": "#/$defs/ConsentSubjectKind"
+    }
+  },
+  "required": [
+    "schema",
+    "subject_kind",
+    "purpose",
+    "collection_profile_version",
+    "notice_version"
+  ],
+  "title": "ConsentGrantCreateRequest",
+  "type": "object"
+}

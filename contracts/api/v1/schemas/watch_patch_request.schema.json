@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "ProbeBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum_bytes_per_run": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maximum_probes_per_run": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maximum_probes_per_run",
+        "maximum_bytes_per_run"
+      ],
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "WatchSchedule": {
+      "additionalProperties": false,
+      "properties": {
+        "interval_seconds": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "jitter_percent": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "interval_seconds",
+        "jitter_percent"
+      ],
+      "type": "object"
+    },
+    "WatchStateUpdate": {
+      "enum": [
+        "active",
+        "paused"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "expected_revision": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "maximum_age_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "notification_endpoint_ids": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "probe_budget": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProbeBudget"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retention_days": {
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "schedule": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WatchSchedule"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WatchStateUpdate"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "expected_revision"
+  ],
+  "title": "WatchPatchRequest",
+  "type": "object"
+}

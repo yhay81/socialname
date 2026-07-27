@@ -1,0 +1,359 @@
+{
+  "$defs": {
+    "ChannelSlo": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "$ref": "#/$defs/RatioSlo"
+        },
+        "webhook": {
+          "$ref": "#/$defs/RatioSlo"
+        }
+      },
+      "required": [
+        "email",
+        "webhook"
+      ],
+      "type": "object"
+    },
+    "ChannelSlo2": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "$ref": "#/$defs/LatencySlo"
+        },
+        "webhook": {
+          "$ref": "#/$defs/LatencySlo"
+        }
+      },
+      "required": [
+        "email",
+        "webhook"
+      ],
+      "type": "object"
+    },
+    "DeletionDeadlineSlo": {
+      "additionalProperties": false,
+      "properties": {
+        "failed_requests": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "open_requests": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "overdue": {
+          "$ref": "#/$defs/DeletionOverdueMilestones"
+        },
+        "status": {
+          "$ref": "#/$defs/SloStatus"
+        },
+        "target_max_overdue_milestones": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "open_requests",
+        "failed_requests",
+        "overdue",
+        "target_max_overdue_milestones"
+      ],
+      "type": "object"
+    },
+    "DeletionOverdueMilestones": {
+      "additionalProperties": false,
+      "properties": {
+        "backup_expiry": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "derived_rebuild": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hide": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "primary_delete": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "support_withdrawal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "hide",
+        "support_withdrawal",
+        "primary_delete",
+        "derived_rebuild",
+        "backup_expiry"
+      ],
+      "type": "object"
+    },
+    "LatencySlo": {
+      "additionalProperties": false,
+      "properties": {
+        "p95_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "samples": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/SloStatus"
+        },
+        "target_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "samples",
+        "target_ms"
+      ],
+      "type": "object"
+    },
+    "OperationalBacklog": {
+      "additionalProperties": false,
+      "properties": {
+        "active_watches": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deleting_watches": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delivering_email_deliveries": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delivering_webhook_deliveries": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leased_probe_jobs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "oldest_pending_delivery_age_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "oldest_pending_probe_job_age_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "paused_watches": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "planned_watch_runs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued_email_deliveries": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued_probe_jobs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued_webhook_deliveries": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_scheduled_email_deliveries": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_scheduled_webhook_deliveries": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_wait_probe_jobs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "running_watch_runs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active_watches",
+        "paused_watches",
+        "deleting_watches",
+        "planned_watch_runs",
+        "running_watch_runs",
+        "queued_probe_jobs",
+        "leased_probe_jobs",
+        "retry_wait_probe_jobs",
+        "queued_email_deliveries",
+        "delivering_email_deliveries",
+        "retry_scheduled_email_deliveries",
+        "queued_webhook_deliveries",
+        "delivering_webhook_deliveries",
+        "retry_scheduled_webhook_deliveries"
+      ],
+      "type": "object"
+    },
+    "OperationalObjectives": {
+      "additionalProperties": false,
+      "properties": {
+        "deletion_deadline_health": {
+          "$ref": "#/$defs/DeletionDeadlineSlo"
+        },
+        "delivery_success": {
+          "$ref": "#/$defs/ChannelSlo"
+        },
+        "transition_to_delivery_latency": {
+          "$ref": "#/$defs/ChannelSlo2"
+        },
+        "watch_run_success": {
+          "$ref": "#/$defs/RatioSlo"
+        }
+      },
+      "required": [
+        "watch_run_success",
+        "delivery_success",
+        "transition_to_delivery_latency",
+        "deletion_deadline_health"
+      ],
+      "type": "object"
+    },
+    "OperationalReportWindow": {
+      "enum": [
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "RatioSlo": {
+      "additionalProperties": false,
+      "properties": {
+        "good_events": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/SloStatus"
+        },
+        "target_basis_points": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_events": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "good_events",
+        "total_events",
+        "target_basis_points"
+      ],
+      "type": "object"
+    },
+    "SloStatus": {
+      "enum": [
+        "no_data",
+        "meeting",
+        "breached"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "backlog": {
+      "$ref": "#/$defs/OperationalBacklog"
+    },
+    "generated_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "objectives": {
+      "$ref": "#/$defs/OperationalObjectives"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "window": {
+      "$ref": "#/$defs/OperationalReportWindow"
+    },
+    "window_started_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema",
+    "window",
+    "generated_at_unix_ms",
+    "window_started_at_unix_ms",
+    "backlog",
+    "objectives"
+  ],
+  "title": "OperationalReportResource",
+  "type": "object"
+}

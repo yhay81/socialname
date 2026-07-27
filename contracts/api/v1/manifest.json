@@ -1,0 +1,124 @@
+{
+  "api_schema": "socialname.dev/api/v1",
+  "contract_version": "1.0.0",
+  "files": [
+    {
+      "path": "openapi.json",
+      "sha256": "1afdc89578725f80e4a76512a66cae11a761b782951262558bc89b92ace9c5e0"
+    },
+    {
+      "path": "schemas/api_error_response.schema.json",
+      "sha256": "da36b6961418538a4813979519a75ee22835e9ce9c144d92d73ef3eb5c916124"
+    },
+    {
+      "path": "schemas/consent_grant_create_request.schema.json",
+      "sha256": "82da63d3a9ed605fe8e230d51f9d776b4807cece83737e1d2daa0bdddd8c91a9"
+    },
+    {
+      "path": "schemas/consent_grant_list_page.schema.json",
+      "sha256": "0db42ffb0154389c2b32cccf7544670f63d0f6296122a5ee095902b93eab7060"
+    },
+    {
+      "path": "schemas/consent_grant_resource.schema.json",
+      "sha256": "6d0b3cefea3214b6ea3f1068d84cb3232022760504bf489945703dc369ea25e8"
+    },
+    {
+      "path": "schemas/consent_withdrawal_request.schema.json",
+      "sha256": "53575de28c8ab41c85c7007d2a7bad0edb1f97c1ce566123dff33d69f585f14c"
+    },
+    {
+      "path": "schemas/contributor_deletion_create_request.schema.json",
+      "sha256": "2c7aec30f432fadd00075df24f6da6c3963ae1278bdf9f9f5fae3dda3bf2235d"
+    },
+    {
+      "path": "schemas/deletion_receipt_resource.schema.json",
+      "sha256": "e16ffee97267e7c9e86440509f7eb3097508a2935c3fa947f6be0ae0553391ab"
+    },
+    {
+      "path": "schemas/deletion_request_resource.schema.json",
+      "sha256": "408cf459b78945bdf443d2e30c477f574accfa91079589332a060f6829d4329c"
+    },
+    {
+      "path": "schemas/email_notification.schema.json",
+      "sha256": "87743f54d8e806f835c841e424863f0405d205095486547fd5fcb7f263f77007"
+    },
+    {
+      "path": "schemas/evidence_capsule_resource.schema.json",
+      "sha256": "303a50967c070c71434d79fdc5bac1110f18c6cbfc576686c7df7f9dfdc7df66"
+    },
+    {
+      "path": "schemas/notification_acknowledgement_create_request.schema.json",
+      "sha256": "84c7770a5a1b71b19e4e1723ff1b80ea7750df8f55cbaab57cc5cfb4dbb8d78f"
+    },
+    {
+      "path": "schemas/notification_acknowledgement_resource.schema.json",
+      "sha256": "f2d78f28d4142614f7d907dc58d0c6e7430ac7f9d32ffdb6b803d64878ff4da5"
+    },
+    {
+      "path": "schemas/notification_delivery.schema.json",
+      "sha256": "03f2eb893c0efcf188b3f11a0b5f188c83ac24c89f8cfde8b0d7e356e38f8e00"
+    },
+    {
+      "path": "schemas/notification_endpoint_create_request.schema.json",
+      "sha256": "c120ee33106866028a724b50c5bcbc241c0b247b17937c0814dff27c18083ec8"
+    },
+    {
+      "path": "schemas/notification_endpoint_resource.schema.json",
+      "sha256": "b4ecb17bca509293aa313ecf16c6b203b5a3ccfd6c3c290fd54a385ca34211eb"
+    },
+    {
+      "path": "schemas/operational_report_resource.schema.json",
+      "sha256": "c239c0c003f613c441b3d17ed8fc094b63508c4719daf1b6b78ab966919c7187"
+    },
+    {
+      "path": "schemas/search_create_request.schema.json",
+      "sha256": "7a4da74ef7fd176729c7756d062743dede4fad0fcac35c7d86a37aec33fb1c97"
+    },
+    {
+      "path": "schemas/search_event.schema.json",
+      "sha256": "6fe1227bead4f4621697741f3b704757d514d30b9b2cf4678c8f7e5186f5d8ab"
+    },
+    {
+      "path": "schemas/search_resource.schema.json",
+      "sha256": "1b4aae67472cf884ad3856d24268e9a559c7fd3164bf84fb9702c7f80f3438ba"
+    },
+    {
+      "path": "schemas/transition.schema.json",
+      "sha256": "40865bf24599b6e7220e36cc09df2d356a5b9cc7b793e4309df85a6afd62df49"
+    },
+    {
+      "path": "schemas/watch_create_request.schema.json",
+      "sha256": "35cc36ed0d28d722ce7fd7468ae96b36960d86ea1bfee4bdb7bc87e24053462f"
+    },
+    {
+      "path": "schemas/watch_list_page.schema.json",
+      "sha256": "3d0c4d86306e8320549d927754f85a336384f1c3d937cc0802e97bdc843bdef5"
+    },
+    {
+      "path": "schemas/watch_patch_request.schema.json",
+      "sha256": "be3f94713fa5d6e38446b6be0b60c758bed6561a5a0170dcee21b24a776766ab"
+    },
+    {
+      "path": "schemas/watch_resource.schema.json",
+      "sha256": "39e2441b440f877c3e497665c3cd9009c8f493624b47e8ff2bb42133b2be3425"
+    },
+    {
+      "path": "schemas/watch_transition_page.schema.json",
+      "sha256": "3d1146ee959fd6ad7971437c396ef90f74efb1871d7f2c2cf6d23b7441756216"
+    },
+    {
+      "path": "schemas/webhook_notification.schema.json",
+      "sha256": "fc8683bdcb8b021503b60985798cda8a02d0a79e02d5627f3137d7dd476a8b1e"
+    },
+    {
+      "path": "schemas/workspace_resource.schema.json",
+      "sha256": "127d1d3eb2f2fa2b4b741557e883c55f9128f9957d0d96828198b2c07cb879fe"
+    },
+    {
+      "path": "sse.json",
+      "sha256": "892015e359068e5debcb6c6534d3b37a02de8bd00a21b50926de2068bf875435"
+    }
+  ],
+  "openapi_version": "3.1.2",
+  "schema": "socialname.dev/api-contract-manifest/v1"
+}

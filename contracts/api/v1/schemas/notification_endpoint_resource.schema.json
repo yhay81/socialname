@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "NotificationChannel": {
+      "enum": [
+        "email",
+        "webhook"
+      ],
+      "type": "string"
+    },
+    "NotificationEndpointState": {
+      "enum": [
+        "pending_verification",
+        "active",
+        "disabled"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "channel": {
+      "$ref": "#/$defs/NotificationChannel"
+    },
+    "created_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "endpoint_id": {
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "state": {
+      "$ref": "#/$defs/NotificationEndpointState"
+    },
+    "verified_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "endpoint_id",
+    "channel",
+    "state",
+    "created_at_unix_ms"
+  ],
+  "title": "NotificationEndpointResource",
+  "type": "object"
+}

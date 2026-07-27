@@ -588,7 +588,9 @@ registry, and worker binding are specified in
 
 - TypeScript and React with a small Vite monitoring application consuming the
   versioned same-origin API.
-- OpenAPI generated from or checked against protocol types.
+- Deterministic OpenAPI 3.1.2, Draft 2020-12 roots, exact SSE semantics, and a
+  digest manifest generated from protocol types and a closed operation
+  registry, with committed-artifact and Axum route/scope drift tests.
 - OCI images for server and worker deployment. The first provider-neutral,
   one-shot worker artifact and its external regional evidence gate are defined
   in [Regional managed-worker deployment boundary](regional-worker-deployment.md).

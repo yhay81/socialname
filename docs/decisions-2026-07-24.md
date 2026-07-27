@@ -212,6 +212,14 @@ so status does not diverge across design records.
   `no_data` is distinct from success. Deletion is a current deadline-health
   snapshot because the existing schema does not support a complete historical
   compliance claim; production SLA history remains external evidence.
+- API v1 publication is generator-owned and committed as OpenAPI 3.1.2,
+  independent Draft 2020-12 roots, an exact SocialName SSE contract, and a
+  SHA-256 drift manifest. One closed registry owns the 22 published
+  method/path/schema/scope descriptions; Axum keeps an independent
+  operation-to-scope mapping and tests route registration plus exact scope
+  agreement. The publication declares no production origin or availability.
+  Existing v1 field, enum, union, scope, status, or SSE semantic
+  incompatibility requires a new public version and migration policy.
 - Global and regional `assertion/v1` interpretations are derived from the same
   eligible exact-rule observations and evaluation time. Cross-region
   disagreement preserves definitive regional projections behind one global
@@ -340,6 +348,10 @@ so status does not diverge across design records.
     scope, database-time fixed windows, derived `no_data`/`meeting`/`breached`
     objectives, channel-separated delivery success and latency, current
     deletion deadline health, and a responsive same-origin dashboard.
+27. **Done:** Publish all implemented API v1 operations as deterministic
+    OpenAPI 3.1.2, Draft 2020-12 JSON Schema, exact resumable SSE, and
+    digest-manifest artifacts with committed-byte, route, and scope drift
+    gates.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -349,6 +361,7 @@ signed rule-pack distribution, purpose-specific consent lifecycle, bounded
 Evidence Capsule retention, lineage-backed deletion and restore drills,
 notification acknowledgement, email delivery, and operational reporting are
 repository-complete, while actual multi-region deployment, retained production
-SLO history, and mail-provider evidence remain external gates. The next
-ordered repository-completable work is Milestone 4's stable versioned REST/JSON
-and SSE contract publication.
+SLO history, and mail-provider evidence remain external gates. Milestone 4 has
+started with stable REST/JSON and SSE publication. The next ordered
+repository-completable work is its batch-search, quota, usage-record, and
+service-reporting boundary.

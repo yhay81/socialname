@@ -32,7 +32,16 @@ API schema version; it is not silently treated as an additive v1 change.
   withdrawals;
 - bounded Evidence Capsule resources;
 - contributor deletion creation and target-free request resources;
-- authenticated private-workspace resources and API-key scope metadata.
+- authenticated private-workspace resources and API-key scope metadata;
+- target-free operational reports and fixed software-objective state.
+
+The repository publishes every root beside an OpenAPI 3.1.2 description, an
+exact SSE transport contract, and a digest manifest under
+[`contracts/api/v1`](../contracts/api/v1/README.md). The generator-owned route
+registry contains all 22 current operations and their required scopes; server
+tests independently prove that every published method/path is registered
+behind authentication with the same scope. See
+[API v1 contract publication](api-contract-publication.md).
 
 Runtime `Validate` checks supplement JSON Schema where a rule relates multiple
 fields, such as freshness classification, progress totals, consent, transition
@@ -317,7 +326,8 @@ raw values, response bodies, and stack traces are outside the public contract.
 ## Verification
 
 ```console
-cargo test --locked -p socialname-protocol
+cargo run --locked -p socialname-protocol --bin socialname-api-contract -- check
+cargo test --locked -p socialname-protocol --all-targets
 cargo clippy --locked -p socialname-protocol --all-targets --all-features -- -D warnings
 ```
 
@@ -334,3 +344,7 @@ relations, transition/delivery ownership, acknowledgement wire shape, and
 delivered-only acknowledgement relations. Operational-report coverage pins its
 target-free exact wire shape, closed windows, fixed targets, derived status,
 deletion milestone health, and backlog-age relations.
+Publication coverage additionally pins 22 unique operation IDs and
+method/path pairs, exact scopes, resolvable request/response schema roots,
+OpenAPI-to-SSE linkage, deterministic bytes, SHA-256 manifest entries, absence
+of unexpected generated JSON, and router registration.

@@ -1,0 +1,353 @@
+{
+  "$defs": {
+    "DefinitiveVerdict": {
+      "enum": [
+        "found",
+        "not_found"
+      ],
+      "type": "string"
+    },
+    "EvidenceCapsuleProfile": {
+      "enum": [
+        "private_history",
+        "shared_observation",
+        "shared_research"
+      ],
+      "type": "string"
+    },
+    "EvidenceCapsuleSchema": {
+      "enum": [
+        "socialname.dev/evidence-capsule/v1"
+      ],
+      "type": "string"
+    },
+    "EvidenceClass": {
+      "enum": [
+        "e0_no_account_evidence",
+        "e1_weak_signal",
+        "e2_differential_template",
+        "e3_explicit_endpoint",
+        "e4_structured_identity"
+      ],
+      "type": "string"
+    },
+    "EvidenceMatcherTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "matched": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "matched",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "EvidenceNetworkClass": {
+      "enum": [
+        "managed"
+      ],
+      "type": "string"
+    },
+    "EvidenceOutcome": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "definitive",
+              "type": "string"
+            },
+            "verdict": {
+              "$ref": "#/$defs/DefinitiveVerdict"
+            }
+          },
+          "required": [
+            "kind",
+            "verdict"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "uncertain",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/UncertaintyReason"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EvidenceProbe": {
+      "additionalProperties": false,
+      "properties": {
+        "body_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "body_truncated": {
+          "type": "boolean"
+        },
+        "content_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "final_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latency_bucket_ms": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "probe_id": {
+          "type": "string"
+        },
+        "status": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "transport": {
+          "$ref": "#/$defs/EvidenceTransportOutcome"
+        }
+      },
+      "required": [
+        "probe_id",
+        "transport",
+        "body_bytes",
+        "body_truncated",
+        "latency_bucket_ms"
+      ],
+      "type": "object"
+    },
+    "EvidenceProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "engine_hash": {
+          "type": "string"
+        },
+        "rule_hash": {
+          "type": "string"
+        },
+        "rule_pack_hash": {
+          "type": "string"
+        },
+        "rule_pack_metadata_id": {
+          "type": "string"
+        },
+        "rule_promotion_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_hash",
+        "rule_pack_hash",
+        "engine_hash",
+        "rule_pack_metadata_id",
+        "rule_promotion_id"
+      ],
+      "type": "object"
+    },
+    "EvidenceResearchExtension": {
+      "additionalProperties": false,
+      "properties": {
+        "sanitized_excerpt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sanitized_excerpt"
+      ],
+      "type": "object"
+    },
+    "EvidenceTransportOutcome": {
+      "enum": [
+        "completed",
+        "blocked",
+        "rate_limited",
+        "timeout",
+        "dns",
+        "connect",
+        "tls",
+        "redirect_rejected",
+        "response_too_large",
+        "decode"
+      ],
+      "type": "string"
+    },
+    "EvidenceVantage": {
+      "additionalProperties": false,
+      "properties": {
+        "network_class": {
+          "$ref": "#/$defs/EvidenceNetworkClass"
+        },
+        "region_class": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "region_class",
+        "network_class"
+      ],
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "Target": {
+      "additionalProperties": false,
+      "properties": {
+        "site_id": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "site_id"
+      ],
+      "type": "object"
+    },
+    "UncertaintyReason": {
+      "enum": [
+        "site_changed",
+        "no_rule_matched",
+        "conflicting_evidence",
+        "classification_ambiguous"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capsule_schema": {
+      "$ref": "#/$defs/EvidenceCapsuleSchema"
+    },
+    "collected_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "evidence_capsule_id": {
+      "type": "string"
+    },
+    "evidence_class": {
+      "$ref": "#/$defs/EvidenceClass"
+    },
+    "evidence_digest": {
+      "type": "string"
+    },
+    "matcher_trace": {
+      "items": {
+        "$ref": "#/$defs/EvidenceMatcherTrace"
+      },
+      "type": "array"
+    },
+    "observation_id": {
+      "type": "string"
+    },
+    "outcome": {
+      "$ref": "#/$defs/EvidenceOutcome"
+    },
+    "probes": {
+      "items": {
+        "$ref": "#/$defs/EvidenceProbe"
+      },
+      "type": "array"
+    },
+    "profile": {
+      "$ref": "#/$defs/EvidenceCapsuleProfile"
+    },
+    "profile_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provenance": {
+      "$ref": "#/$defs/EvidenceProvenance"
+    },
+    "research_extension": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EvidenceResearchExtension"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "research_retained_until_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "structured_retained_until_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    },
+    "vantage": {
+      "$ref": "#/$defs/EvidenceVantage"
+    }
+  },
+  "required": [
+    "schema",
+    "capsule_schema",
+    "evidence_capsule_id",
+    "observation_id",
+    "profile",
+    "target",
+    "outcome",
+    "provenance",
+    "vantage",
+    "evidence_class",
+    "evidence_digest",
+    "probes",
+    "matcher_trace",
+    "collected_at_unix_ms",
+    "structured_retained_until_unix_ms"
+  ],
+  "title": "EvidenceCapsuleResource",
+  "type": "object"
+}

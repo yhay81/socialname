@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "ConfirmationBasis": {
+      "enum": [
+        "managed_e4",
+        "managed_e3_follow_up",
+        "two_managed_independent_regions",
+        "two_managed_separated_in_time",
+        "corroborated_shared_candidate_opt_in",
+        "measurement_health_evidence"
+      ],
+      "type": "string"
+    },
+    "NotificationChannel": {
+      "enum": [
+        "email",
+        "webhook"
+      ],
+      "type": "string"
+    },
+    "NotificationDeliveryState": {
+      "enum": [
+        "queued",
+        "delivering",
+        "retry_scheduled",
+        "delivered",
+        "permanently_failed",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "NotificationKind": {
+      "enum": [
+        "account_state",
+        "measurement_health"
+      ],
+      "type": "string"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acknowledged_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "attempt_count": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "channel": {
+      "$ref": "#/$defs/NotificationChannel"
+    },
+    "confirmation_basis": {
+      "$ref": "#/$defs/ConfirmationBasis"
+    },
+    "created_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "delivered_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "delivery_id": {
+      "type": "string"
+    },
+    "endpoint_id": {
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/NotificationKind"
+    },
+    "last_error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "logical_notification_key": {
+      "type": "string"
+    },
+    "next_attempt_at_unix_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "state": {
+      "$ref": "#/$defs/NotificationDeliveryState"
+    },
+    "transition_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "delivery_id",
+    "transition_id",
+    "endpoint_id",
+    "logical_notification_key",
+    "kind",
+    "channel",
+    "confirmation_basis",
+    "state",
+    "attempt_count",
+    "created_at_unix_ms"
+  ],
+  "title": "NotificationDelivery",
+  "type": "object"
+}

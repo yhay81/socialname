@@ -1,0 +1,91 @@
+{
+  "$defs": {
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "SearchMode": {
+      "enum": [
+        "local",
+        "cache",
+        "remote",
+        "hybrid"
+      ],
+      "type": "string"
+    },
+    "SyncPolicy": {
+      "enum": [
+        "never",
+        "private",
+        "shared"
+      ],
+      "type": "string"
+    },
+    "TargetSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "site_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "usernames": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "usernames",
+        "site_ids"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "consent_grant_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "maximum_age_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "mode": {
+      "$ref": "#/$defs/SearchMode"
+    },
+    "region_classes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "sync": {
+      "$ref": "#/$defs/SyncPolicy"
+    },
+    "targets": {
+      "$ref": "#/$defs/TargetSelection"
+    }
+  },
+  "required": [
+    "schema",
+    "targets",
+    "mode",
+    "sync",
+    "maximum_age_ms",
+    "region_classes"
+  ],
+  "title": "SearchCreateRequest",
+  "type": "object"
+}
