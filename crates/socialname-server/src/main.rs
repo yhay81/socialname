@@ -4,7 +4,7 @@ use socialname_server::{
     ServerConfig, apply_rule_pack_metadata_from_env, bootstrap_workspace_from_env,
     connect_runtime_database_from_env, export_restore_ledger_from_env, issue_api_key_from_env,
     migrate_database_from_env, replay_restore_ledger_from_env, request_target_deletion_from_env,
-    revoke_api_key_from_env, verify_backup_expiry_from_env,
+    revoke_api_key_from_env, set_developer_quota_from_env, verify_backup_expiry_from_env,
 };
 use thiserror::Error;
 use tracing_subscriber::EnvFilter;
@@ -27,6 +27,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let api_key_id = revoke_api_key_from_env().await?;
             println!("api_key_id={api_key_id}");
             println!("state=revoked");
+        }
+        Command::SetDeveloperQuota => {
+            set_developer_quota_from_env().await?.write_to_stdout()?;
         }
         Command::ApplyRulePack => {
             let applied = apply_rule_pack_metadata_from_env().await?;
@@ -69,6 +72,7 @@ enum Command {
     BootstrapWorkspace,
     IssueApiKey,
     RevokeApiKey,
+    SetDeveloperQuota,
     ApplyRulePack,
     RequestTargetDeletion,
     VerifyBackupExpiry,
@@ -91,6 +95,9 @@ fn command_from_args(args: impl IntoIterator<Item = OsString>) -> Result<Command
         }
         (Some(argument), None) if argument == "issue-api-key" => Ok(Command::IssueApiKey),
         (Some(argument), None) if argument == "revoke-api-key" => Ok(Command::RevokeApiKey),
+        (Some(argument), None) if argument == "set-developer-quota" => {
+            Ok(Command::SetDeveloperQuota)
+        }
         (Some(argument), None) if argument == "apply-rule-pack" => Ok(Command::ApplyRulePack),
         (Some(argument), None) if argument == "request-target-deletion" => {
             Ok(Command::RequestTargetDeletion)
@@ -166,6 +173,7 @@ mod tests {
             ("bootstrap-workspace", Command::BootstrapWorkspace),
             ("issue-api-key", Command::IssueApiKey),
             ("revoke-api-key", Command::RevokeApiKey),
+            ("set-developer-quota", Command::SetDeveloperQuota),
             ("apply-rule-pack", Command::ApplyRulePack),
             ("request-target-deletion", Command::RequestTargetDeletion),
             ("verify-backup-expiry", Command::VerifyBackupExpiry),

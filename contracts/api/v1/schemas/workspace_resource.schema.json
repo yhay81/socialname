@@ -14,7 +14,8 @@
         "consent:read",
         "consent:write",
         "evidence:read",
-        "operations:read"
+        "operations:read",
+        "usage:read"
       ],
       "type": "string"
     },

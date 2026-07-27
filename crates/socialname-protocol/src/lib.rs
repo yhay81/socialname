@@ -3,6 +3,7 @@
 mod common;
 mod consent;
 mod deletion;
+mod developer;
 mod error;
 mod evidence;
 mod monitoring;
@@ -34,6 +35,12 @@ pub use deletion::{
     ContributorDeletionCreateRequest, DeletionReceiptResource, DeletionReceiptState,
     DeletionRequestResource, DeletionRequestState, DeletionScope, DeletionStoreKind,
     DeletionStoreReceipt, DeletionStoreState, MAXIMUM_DELETION_MATCH_COUNT,
+};
+pub use developer::{
+    DEVELOPER_FIRST_RESULT_P95_TARGET_MS, DEVELOPER_SEARCH_SUCCESS_TARGET_BASIS_POINTS,
+    DEVELOPER_TERMINAL_P95_TARGET_MS, DeveloperQuotaCounter, DeveloperQuotaSnapshot,
+    DeveloperReportResource, DeveloperReportWindow, DeveloperSearchBacklog,
+    DeveloperServiceObjectives, DeveloperUsageSummary,
 };
 pub use error::{ApiError, ApiErrorCode, ApiErrorResponse, FieldViolation};
 pub use evidence::{

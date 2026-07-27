@@ -214,12 +214,24 @@ so status does not diverge across design records.
   compliance claim; production SLA history remains external evidence.
 - API v1 publication is generator-owned and committed as OpenAPI 3.1.2,
   independent Draft 2020-12 roots, an exact SocialName SSE contract, and a
-  SHA-256 drift manifest. One closed registry owns the 22 published
+  SHA-256 drift manifest. One closed registry owns the 23 published
   method/path/schema/scope descriptions; Axum keeps an independent
   operation-to-scope mapping and tests route registration plus exact scope
   agreement. The publication declares no production origin or availability.
   Existing v1 field, enum, union, scope, status, or SSE semantic
   incompatibility requires a new public version and migration policy.
+- Developer quota admission meters the already-bounded target-pair Cartesian
+  batch, not HTTP request count. One database-time UTC policy enforces both
+  tenant and per-API-key daily ceilings before a new search commits; exact
+  idempotency replay consumes nothing. Quota policy is an operator-controlled
+  software guardrail independent of later plan, billing, and entitlement
+  selection.
+- Developer usage records are append-only, target-free
+  `search_target_admitted` facts written atomically with a newly admitted
+  search and hidden after a fixed 400-day database deadline. The public API
+  exposes only forced-RLS aggregates. Its service report keeps current
+  unfinished work separate from terminal success and latency cohorts, keeps
+  `no_data` distinct from success, and makes no hosted SLA claim.
 - Global and regional `assertion/v1` interpretations are derived from the same
   eligible exact-rule observations and evaluation time. Cross-region
   disagreement preserves definitive regional projections behind one global
@@ -259,6 +271,7 @@ so status does not diverge across design records.
 - [Purpose-specific consent grant lifecycle](consent-api.md)
 - [Bounded Evidence Capsule v1 and retention enforcement](evidence-capsule-v1.md)
 - [Lineage-backed deletion workflows](deletion-workflows.md)
+- [Developer quota, usage, and service reporting](developer-usage-reporting.md)
 
 ## Implementation baseline
 

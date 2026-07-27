@@ -86,7 +86,10 @@ person.
 - Database-time 24-hour, 7-day, and 30-day operational reporting with an
   independent scope, current backlog, explicit no-data state,
   channel-separated delivery success/latency, and deletion deadline health.
-- Deterministic API v1 publication with 22 scoped operations, OpenAPI 3.1.2,
+- UTC-day tenant/API-key target-pair quotas, immutable target-free usage
+  records, and a scoped Developer report with current quota, usage, backlog,
+  and fixed search-service objectives.
+- Deterministic API v1 publication with 23 scoped operations, OpenAPI 3.1.2,
   all Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
   SHA-256 drift manifest.
 - Ten representative site rules and 30 minimized offline fixture cases.
@@ -95,11 +98,11 @@ person.
   consent, site selection, streaming evidence, and cancellation.
 
 Milestone 3's repository-completable software is implemented, and Milestone 4
-has started with stable REST/JSON and SSE contract publication. Real regional
-deployment, retained production SLO history, production notification evidence,
-and a hosted Developer API remain external gates. The next ordered repository
-slice adds the remaining batch, quota, usage, and service-reporting boundary
-without changing the local-first engine semantics.
+now has stable REST/JSON and SSE publication plus batch admission, quota,
+usage, and service reporting. Real regional deployment, retained production
+SLO history, production notification evidence, and a hosted Developer API
+remain external gates. Search-completion webhooks are the next ordered
+repository slice without changing the local-first engine semantics.
 
 ## Build and verify
 

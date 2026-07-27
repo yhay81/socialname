@@ -39,6 +39,9 @@
       "deletion_request_resource": {
         "$ref": "./schemas/deletion_request_resource.schema.json"
       },
+      "developer_report_resource": {
+        "$ref": "./schemas/developer_report_resource.schema.json"
+      },
       "email_notification": {
         "$ref": "./schemas/email_notification.schema.json"
       },
@@ -986,6 +989,119 @@
           "deletion"
         ],
         "x-socialname-required-scope": "data:delete"
+      }
+    },
+    "/v1/developer/report": {
+      "get": {
+        "operationId": "getDeveloperReport",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "24h",
+              "enum": [
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/developer_report_resource.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read target-free quota, usage, backlog, and search service objectives.",
+        "tags": [
+          "developer"
+        ],
+        "x-socialname-required-scope": "usage:read",
+        "x-socialname-unknown-query-parameters": "forbidden"
       }
     },
     "/v1/notification-deliveries/{delivery_id}/acknowledgement": {
@@ -2792,6 +2908,9 @@
     },
     {
       "name": "operations"
+    },
+    {
+      "name": "developer"
     }
   ],
   "x-socialname-api-schema": "socialname.dev/api/v1",

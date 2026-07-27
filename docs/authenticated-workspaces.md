@@ -56,15 +56,18 @@ Keys contain a nonempty, duplicate-free subset of at most 16 values from:
 - `evidence:read`
 - `notification:read`, `notification:write`
 - `operations:read`
+- `usage:read`
 - `data:export`, `data:delete`
 
 Migrations `0002_api_key_authentication.sql` and
 `0010_consent_grant_lifecycle.sql`, `0011_evidence_capsule_retention.sql`, and
-`0016_operational_reporting.sql` evolve the same closed set and reject null or
-duplicate array entries. All scopes except `data:export` now have exact HTTP
-consumers. `operations:read` protects only the target-free tenant aggregate; it
-does not grant access to watches, notification resources, deletion resources,
-or evidence.
+`0016_operational_reporting.sql` and `0017_developer_usage_reporting.sql`
+evolve the same closed set and reject null or duplicate array entries. All
+scopes except `data:export` now have exact HTTP consumers. `operations:read`
+protects only the target-free tenant operations aggregate. `usage:read`
+protects only the Developer quota, usage, backlog, and search-objective
+aggregate. Neither grants access to watches, notification resources, deletion
+resources, evidence, or the other's report.
 
 ## Operator lifecycle
 
@@ -195,7 +198,7 @@ bounded database probe shorter than the outer request deadline and returns
 
 The PostgreSQL 18 integration gate covers:
 
-- replay-safe migrations, 49 product tables, and 37 forced-RLS policies;
+- replay-safe migrations, 51 product tables, and 39 forced-RLS policies;
 - credential-table and definer-function `PUBLIC` privilege revocation;
 - a real `LOGIN NOSUPERUSER NOBYPASSRLS` runtime role;
 - transaction-local tenant separation for two valid keys;
@@ -203,7 +206,9 @@ The PostgreSQL 18 integration gate covers:
 - a successful private workspace response with no secret/digest fields;
 - last-use persistence and database-aware readiness degradation;
 - transactional bootstrap, issuance, revocation, audit, conflict rollback, and
-  digest-only persistence.
+  digest-only persistence;
+- default and owner/admin-updated Developer quota policies with idempotent,
+  target-free audit output.
 
 TLS termination, ingress trust, per-source authentication throttling, external
 identity proofing, production secret-manager capture, and deployed credential

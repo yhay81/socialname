@@ -188,6 +188,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Operational reporting and software objectives](operational-reporting.md) —
   exact cohorts, fixed targets, current backlog/deletion health, independent
   scope, no-data semantics, and production evidence boundary.
+- [Developer quota, usage, and service reporting](developer-usage-reporting.md)
+  — atomic UTC-day target-pair admission, immutable target-free usage,
+  independent aggregate scope, fixed search objectives, and bounded expiry.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native
@@ -222,10 +225,11 @@ repository-completable software. Hosted schedule history, provider inventory,
 multi-region deployment, retained production SLO history, and live notification
 evidence remain external.
 
-The current roadmap milestone is **Developer platform**. Its stable versioned
-REST/JSON and SSE contract publication is repository-complete. The next
-ordered slice covers the remaining batch-search, quota, usage-record, and
-service-reporting boundary; it does not make a hosted-service claim.
+The current roadmap milestone is **Developer platform**. Stable versioned
+REST/JSON and SSE publication plus the existing bounded batch, exact polling
+and idempotency, atomic quota, immutable usage, and service-reporting boundary
+are repository-complete. Search-completion webhooks are next; none of these
+software boundaries makes a hosted-service claim.
 
 Representative live rules remain discovery-only until external regional
 evidence exists. Infrastructure, pricing, scale, and community-network choices

@@ -68,7 +68,7 @@ impl RatioSlo {
         }
     }
 
-    fn validate_for(&self, expected_target: u16) -> Result<(), ValidationErrors> {
+    pub(crate) fn validate_for(&self, expected_target: u16) -> Result<(), ValidationErrors> {
         if self.good_events > MAX_SAFE_JSON_INTEGER
             || self.total_events > MAX_SAFE_JSON_INTEGER
             || self.good_events > self.total_events
@@ -120,7 +120,7 @@ impl LatencySlo {
         }
     }
 
-    fn validate_for(&self, expected_target: u64) -> Result<(), ValidationErrors> {
+    pub(crate) fn validate_for(&self, expected_target: u64) -> Result<(), ValidationErrors> {
         if self.samples > MAX_SAFE_JSON_INTEGER
             || self
                 .p95_ms

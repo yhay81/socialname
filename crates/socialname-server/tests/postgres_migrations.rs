@@ -34,10 +34,10 @@ use socialname_protocol::{
     ConsentNoticeVersion, ConsentPurpose, ConsentSource, ConsentSubjectKind,
     ConsentWithdrawalRequest, ContributorDeletionCreateRequest, DefinitiveVerdict,
     DeletionReceiptResource, DeletionReceiptState, DeletionRequestResource, DeletionRequestState,
-    DeletionStoreKind, DeletionStoreState, EventId, EvidenceCapsuleId, EvidenceCapsuleProfile,
-    EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass, EvidenceDigest,
-    EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe, EvidenceProvenance,
-    EvidenceTransportOutcome, EvidenceVantage, InstallationId,
+    DeletionStoreKind, DeletionStoreState, DeveloperReportResource, EventId, EvidenceCapsuleId,
+    EvidenceCapsuleProfile, EvidenceCapsuleResource, EvidenceCapsuleSchema, EvidenceClass,
+    EvidenceDigest, EvidenceMatcherTrace, EvidenceNetworkClass, EvidenceOutcome, EvidenceProbe,
+    EvidenceProvenance, EvidenceTransportOutcome, EvidenceVantage, InstallationId,
     NotificationAcknowledgementCreateRequest, NotificationAcknowledgementResource,
     NotificationEndpointId, OperationalFailure, OperationalFailureKind, OperationalReportResource,
     ProbeBudget, ProtocolVersion, RegionClass, ResultSource, RuleHash, SearchCreateRequest,
@@ -55,11 +55,11 @@ use socialname_server::{
 };
 use socialname_worker::{
     DeletionProcessOutcome, DeletionStore, DeliveryError, DeliveryProcessConfig,
-    DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, EmailGatewayConfig,
-    EmailGatewayTransport, EmailRequest, EmailSendError, EvidenceRetentionOutcome, ExpandOutcome,
-    JobDisposition, JobError, JobExecutionError, JobStore, ManagedRule, WatchPlanOutcome,
-    WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
-    process_one_email_delivery,
+    DeliveryProcessOutcome, DeliverySecrets, DeliveryStore, DeveloperUsageRetentionStore,
+    EmailGatewayConfig, EmailGatewayTransport, EmailRequest, EmailSendError,
+    EvidenceRetentionOutcome, ExpandOutcome, JobDisposition, JobError, JobExecutionError, JobStore,
+    ManagedRule, WatchPlanOutcome, WebhookRequest, WebhookSendError, WebhookTransport,
+    process_one_delivery, process_one_email_delivery,
 };
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
@@ -99,6 +99,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_private_search_and_event_stream_boundary(&pool).await;
     assert_watch_api_boundary(&pool).await;
     assert_managed_probe_job_boundary(&pool).await;
+    assert_developer_usage_reporting_boundary(&pool).await;
     assert_evidence_capsule_retention_boundary(&pool).await;
     assert_notification_acknowledgement_boundary(&pool).await;
     assert_monitoring_console_boundary(&pool).await;
@@ -127,7 +128,8 @@ async fn reset_test_state(pool: &PgPool) {
             deletion_receipts, suppression_tokens, evidence_capsules,
             evidence_retention_receipts, deletion_resource_matches,
             deletion_backup_verifications, deletion_restore_request_links,
-            deletion_restore_runs
+            deletion_restore_runs, developer_quota_policies,
+            developer_usage_records
         CASCADE;
 
         DO $$
@@ -187,7 +189,8 @@ async fn assert_schema_inventory(pool: &PgPool) {
                 ('suppression_tokens'), ('evidence_capsules'),
                 ('evidence_retention_receipts'), ('deletion_resource_matches'),
                 ('deletion_backup_verifications'), ('deletion_restore_runs'),
-                ('deletion_restore_request_links')
+                ('deletion_restore_request_links'),
+                ('developer_quota_policies'), ('developer_usage_records')
         )
         SELECT count(*)
         FROM required
@@ -197,7 +200,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(required_tables, 49);
+    assert_eq!(required_tables, 51);
 
     let tenant_policies: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_policies \
@@ -206,7 +209,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(tenant_policies, 37);
+    assert_eq!(tenant_policies, 39);
 
     let forced_rls_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_class \
@@ -216,7 +219,7 @@ async fn assert_schema_inventory(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(forced_rls_tables, 37);
+    assert_eq!(forced_rls_tables, 39);
 
     let plaintext_secret_columns: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.columns \
@@ -515,6 +518,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "consent:write",
                 "evidence:read",
                 "operations:read",
+                "usage:read",
                 "data:delete",
                 "notification:read",
                 "notification:write",
@@ -538,6 +542,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "consent:write",
                 "evidence:read",
                 "operations:read",
+                "usage:read",
                 "data:delete",
                 "notification:read",
                 "notification:write",
@@ -679,14 +684,16 @@ async fn assert_tenant_isolation(pool: &PgPool) {
             rule_versions, evidence_capsules, suppression_tokens,
             deletion_requests, deletion_tasks, deletion_receipts,
             deletion_resource_matches, observations,
-            data_lineage_edges, probe_jobs, probe_job_consumers
+            data_lineage_edges, probe_jobs, probe_job_consumers,
+            developer_quota_policies, developer_usage_records
             TO socialname_migration_test_app;
         GRANT INSERT ON
             clients, consent_grants, consent_events,
             searches, search_targets, search_events, watches, watch_targets,
             watch_notification_endpoints, deletion_requests, deletion_tasks,
             suppression_tokens, deletion_resource_matches,
-            notification_acknowledgements, audit_events
+            notification_acknowledgements, audit_events,
+            developer_usage_records
             TO socialname_migration_test_app;
         GRANT UPDATE (last_seen_at) ON clients
             TO socialname_migration_test_app;
@@ -712,6 +719,8 @@ async fn assert_tenant_isolation(pool: &PgPool) {
         GRANT DELETE ON watch_notification_endpoints
             TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
+            TO socialname_migration_test_app;
+        GRANT EXECUTE ON FUNCTION socialname_lock_developer_quota(uuid)
             TO socialname_migration_test_app;
         GRANT EXECUTE ON FUNCTION
             socialname_redact_deletion_job_targets(uuid, uuid)
@@ -754,6 +763,24 @@ async fn assert_tenant_isolation(pool: &PgPool) {
     .unwrap_err();
     assert_database_code(error, "42501");
     transaction.rollback().await.unwrap();
+
+    let mut quota_transaction = pool.begin().await.unwrap();
+    quota_transaction
+        .execute("SET LOCAL ROLE socialname_migration_test_app")
+        .await
+        .unwrap();
+    sqlx::query("SELECT set_config('socialname.tenant_id', $1, true)")
+        .bind("00000000-0000-0000-0000-000000000001")
+        .execute(&mut *quota_transaction)
+        .await
+        .unwrap();
+    let cross_tenant_quota_lock = sqlx::query("SELECT * FROM socialname_lock_developer_quota($1)")
+        .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap())
+        .execute(&mut *quota_transaction)
+        .await
+        .unwrap_err();
+    assert_database_code(cross_tenant_quota_lock, "42501");
+    quota_transaction.rollback().await.unwrap();
 
     let can_read_credentials: bool = sqlx::query_scalar(
         "SELECT has_table_privilege(\
@@ -1619,6 +1646,17 @@ async fn assert_private_search_and_event_stream_boundary(administrator_pool: &Pg
     assert_eq!(replay.status(), StatusCode::OK);
     let replay_resource: SearchResource = serde_json::from_value(json_body(replay).await).unwrap();
     assert_eq!(replay_resource.search_id, created_resource.search_id);
+    let recorded_usage: (i64, i64) = sqlx::query_as(
+        "SELECT count(*), sum(quantity)::bigint \
+         FROM developer_usage_records \
+         WHERE tenant_id = $1 AND search_id = $2",
+    )
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap())
+    .bind(search_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(recorded_usage, (1, 1));
 
     let changed_request = private_search_request(SyncPolicy::Private, "github", 120_000);
     let conflict = server_request_with(
@@ -2159,7 +2197,8 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
              'socialname_worker_lock_claim_consent', \
              'socialname_worker_claim_webhook_delivery', \
              'socialname_worker_claim_email_delivery', \
-             'socialname_worker_enforce_evidence_retention'\
+             'socialname_worker_enforce_evidence_retention', \
+             'socialname_worker_enforce_developer_usage_retention'\
          )",
     )
     .fetch_one(administrator_pool)
@@ -3840,6 +3879,345 @@ async fn assert_managed_probe_job_boundary(administrator_pool: &PgPool) {
     assert_email_delivery_boundary(administrator_pool, worker_pool.clone()).await;
     application_pool.close().await;
     store.close().await;
+}
+
+async fn assert_developer_usage_reporting_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let worker_database_url = env::var(TEST_WORKER_DATABASE_URL_ENV)
+        .expect("worker database URL must accompany the PostgreSQL integration test");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&worker_database_url)
+        .await
+        .unwrap();
+    let workspace_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let writer_api_key_id = Uuid::parse_str("00000000-0000-0000-0000-0000000000b1").unwrap();
+    let writer_token = api_key_token("aaaaaaaaaaaaaaaa", 0x11);
+    let reader_token = api_key_token("cccccccccccccccc", 0x33);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+
+    let default_policy: (i32, i32) = sqlx::query_as(
+        "SELECT daily_target_limit, api_key_daily_target_limit \
+         FROM developer_quota_policies WHERE tenant_id = $1",
+    )
+    .bind(workspace_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(default_policy, (10_000, 2_000));
+
+    let forbidden = server_request(
+        &application_pool,
+        "/v1/developer/report?window=24h",
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert_api_error(forbidden, ApiErrorCode::Forbidden).await;
+
+    let invalid_window = server_request(
+        &application_pool,
+        "/v1/developer/report?window=private-window",
+        Some(&writer_token),
+    )
+    .await;
+    assert_eq!(invalid_window.status(), StatusCode::BAD_REQUEST);
+    let invalid_window_json = json_body(invalid_window).await;
+    assert_eq!(invalid_window_json["error"]["code"], "invalid_request");
+    assert!(!invalid_window_json.to_string().contains("private-window"));
+
+    let report_response = server_request(
+        &application_pool,
+        "/v1/developer/report?window=24h",
+        Some(&writer_token),
+    )
+    .await;
+    assert_eq!(report_response.status(), StatusCode::OK);
+    let report_json = json_body(report_response).await;
+    let report: DeveloperReportResource = serde_json::from_value(report_json.clone()).unwrap();
+    assert!(report.validate().is_ok());
+    assert!(report.usage.admitted_searches > 0);
+    assert_eq!(report.quota.tenant.limit, 10_000);
+    assert_eq!(report.quota.api_key.limit, 2_000);
+    let serialized_report = report_json.to_string();
+    for forbidden_field in [
+        "username",
+        "site_id",
+        "search_id",
+        "consent",
+        "idempotency",
+        "destination",
+    ] {
+        assert!(!serialized_report.contains(forbidden_field));
+    }
+
+    let other_tenant_report = server_request(
+        &application_pool,
+        "/v1/developer/report?window=7d",
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(other_tenant_report.status(), StatusCode::OK);
+    let other_tenant_report: DeveloperReportResource =
+        serde_json::from_value(json_body(other_tenant_report).await).unwrap();
+    assert_eq!(other_tenant_report.usage.admitted_searches, 0);
+    assert_eq!(other_tenant_report.usage.admitted_target_pairs, 0);
+
+    let current_usage: (i64, i64) = sqlx::query_as(
+        r#"
+        WITH period AS (
+            SELECT date_trunc('day', clock_timestamp() AT TIME ZONE 'UTC')
+                AT TIME ZONE 'UTC' AS started_at
+        )
+        SELECT
+            COALESCE(sum(quantity), 0)::bigint,
+            COALESCE(sum(quantity) FILTER (WHERE api_key_id = $2), 0)::bigint
+        FROM developer_usage_records
+        CROSS JOIN period
+        WHERE tenant_id = $1 AND occurred_at >= period.started_at
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(writer_api_key_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(current_usage.0, current_usage.1);
+    let serialized_limit = i32::try_from(current_usage.0 + 1).unwrap();
+    sqlx::query(
+        "UPDATE developer_quota_policies \
+         SET daily_target_limit = $2, api_key_daily_target_limit = $2, \
+             updated_at = clock_timestamp() \
+         WHERE tenant_id = $1",
+    )
+    .bind(workspace_id)
+    .bind(serialized_limit)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    let concurrent_body = serde_json::to_string(&private_search_request(
+        SyncPolicy::Private,
+        "github",
+        60_000,
+    ))
+    .unwrap();
+    let first = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "quota-serialized-first"),
+        ],
+        concurrent_body.clone(),
+    );
+    let second = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "quota-serialized-second"),
+        ],
+        concurrent_body,
+    );
+    let (first, second) = tokio::join!(first, second);
+    let responses = [first, second];
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|response| response.status() == StatusCode::CREATED)
+            .count(),
+        1
+    );
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|response| response.status() == StatusCode::TOO_MANY_REQUESTS)
+            .count(),
+        1
+    );
+    let rejected = responses
+        .into_iter()
+        .find(|response| response.status() == StatusCode::TOO_MANY_REQUESTS)
+        .unwrap();
+    let rejected_json = json_body(rejected).await;
+    assert_eq!(rejected_json["error"]["code"], "quota_exceeded");
+    assert!(rejected_json["error"]["retry_after_ms"].as_u64().unwrap() > 0);
+    assert!(!rejected_json.to_string().contains("private-search-target"));
+
+    let mut batch_request = private_search_request(SyncPolicy::Private, "github", 60_000);
+    batch_request
+        .targets
+        .usernames
+        .push(Username::new("private-search-target-two").unwrap());
+    let batch_rejected = server_request_with(
+        &application_pool,
+        Method::POST,
+        "/v1/searches",
+        Some(&writer_token),
+        &[
+            ("content-type", "application/json"),
+            ("idempotency-key", "quota-whole-batch"),
+        ],
+        serde_json::to_string(&batch_request).unwrap(),
+    )
+    .await;
+    assert_eq!(batch_rejected.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_api_error(batch_rejected, ApiErrorCode::QuotaExceeded).await;
+    let rejected_hash = Sha256::digest(b"quota-whole-batch");
+    let rejected_searches: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM searches \
+         WHERE tenant_id = $1 AND idempotency_key_hash = $2",
+    )
+    .bind(workspace_id)
+    .bind(&rejected_hash[..])
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(rejected_searches, 0);
+
+    let immutable_usage = sqlx::query(
+        "UPDATE developer_usage_records SET quantity = quantity \
+         WHERE tenant_id = $1 AND api_key_id = $2",
+    )
+    .bind(workspace_id)
+    .bind(writer_api_key_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap_err();
+    assert_database_code(immutable_usage, "55000");
+    let application_can_update_policy: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            'socialname_migration_test_app', 'developer_quota_policies', 'UPDATE'\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(!application_can_update_policy);
+
+    sqlx::query(
+        "UPDATE developer_quota_policies \
+         SET daily_target_limit = 10000, api_key_daily_target_limit = 2000, \
+             updated_at = clock_timestamp() \
+         WHERE tenant_id = $1",
+    )
+    .bind(workspace_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    let expired_search_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO searches (\
+            id, tenant_id, requested_by_api_key_id, idempotency_key_hash, \
+            mode, sync_policy, consent_grant_id, maximum_age_ms, region_classes, \
+            state, created_at, updated_at, completed_at\
+         ) VALUES (\
+            $1, $2, $3, $4, 'remote', 'private', \
+            '00000000-0000-0000-0000-000000000031', 60000, ARRAY['jp'], \
+            'cancelled', clock_timestamp() - interval '401 days', \
+            clock_timestamp() - interval '401 days', \
+            clock_timestamp() - interval '401 days'\
+         )",
+    )
+    .bind(expired_search_id)
+    .bind(workspace_id)
+    .bind(writer_api_key_id)
+    .bind(&Sha256::digest(b"expired-developer-usage")[..])
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO search_targets (\
+            id, tenant_id, search_id, requested_username, site_id, ordinal, \
+            state, created_at, completed_at\
+         ) VALUES (\
+            $1, $2, $3, 'retention-private-target', 'github', 0, \
+            'cancelled', clock_timestamp() - interval '401 days', \
+            clock_timestamp() - interval '401 days'\
+         )",
+    )
+    .bind(Uuid::new_v4())
+    .bind(workspace_id)
+    .bind(expired_search_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO developer_usage_records (\
+            id, tenant_id, api_key_id, search_id, meter, quantity, \
+            occurred_at, retained_until\
+         ) \
+         SELECT $1, tenant_id, requested_by_api_key_id, id, \
+                'search_target_admitted', 1, created_at, \
+                created_at + interval '400 days' \
+         FROM searches WHERE tenant_id = $2 AND id = $3",
+    )
+    .bind(Uuid::new_v4())
+    .bind(workspace_id)
+    .bind(expired_search_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    let worker_can_read_usage: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege(\
+            'socialname_migration_test_worker', 'developer_usage_records', 'SELECT'\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(!worker_can_read_usage);
+    let app_can_enforce_usage_retention: bool = sqlx::query_scalar(
+        "SELECT has_function_privilege(\
+            'socialname_migration_test_app', \
+            'socialname_worker_enforce_developer_usage_retention(integer)', \
+            'EXECUTE'\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let worker_can_enforce_usage_retention: bool = sqlx::query_scalar(
+        "SELECT has_function_privilege(\
+            'socialname_migration_test_worker', \
+            'socialname_worker_enforce_developer_usage_retention(integer)', \
+            'EXECUTE'\
+         )",
+    )
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert!(!app_can_enforce_usage_retention);
+    assert!(worker_can_enforce_usage_retention);
+    let retention_store = DeveloperUsageRetentionStore::new(worker_pool.clone());
+    let retention = retention_store.enforce(1).await.unwrap();
+    assert_eq!(retention.usage_records_deleted, 1);
+    let retained_expired_usage: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM developer_usage_records \
+         WHERE tenant_id = $1 AND search_id = $2",
+    )
+    .bind(workspace_id)
+    .bind(expired_search_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    assert_eq!(retained_expired_usage, 0);
+
+    retention_store.close().await;
+    application_pool.close().await;
 }
 
 fn managed_release_health(
@@ -6770,6 +7148,7 @@ async fn install_worker_role(pool: &PgPool) {
             socialname_worker_claim_webhook_delivery(text, integer, integer),
             socialname_worker_claim_email_delivery(text, integer, integer),
             socialname_worker_enforce_evidence_retention(integer),
+            socialname_worker_enforce_developer_usage_retention(integer),
             socialname_worker_claim_deletion(text, integer)
             TO socialname_migration_test_worker;
         "#,

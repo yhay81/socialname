@@ -58,9 +58,11 @@ Creation is one PostgreSQL transaction:
 2. insert the search using `ON CONFLICT (tenant_id, idempotency_key_hash) DO
    NOTHING`;
 3. insert the Cartesian target set with stable zero-based ordinals;
-4. insert sequence 1, a validated `started` event;
-5. reconstruct and validate the public `SearchResource`;
-6. commit.
+4. for a new search, lock its tenant quota policy, admit the whole target-pair
+   quantity, and append one target-free usage record;
+5. insert sequence 1, a validated `started` event;
+6. reconstruct and validate the public `SearchResource`;
+7. commit.
 
 A new request returns HTTP 201 and `Location:
 /v1/searches/{search_id}`. A concurrent or later replay with the same key and
@@ -68,6 +70,11 @@ exact validated request returns HTTP 200 and the original resource. Reusing the
 key with any different request field returns nonretryable
 `idempotency_conflict` (HTTP 409). `ON CONFLICT` makes concurrent first use
 converge without an aborted transaction or duplicate target/event rows.
+An exact replay never re-enters quota admission. Exceeding either the tenant or
+API-key UTC-day target-pair limit returns HTTP 429 `quota_exceeded` with a
+database-time `retry_after_ms`, while rolling back the search, targets, usage,
+and event together. See
+[Developer quota, usage, and service reporting](developer-usage-reporting.md).
 
 `search_targets.requested_username` preserves the exact validated request.
 `normalized_username` is nullable and remains unset until a later signed-rule
@@ -162,24 +169,30 @@ credentials when appropriate, and resume from its last persisted event ID.
 In addition to the authenticated-workspace grants, the API role needs:
 
 ```sql
-GRANT SELECT ON sites, consent_grants, searches, search_targets, search_events
+GRANT SELECT ON
+    sites, consent_grants, searches, search_targets, search_events,
+    developer_quota_policies, developer_usage_records
     TO socialname_app;
-GRANT INSERT ON searches, search_targets, search_events
+GRANT INSERT ON
+    searches, search_targets, search_events, developer_usage_records
     TO socialname_app;
 GRANT UPDATE (state, updated_at, completed_at) ON searches
     TO socialname_app;
 GRANT UPDATE (state, completed_at) ON search_targets
     TO socialname_app;
+GRANT EXECUTE ON FUNCTION socialname_lock_developer_quota(uuid)
+    TO socialname_app;
 ```
 
 It receives no update permission for the idempotency digest, request policy,
 requested/normalized username, event payload, event sequence, or event
-identity, and no delete privilege on these tables.
+identity. It receives no Developer policy UPDATE, usage UPDATE/DELETE, or
+retention-function permission.
 
 ## Verification and remaining gate
 
 The PostgreSQL 18 integration test resets its disposable fixture database so
-back-to-back runs cover replay-safe migrations, 49 product tables, 37
+back-to-back runs cover replay-safe migrations, 51 product tables, 39
 forced-RLS policies, exact and conflicting idempotency replay,
 read-only/write scope separation, required consent purpose, unknown sites,
 target-free errors, two-tenant isolation, digest-only idempotency storage,
@@ -190,7 +203,9 @@ claim/reclaim fencing, retry exhaustion, observation/event idempotency,
 multi-search and watch fan-out, watch freshness reuse and byte reservation,
 global/regional assertion support and lineage, regional event projection,
 invalid-target handling, and cancellation, consent-withdrawal, and rule-health
-races.
+races. It additionally proves exact replay is charged once, concurrent
+same-tenant admission is serialized, quota rejection is whole-batch and
+target-free, and rejected work leaves no search row.
 
 The API process still initiates no network request and cannot normalize a
 target. A separate signed worker performs those operations only for an exact

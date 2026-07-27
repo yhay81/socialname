@@ -21,8 +21,9 @@ pub use delivery::{
     process_one_email_delivery,
 };
 pub use job::{
-    EvidenceRetentionOutcome, ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError,
-    JobStore, RuleBinding, SUPPRESSION_HMAC_KEY_ENV, WORKER_DATABASE_URL_ENV, WatchPlanOutcome,
+    DeveloperUsageRetentionOutcome, DeveloperUsageRetentionStore, EvidenceRetentionOutcome,
+    ExpandOutcome, JobClaim, JobDisposition, JobError, JobExecutionError, JobStore, RuleBinding,
+    SUPPRESSION_HMAC_KEY_ENV, WORKER_DATABASE_URL_ENV, WatchPlanOutcome,
 };
 
 #[derive(Clone, Debug)]

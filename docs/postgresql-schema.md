@@ -37,7 +37,10 @@ operator receipt. Migration `0015_email_delivery.sql` adds a channel-isolated
 email claim coordinator over the same fenced delivery and attempt state.
 Migration `0016_operational_reporting.sql` adds the closed `operations:read`
 scope and tenant/time indexes for watch-run and notification-delivery report
-cohorts. It adds no product table or RLS policy.
+cohorts. It adds no product table or RLS policy. Migration
+`0017_developer_usage_reporting.sql` adds the closed `usage:read` scope,
+tenant and API-key quota policies, immutable target-free usage records,
+tenant-checked admission locking, and bounded 400-day physical expiry.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses
@@ -66,7 +69,7 @@ migration plus restore plan, not an automatic down script.
 
 ## Product tables
 
-The migrations create 49 product tables:
+The migrations create 51 product tables:
 
 | Boundary | Tables |
 | --- | --- |
@@ -74,6 +77,7 @@ The migrations create 49 product tables:
 | Site and rules | `sites`, `rule_packs`, `rule_versions`, `rule_health_records`, `rule_pack_trust_roots`, `rule_pack_metadata`, `rule_pack_promotions`, `rule_pack_registry`, `rule_site_promotion_high_water` |
 | Consent | `consent_grants`, `consent_events` |
 | Interactive work | `searches`, `search_targets`, `search_events` |
+| Developer capacity | `developer_quota_policies`, `developer_usage_records` |
 | Monitoring and execution | `watches`, `watch_targets`, `watch_notification_endpoints`, `watch_runs`, `watch_run_targets`, `probe_jobs`, `probe_job_consumers` |
 | Evidence and interpretation | `observations`, `evidence_capsules`, `evidence_retention_receipts`, `assertions`, `assertion_support`, `regional_assertions`, `regional_assertion_support` |
 | Change and notification | `transitions`, `transition_basis`, `notification_endpoints`, `notification_deliveries`, `notification_delivery_attempts`, `notification_acknowledgements` |
@@ -85,7 +89,7 @@ operational cost.
 
 ## Tenant isolation contract
 
-Thirty-six tenant-owned tables have row-level security both enabled and
+Thirty-nine tenant-owned tables have row-level security both enabled and
 forced. Their `tenant_isolation` policies compare `tenant_id` with
 `socialname_current_tenant_id()`; the `tenants` policy compares its `id`.
 Global site and rule-pack tables are outside tenant RLS.
@@ -133,7 +137,8 @@ select the next tenant before it can set transaction-local RLS. Migrations
 `0004_managed_probe_jobs.sql`, `0005_watch_scheduling.sql`, and
 `0007_webhook_delivery.sql`, `0009_rule_pack_distribution.sql`,
 `0011_evidence_capsule_retention.sql`, `0012_lineage_backed_deletion.sql`, and
-`0015_email_delivery.sql` therefore provide twelve fixed-search-path
+`0015_email_delivery.sql` and `0017_developer_usage_reporting.sql` therefore
+provide thirteen fixed-search-path
 `SECURITY DEFINER` functions. They can resolve
 an exact eligible signed rule including metadata and promotion identity,
 recheck that one rule version is still active, lock one eligible search
@@ -142,9 +147,12 @@ with an incremented attempt fence, lock the consent attached to an exact
 current lease, claim one due webhook or one due email with an incremented
 channel-specific attempt fence,
 enforce a bounded due-evidence batch, redact exactly one tenant/request's
-matched job targets, or claim one due deletion request with an incremented
-attempt fence. They return only opaque IDs, an attempt number, a boolean,
-payload-free counts, or no value.
+matched job targets, claim one due deletion request with an incremented
+attempt fence, or delete one bounded batch of expired target-free Developer
+usage. They return only opaque IDs, an attempt number, a boolean, payload-free
+counts, or no value. A separate tenant-checked definer function locks exactly
+one Developer quota policy for application admission without granting the
+runtime role table UPDATE.
 
 `PUBLIC` execution is revoked. Deployment grants only these functions plus the
 column-limited ordinary table access exercised by the integration fixture. The
@@ -155,8 +163,8 @@ primary-resource deletes exercised by the integration fixture.
 Target/consumer/observation/event/lineage work occurs only after the selected
 tenant is set locally on the transaction.
 
-The retention function is the only ordinary maintenance path allowed to clear
-due Capsule payloads and delete expired retention receipts. It accepts
+The evidence-retention function is the only ordinary maintenance path allowed
+to clear due Capsule payloads and delete expired retention receipts. It accepts
 1–1000 rows per class, orders by database deadline and Capsule ID, locks with
 `SKIP LOCKED`, and emits one idempotent payload-free receipt for each research
 or structured purge. The separate deletion worker may delete only
@@ -164,9 +172,14 @@ lineage-selected Capsules and their receipts under a fenced request; ordinary
 job execution and application grants cannot update Capsules or delete
 receipts.
 
-Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the eleven coordinator
-functions must be owned by a dedicated `NOLOGIN BYPASSRLS` role or an
-equivalently privileged migration owner. The integration test asserts that
+Developer usage has an independent fixed 400-day deadline. Product reports
+hide expired rows even before cleanup. The worker can execute only a 1–1000-row
+`SKIP LOCKED` deletion function and has no direct usage/policy read, update, or
+delete privilege.
+
+Because the tenant tables use `FORCE ROW LEVEL SECURITY`, the thirteen
+coordinator functions must be owned by a dedicated `NOLOGIN BYPASSRLS` role or
+an equivalently privileged migration owner. The integration test asserts that
 owner capability separately from the worker's NOBYPASSRLS status. The
 privileged owner is not a runtime login and must not own broader application
 code paths.
@@ -295,7 +308,7 @@ cargo run --locked -p socialname-server -- migrate
 cargo test --locked -p socialname-server --all-targets
 ```
 
-It applies the embedded migrations twice, inventories all 49 tables and 37
+It applies the embedded migrations twice, inventories all 51 tables and 39
 forced-RLS policies, and verifies restricted credential privileges, closed
 unique scopes, non-owner authentication and tenant isolation, idempotent search
 creation, consent, ordered/immutable event replay, composite cross-tenant
@@ -322,6 +335,10 @@ reads with scope, tenant, cursor, account/measurement, and secret-exclusion
 checks. It also proves the target-free operational report's exact scope,
 database-time windows, channel-separated outcomes and latency samples,
 unknown-window rejection, identifier exclusion, and two-tenant isolation.
+The Developer reporting checks cover default/operator quotas, serialized
+concurrent admission, exact replay, whole-batch rollback, append-only usage,
+least privilege, target-free scoped reports, no-data separation, and bounded
+worker-only expiry.
 The same real-database test also pins initial rule trust, applies
 canary then general metadata, rejects persistent replay, stages an overlapping
 key generation without replacing the active root, activates a second pack,

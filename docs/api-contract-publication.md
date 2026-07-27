@@ -10,7 +10,7 @@ destination ownership, live-rule eligibility, or availability claim.
 The authoritative package is
 [`contracts/api/v1`](../contracts/api/v1/README.md). It contains:
 
-- `openapi.json`: OpenAPI 3.1.2 for all 22 implemented authenticated
+- `openapi.json`: OpenAPI 3.1.2 for all 23 implemented authenticated
   REST/JSON and SSE operations;
 - `schemas/*.schema.json`: every independent
   `socialname-protocol::api_v1_schemas()` Draft 2020-12 root;

@@ -2,7 +2,7 @@
 
 Status: **Active**
 
-Last reviewed: 2026-07-26
+Last reviewed: 2026-07-27
 
 Authority: `docs/ultimate-goal.md`
 
@@ -1436,6 +1436,52 @@ passed Rust core with the exact API-contract check and PostgreSQL 18
 migrations/tests, Windows/macOS desktop, monitoring console, and managed-worker
 OCI for commit `8b5a4ee`.
 
+Batch admission, quota, usage, and service-reporting partial software evidence
+(the roadmap item remains open for search-completion webhooks):
+
+```console
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified exact committed OpenAPI with 23 operations, 28 JSON Schema roots,
+# SSE, and manifest
+cargo test --locked --workspace --all-targets
+# passed, including protocol 53 unit + 14 wire + 1 publication;
+# server 41 library + 2 binary + 1 PostgreSQL 18 integration;
+# worker 22 library + 7 binary + 3 deployment-contract tests
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# passed
+```
+
+The existing API already admits bounded Cartesian batches, supports polling
+and ordered SSE, and converges exact idempotency replay. Migration `0017` now
+adds a target-pair meter with tenant and per-key UTC-day limits, one immutable
+target-free usage record per newly admitted search, forced-RLS aggregate
+reporting, and fixed 400-day expiry. Admission locks a tenant-checked quota
+policy through a narrow definer function; a second statement obtains a fresh
+committed snapshot after any lock wait. The real PostgreSQL test proves that
+two concurrent same-key requests admit only one remaining unit, exact replay
+does not double-charge, and quota rejection rolls back the whole batch.
+
+`GET /v1/developer/report` independently requires `usage:read` and separates
+current quota, window usage, unfinished backlog, terminal success, first-result
+p95, terminal p95, and `no_data`. Owner/admin quota changes are audited and
+cannot lower a limit below current usage. The worker can delete only a bounded
+due-usage batch and cannot directly read or mutate policy/usage rows. Protocol
+and generated contract shapes expose no target, site, search, consent,
+destination, or idempotency identifier. Production scheduling, hosted
+availability/SLA history, plans, and billing remain external or later gates.
+Exact behavior and least-privilege grants are documented in
+[`docs/developer-usage-reporting.md`](docs/developer-usage-reporting.md).
+
 Acceptance gate:
 
 - Local test behavior and managed API behavior use the same engine, rule pack,
@@ -1641,3 +1687,10 @@ Choose these only when their trigger is measured:
   separate exact SSE contract, digest manifest, and committed-byte plus
   Axum route/scope drift gates. Declared no hosted origin or availability and
   selected batch, quota, usage, and service reporting next.
+- **2026-07-27:** Added serialized tenant/API-key UTC-day target-pair quotas,
+  immutable target-free usage, fixed 400-day expiry, owner/admin policy
+  operation, and an independently scoped Developer service report. Preserved
+  exact replay without double charge and proved whole-batch rollback plus
+  least privilege under PostgreSQL 18. Kept the combined roadmap item open for
+  search-completion webhooks and kept hosted availability, historical SLA,
+  plans, and billing outside this software claim.

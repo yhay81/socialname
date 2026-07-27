@@ -35,6 +35,8 @@ pub enum ApiKeyScope {
     EvidenceRead,
     #[serde(rename = "operations:read")]
     OperationsRead,
+    #[serde(rename = "usage:read")]
+    UsageRead,
 }
 
 impl ApiKeyScope {
@@ -54,6 +56,7 @@ impl ApiKeyScope {
             Self::ConsentWrite => "consent:write",
             Self::EvidenceRead => "evidence:read",
             Self::OperationsRead => "operations:read",
+            Self::UsageRead => "usage:read",
         }
     }
 
@@ -72,6 +75,7 @@ impl ApiKeyScope {
             "consent:write" => Ok(Self::ConsentWrite),
             "evidence:read" => Ok(Self::EvidenceRead),
             "operations:read" => Ok(Self::OperationsRead),
+            "usage:read" => Ok(Self::UsageRead),
             _ => Err(ValidationErrors::new(
                 "scopes",
                 ValidationCode::InvalidFormat,

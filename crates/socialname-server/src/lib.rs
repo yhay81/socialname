@@ -7,6 +7,7 @@ mod consent;
 mod database;
 mod deletion;
 mod deletion_operator;
+mod developer;
 mod evidence;
 mod monitoring;
 mod notification;
@@ -76,10 +77,11 @@ pub use target_deletion_operator::{
     request_verified_target_deletion,
 };
 pub use workspace_operator::{
-    API_KEY_EXPIRES_AT_ENV, API_KEY_ID_ENV, API_KEY_SCOPES_ENV, IssuedApiKey, MEMBERSHIP_ID_ENV,
+    API_KEY_DAILY_TARGET_LIMIT_ENV, API_KEY_EXPIRES_AT_ENV, API_KEY_ID_ENV, API_KEY_SCOPES_ENV,
+    DAILY_TARGET_LIMIT_ENV, DeveloperQuotaPolicyOutput, IssuedApiKey, MEMBERSHIP_ID_ENV,
     MEMBERSHIP_SUBJECT_ENV, WORKSPACE_DISPLAY_NAME_ENV, WORKSPACE_ID_ENV, WORKSPACE_SLUG_ENV,
     WorkspaceOperatorError, bootstrap_workspace_from_env, issue_api_key_from_env,
-    revoke_api_key_from_env,
+    revoke_api_key_from_env, set_developer_quota_from_env,
 };
 
 const X_REQUEST_ID: &str = "x-request-id";
@@ -149,6 +151,7 @@ fn server_required_scope(operation_id: &str) -> ApiKeyScope {
         "createNotificationAcknowledgement" => ApiKeyScope::NotificationWrite,
         "getNotificationAcknowledgement" => ApiKeyScope::NotificationRead,
         "getOperationalReport" => ApiKeyScope::OperationsRead,
+        "getDeveloperReport" => ApiKeyScope::UsageRead,
         _ => panic!("server route must name one published operation"),
     }
 }
@@ -319,6 +322,15 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    let developer_routes = Router::new()
+        .route("/v1/developer/report", get(developer::developer_report))
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("getDeveloperReport"),
+            },
+            authenticate_request,
+        ));
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
@@ -335,6 +347,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(notification_write_routes)
         .merge(notification_read_routes)
         .merge(operations_routes)
+        .merge(developer_routes)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state.clone());

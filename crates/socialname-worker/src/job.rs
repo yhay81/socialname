@@ -54,9 +54,20 @@ pub struct JobStore {
     suppression_hmac_key: [u8; 32],
 }
 
+#[derive(Clone)]
+pub struct DeveloperUsageRetentionStore {
+    pool: PgPool,
+}
+
 impl fmt::Debug for JobStore {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("JobStore([REDACTED DATABASE])")
+    }
+}
+
+impl fmt::Debug for DeveloperUsageRetentionStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("DeveloperUsageRetentionStore([REDACTED DATABASE])")
     }
 }
 
@@ -1705,6 +1716,42 @@ impl JobStore {
     }
 }
 
+impl DeveloperUsageRetentionStore {
+    pub async fn connect_from_env() -> Result<Self, JobError> {
+        Ok(Self {
+            pool: connect_worker_pool_from_env().await?,
+        })
+    }
+
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn close(&self) {
+        self.pool.close().await;
+    }
+
+    pub async fn enforce(
+        &self,
+        batch_limit: u32,
+    ) -> Result<DeveloperUsageRetentionOutcome, JobError> {
+        if !(1..=MAXIMUM_RETENTION_BATCH).contains(&batch_limit) {
+            return Err(JobError::InvalidConfiguration);
+        }
+        let deleted: i32 =
+            sqlx::query_scalar("SELECT socialname_worker_enforce_developer_usage_retention($1)")
+                .bind(i32::try_from(batch_limit).map_err(|_| JobError::InvalidConfiguration)?)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?;
+        Ok(DeveloperUsageRetentionOutcome {
+            usage_records_deleted: u32::try_from(deleted)
+                .map_err(|_| JobError::StorageInvariant)?,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuleBinding {
     rule_version_id: Uuid,
@@ -1842,6 +1889,11 @@ pub struct EvidenceRetentionOutcome {
     pub research_excerpts_purged: u32,
     pub structured_capsules_purged: u32,
     pub expired_receipts_deleted: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeveloperUsageRetentionOutcome {
+    pub usage_records_deleted: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,0 +1,257 @@
+{
+  "$defs": {
+    "DeveloperQuotaCounter": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "remaining": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "used": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "limit",
+        "used",
+        "remaining"
+      ],
+      "type": "object"
+    },
+    "DeveloperQuotaSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key": {
+          "$ref": "#/$defs/DeveloperQuotaCounter"
+        },
+        "period_started_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "resets_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "tenant": {
+          "$ref": "#/$defs/DeveloperQuotaCounter"
+        }
+      },
+      "required": [
+        "period_started_at_unix_ms",
+        "resets_at_unix_ms",
+        "tenant",
+        "api_key"
+      ],
+      "type": "object"
+    },
+    "DeveloperReportWindow": {
+      "enum": [
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "type": "string"
+    },
+    "DeveloperSearchBacklog": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_searches": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "active_searches_without_result": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "oldest_active_search_age_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "running_searches": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "accepted_searches",
+        "running_searches",
+        "active_searches_without_result"
+      ],
+      "type": "object"
+    },
+    "DeveloperServiceObjectives": {
+      "additionalProperties": false,
+      "properties": {
+        "first_result_latency": {
+          "$ref": "#/$defs/LatencySlo"
+        },
+        "terminal_latency": {
+          "$ref": "#/$defs/LatencySlo"
+        },
+        "terminal_search_success": {
+          "$ref": "#/$defs/RatioSlo"
+        }
+      },
+      "required": [
+        "terminal_search_success",
+        "first_result_latency",
+        "terminal_latency"
+      ],
+      "type": "object"
+    },
+    "DeveloperUsageSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "admitted_searches": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "admitted_target_pairs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "admitted_searches",
+        "admitted_target_pairs"
+      ],
+      "type": "object"
+    },
+    "LatencySlo": {
+      "additionalProperties": false,
+      "properties": {
+        "p95_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "samples": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/SloStatus"
+        },
+        "target_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "samples",
+        "target_ms"
+      ],
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "enum": [
+        "socialname.dev/api/v1"
+      ],
+      "type": "string"
+    },
+    "RatioSlo": {
+      "additionalProperties": false,
+      "properties": {
+        "good_events": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/SloStatus"
+        },
+        "target_basis_points": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_events": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "good_events",
+        "total_events",
+        "target_basis_points"
+      ],
+      "type": "object"
+    },
+    "SloStatus": {
+      "enum": [
+        "no_data",
+        "meeting",
+        "breached"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "backlog": {
+      "$ref": "#/$defs/DeveloperSearchBacklog"
+    },
+    "generated_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "objectives": {
+      "$ref": "#/$defs/DeveloperServiceObjectives"
+    },
+    "quota": {
+      "$ref": "#/$defs/DeveloperQuotaSnapshot"
+    },
+    "schema": {
+      "$ref": "#/$defs/ProtocolVersion"
+    },
+    "usage": {
+      "$ref": "#/$defs/DeveloperUsageSummary"
+    },
+    "window": {
+      "$ref": "#/$defs/DeveloperReportWindow"
+    },
+    "window_started_at_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema",
+    "window",
+    "generated_at_unix_ms",
+    "window_started_at_unix_ms",
+    "quota",
+    "usage",
+    "backlog",
+    "objectives"
+  ],
+  "title": "DeveloperReportResource",
+  "type": "object"
+}

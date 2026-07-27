@@ -21,6 +21,10 @@ pub const MEMBERSHIP_ID_ENV: &str = "SOCIALNAME_MEMBERSHIP_ID";
 pub const API_KEY_ID_ENV: &str = "SOCIALNAME_API_KEY_ID";
 pub const API_KEY_SCOPES_ENV: &str = "SOCIALNAME_API_KEY_SCOPES";
 pub const API_KEY_EXPIRES_AT_ENV: &str = "SOCIALNAME_API_KEY_EXPIRES_AT_UNIX_MS";
+pub const DAILY_TARGET_LIMIT_ENV: &str = "SOCIALNAME_DAILY_TARGET_LIMIT";
+pub const API_KEY_DAILY_TARGET_LIMIT_ENV: &str = "SOCIALNAME_API_KEY_DAILY_TARGET_LIMIT";
+
+const MAXIMUM_DAILY_TARGET_LIMIT: u32 = 1_000_000;
 
 #[derive(Debug)]
 pub struct IssuedApiKey {
@@ -43,6 +47,30 @@ impl IssuedApiKey {
         writeln!(output, "membership_id={}", self.membership_id)?;
         writeln!(output, "api_key_id={}", self.api_key_id)?;
         writeln!(output, "api_key={}", self.token.expose())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeveloperQuotaPolicyOutput {
+    pub workspace_id: Uuid,
+    pub daily_target_limit: u32,
+    pub api_key_daily_target_limit: u32,
+    pub changed: bool,
+}
+
+impl DeveloperQuotaPolicyOutput {
+    pub fn write_to_stdout(self) -> io::Result<()> {
+        let stdout = io::stdout();
+        let mut output = stdout.lock();
+        writeln!(output, "workspace_id={}", self.workspace_id)?;
+        writeln!(output, "daily_target_limit={}", self.daily_target_limit)?;
+        writeln!(
+            output,
+            "api_key_daily_target_limit={}",
+            self.api_key_daily_target_limit
+        )?;
+        writeln!(output, "changed={}", self.changed)?;
+        output.flush()
     }
 }
 
@@ -69,6 +97,16 @@ pub async fn revoke_api_key_from_env() -> Result<Uuid, WorkspaceOperatorError> {
     let config = RevokeConfig::from_env()?;
     let pool = connect_database(&database_url, 1).await?;
     let result = revoke_api_key(&pool, config).await;
+    pool.close().await;
+    result
+}
+
+pub async fn set_developer_quota_from_env()
+-> Result<DeveloperQuotaPolicyOutput, WorkspaceOperatorError> {
+    let database_url = database_url_from_env(DATABASE_URL_ENV)?;
+    let config = DeveloperQuotaConfig::from_env()?;
+    let pool = connect_database(&database_url, 1).await?;
+    let result = set_developer_quota(&pool, config).await;
     pool.close().await;
     result
 }
@@ -129,6 +167,33 @@ impl RevokeConfig {
             workspace_id: uuid_from_env(WORKSPACE_ID_ENV)?,
             membership_id: uuid_from_env(MEMBERSHIP_ID_ENV)?,
             api_key_id: uuid_from_env(API_KEY_ID_ENV)?,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DeveloperQuotaConfig {
+    workspace_id: Uuid,
+    membership_id: Uuid,
+    daily_target_limit: u32,
+    api_key_daily_target_limit: u32,
+}
+
+impl DeveloperQuotaConfig {
+    fn from_env() -> Result<Self, WorkspaceOperatorError> {
+        let daily_target_limit = positive_bounded_u32_from_env(DAILY_TARGET_LIMIT_ENV)?;
+        let api_key_daily_target_limit =
+            positive_bounded_u32_from_env(API_KEY_DAILY_TARGET_LIMIT_ENV)?;
+        if api_key_daily_target_limit > daily_target_limit {
+            return Err(WorkspaceOperatorError::InvalidConfiguration(
+                API_KEY_DAILY_TARGET_LIMIT_ENV,
+            ));
+        }
+        Ok(Self {
+            workspace_id: uuid_from_env(WORKSPACE_ID_ENV)?,
+            membership_id: uuid_from_env(MEMBERSHIP_ID_ENV)?,
+            daily_target_limit,
+            api_key_daily_target_limit,
         })
     }
 }
@@ -273,6 +338,113 @@ async fn revoke_api_key(
     Ok(config.api_key_id)
 }
 
+async fn set_developer_quota(
+    pool: &PgPool,
+    config: DeveloperQuotaConfig,
+) -> Result<DeveloperQuotaPolicyOutput, WorkspaceOperatorError> {
+    let mut transaction = begin_tenant_transaction(pool, config.workspace_id).await?;
+    require_active_operator(&mut transaction, config.workspace_id, config.membership_id).await?;
+    let existing: Option<(i32, i32)> = sqlx::query_as(
+        "SELECT daily_target_limit, api_key_daily_target_limit \
+         FROM developer_quota_policies \
+         WHERE tenant_id = $1 \
+         FOR UPDATE",
+    )
+    .bind(config.workspace_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(map_database_operation)?;
+    let Some((existing_tenant_limit, existing_api_key_limit)) = existing else {
+        return Err(WorkspaceOperatorError::NotFound);
+    };
+    let (current_tenant_usage, maximum_current_api_key_usage): (i64, i64) = sqlx::query_as(
+        r#"
+        WITH bounds AS (
+            SELECT
+                statement_timestamp() AS generated_at,
+                date_trunc('day', statement_timestamp() AT TIME ZONE 'UTC')
+                    AT TIME ZONE 'UTC' AS period_started_at
+        ),
+        key_usage AS (
+            SELECT
+                usage.api_key_id,
+                sum(usage.quantity)::bigint AS quantity
+            FROM developer_usage_records AS usage
+            CROSS JOIN bounds
+            WHERE usage.tenant_id = $1
+              AND usage.occurred_at >= bounds.period_started_at
+              AND usage.occurred_at < bounds.generated_at
+              AND usage.retained_until > bounds.generated_at
+            GROUP BY usage.api_key_id
+        )
+        SELECT
+            COALESCE(sum(quantity), 0)::bigint,
+            COALESCE(max(quantity) FILTER (WHERE api_key_id IS NOT NULL), 0)::bigint
+        FROM key_usage
+        "#,
+    )
+    .bind(config.workspace_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(map_database_operation)?;
+    if i64::from(config.daily_target_limit) < current_tenant_usage
+        || i64::from(config.api_key_daily_target_limit) < maximum_current_api_key_usage
+    {
+        return Err(WorkspaceOperatorError::QuotaBelowCurrentUsage);
+    }
+
+    let daily_target_limit = i32::try_from(config.daily_target_limit)
+        .map_err(|_| WorkspaceOperatorError::InvalidConfiguration(DAILY_TARGET_LIMIT_ENV))?;
+    let api_key_daily_target_limit =
+        i32::try_from(config.api_key_daily_target_limit).map_err(|_| {
+            WorkspaceOperatorError::InvalidConfiguration(API_KEY_DAILY_TARGET_LIMIT_ENV)
+        })?;
+    let changed = existing_tenant_limit != daily_target_limit
+        || existing_api_key_limit != api_key_daily_target_limit;
+    if changed {
+        sqlx::query(
+            "UPDATE developer_quota_policies \
+             SET daily_target_limit = $2, api_key_daily_target_limit = $3, \
+                 updated_at = clock_timestamp() \
+             WHERE tenant_id = $1",
+        )
+        .bind(config.workspace_id)
+        .bind(daily_target_limit)
+        .bind(api_key_daily_target_limit)
+        .execute(&mut *transaction)
+        .await
+        .map_err(map_database_operation)?;
+        sqlx::query(
+            "INSERT INTO audit_events (\
+                id, tenant_id, actor_membership_id, action, resource_kind, \
+                resource_id, occurred_at, details\
+             ) VALUES (\
+                $1, $2, $3, 'developer_quota.update', 'workspace', $2, \
+                clock_timestamp(), \
+                jsonb_build_object(\
+                    'daily_target_limit', $4::integer, \
+                    'api_key_daily_target_limit', $5::integer\
+                )\
+             )",
+        )
+        .bind(Uuid::new_v4())
+        .bind(config.workspace_id)
+        .bind(config.membership_id)
+        .bind(daily_target_limit)
+        .bind(api_key_daily_target_limit)
+        .execute(&mut *transaction)
+        .await
+        .map_err(map_database_operation)?;
+    }
+    transaction.commit().await.map_err(map_database_operation)?;
+    Ok(DeveloperQuotaPolicyOutput {
+        workspace_id: config.workspace_id,
+        daily_target_limit: config.daily_target_limit,
+        api_key_daily_target_limit: config.api_key_daily_target_limit,
+        changed,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn insert_api_key(
     transaction: &mut Transaction<'_, Postgres>,
@@ -403,6 +575,14 @@ fn optional_expiry_from_env() -> Result<Option<i64>, WorkspaceOperatorError> {
         ))
 }
 
+fn positive_bounded_u32_from_env(variable: &'static str) -> Result<u32, WorkspaceOperatorError> {
+    required_env(variable)?
+        .parse::<u32>()
+        .ok()
+        .filter(|value| (1..=MAXIMUM_DAILY_TARGET_LIMIT).contains(value))
+        .ok_or(WorkspaceOperatorError::InvalidConfiguration(variable))
+}
+
 fn uuid_from_env(variable: &'static str) -> Result<Uuid, WorkspaceOperatorError> {
     Uuid::parse_str(&required_env(variable)?)
         .map_err(|_| WorkspaceOperatorError::InvalidConfiguration(variable))
@@ -476,6 +656,8 @@ pub enum WorkspaceOperatorError {
     Conflict,
     #[error("workspace, membership, or API key was not found")]
     NotFound,
+    #[error("developer quota cannot be lower than current UTC-period usage")]
+    QuotaBelowCurrentUsage,
     #[error("workspace operator database operation failed")]
     DatabaseOperationFailed,
 }
@@ -603,6 +785,37 @@ mod tests {
         .unwrap();
         assert_eq!(audit_count, 3);
 
+        let default_quota: (i32, i32) = sqlx::query_as(
+            "SELECT daily_target_limit, api_key_daily_target_limit \
+             FROM developer_quota_policies WHERE tenant_id = $1",
+        )
+        .bind(bootstrap.workspace_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(default_quota, (10_000, 2_000));
+        let quota_config = DeveloperQuotaConfig {
+            workspace_id: bootstrap.workspace_id,
+            membership_id: bootstrap.membership_id,
+            daily_target_limit: 500,
+            api_key_daily_target_limit: 100,
+        };
+        let changed_quota = set_developer_quota(&pool, quota_config).await.unwrap();
+        assert!(changed_quota.changed);
+        assert_eq!(changed_quota.daily_target_limit, 500);
+        assert_eq!(changed_quota.api_key_daily_target_limit, 100);
+        let unchanged_quota = set_developer_quota(&pool, quota_config).await.unwrap();
+        assert!(!unchanged_quota.changed);
+        let quota_audit_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_events \
+             WHERE tenant_id = $1 AND action = 'developer_quota.update'",
+        )
+        .bind(bootstrap.workspace_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(quota_audit_count, 1);
+
         let viewer_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO memberships (\
@@ -629,6 +842,18 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(viewer_issue, WorkspaceOperatorError::NotFound));
+        let viewer_quota = set_developer_quota(
+            &pool,
+            DeveloperQuotaConfig {
+                workspace_id: bootstrap.workspace_id,
+                membership_id: viewer_id,
+                daily_target_limit: 600,
+                api_key_daily_target_limit: 100,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(viewer_quota, WorkspaceOperatorError::NotFound));
 
         let duplicate = bootstrap_workspace(
             &pool,

@@ -306,6 +306,14 @@ async fn persist_search(
 
     let (search_id, replayed) = if let Some((search_id, created_at_unix_ms)) = inserted {
         insert_search_targets(&mut transaction, principal.workspace_id, search_id, request).await?;
+        admit_developer_usage(
+            &mut transaction,
+            principal.workspace_id,
+            principal.api_key_id,
+            search_id,
+            target_count(request)?,
+        )
+        .await?;
         insert_started_event(
             &mut transaction,
             principal.workspace_id,
@@ -338,6 +346,106 @@ async fn persist_search(
         .await
         .map_err(|_| SearchError::Unavailable)?;
     Ok(CreateSearchOutcome { resource, replayed })
+}
+
+async fn admit_developer_usage(
+    transaction: &mut Transaction<'_, Postgres>,
+    workspace_id: Uuid,
+    api_key_id: Uuid,
+    search_id: Uuid,
+    quantity: u32,
+) -> Result<(), SearchError> {
+    let limits: Option<(i32, i32)> = sqlx::query_as(
+        "SELECT daily_target_limit, api_key_daily_target_limit \
+         FROM socialname_lock_developer_quota($1)",
+    )
+    .bind(workspace_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| SearchError::Unavailable)?;
+    let Some((tenant_limit, api_key_limit)) = limits else {
+        return Err(SearchError::Unavailable);
+    };
+
+    // This statement intentionally follows the policy lock. Under PostgreSQL's
+    // READ COMMITTED isolation it receives a fresh snapshot after any preceding
+    // quota admission for the tenant has committed.
+    let (tenant_used, api_key_used, retry_after_ms): (i64, i64, i64) = sqlx::query_as(
+        r#"
+        WITH bounds AS MATERIALIZED (
+            SELECT
+                statement_timestamp() AS generated_at,
+                date_trunc('day', statement_timestamp() AT TIME ZONE 'UTC')
+                    AT TIME ZONE 'UTC' AS period_started_at
+        )
+        SELECT
+            COALESCE((
+                SELECT sum(usage.quantity)
+                FROM developer_usage_records AS usage
+                CROSS JOIN bounds
+                WHERE usage.tenant_id = $1
+                  AND usage.occurred_at >= bounds.period_started_at
+                  AND usage.occurred_at < bounds.generated_at
+                  AND usage.retained_until > bounds.generated_at
+            ), 0)::bigint AS tenant_used,
+            COALESCE((
+                SELECT sum(usage.quantity)
+                FROM developer_usage_records AS usage
+                CROSS JOIN bounds
+                WHERE usage.tenant_id = $1
+                  AND usage.api_key_id = $2
+                  AND usage.occurred_at >= bounds.period_started_at
+                  AND usage.occurred_at < bounds.generated_at
+                  AND usage.retained_until > bounds.generated_at
+            ), 0)::bigint AS api_key_used,
+            (
+                EXTRACT(EPOCH FROM (
+                    bounds.period_started_at + interval '1 day'
+                    - bounds.generated_at
+                )) * 1000
+            )::bigint AS retry_after_ms
+        FROM bounds
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(api_key_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| SearchError::Unavailable)?;
+    let quantity = i64::from(quantity);
+    if tenant_used
+        .checked_add(quantity)
+        .is_none_or(|used| used > i64::from(tenant_limit))
+        || api_key_used
+            .checked_add(quantity)
+            .is_none_or(|used| used > i64::from(api_key_limit))
+    {
+        return Err(SearchError::QuotaExceeded(
+            u64::try_from(retry_after_ms.max(1)).map_err(|_| SearchError::Unavailable)?,
+        ));
+    }
+
+    sqlx::query(
+        "INSERT INTO developer_usage_records (\
+            id, tenant_id, api_key_id, search_id, meter, quantity, \
+            occurred_at, retained_until\
+         ) \
+         SELECT \
+            $1, search.tenant_id, $2, search.id, \
+            'search_target_admitted', $3, search.created_at, \
+            search.created_at + interval '400 days' \
+         FROM searches AS search \
+         WHERE search.tenant_id = $4 AND search.id = $5",
+    )
+    .bind(Uuid::new_v4())
+    .bind(api_key_id)
+    .bind(i32::try_from(quantity).map_err(|_| SearchError::Unavailable)?)
+    .bind(workspace_id)
+    .bind(search_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| SearchError::Unavailable)?;
+    Ok(())
 }
 
 async fn verify_known_sites(
@@ -1006,16 +1114,21 @@ fn stream_error_event(request_id: &RequestId, error: SearchError) -> Event {
             ValidationErrors::new(field, code),
         ),
         other => {
-            let (code, retryable) = match other {
+            let (code, retryable, retry_after_ms) = match other {
                 SearchError::Authentication(AuthenticationError::InvalidCredential) => {
-                    (ApiErrorCode::Unauthenticated, false)
+                    (ApiErrorCode::Unauthenticated, false, None)
                 }
                 SearchError::Authentication(AuthenticationError::Forbidden)
-                | SearchError::ConsentForbidden => (ApiErrorCode::Forbidden, false),
-                SearchError::NotFound => (ApiErrorCode::NotFound, false),
-                SearchError::IdempotencyConflict => (ApiErrorCode::IdempotencyConflict, false),
+                | SearchError::ConsentForbidden => (ApiErrorCode::Forbidden, false, None),
+                SearchError::NotFound => (ApiErrorCode::NotFound, false, None),
+                SearchError::IdempotencyConflict => {
+                    (ApiErrorCode::IdempotencyConflict, false, None)
+                }
+                SearchError::QuotaExceeded(delay) => {
+                    (ApiErrorCode::QuotaExceeded, true, Some(delay))
+                }
                 SearchError::Authentication(AuthenticationError::Unavailable)
-                | SearchError::Unavailable => (ApiErrorCode::Unavailable, true),
+                | SearchError::Unavailable => (ApiErrorCode::Unavailable, true, None),
                 SearchError::InvalidRequest(_, _) => unreachable!(),
             };
             ApiErrorResponse {
@@ -1024,7 +1137,7 @@ fn stream_error_event(request_id: &RequestId, error: SearchError) -> Event {
                 error: ApiError {
                     code,
                     retryable,
-                    retry_after_ms: None,
+                    retry_after_ms,
                     violations: Vec::new(),
                 },
             }
@@ -1063,6 +1176,16 @@ fn error_response(request_id: RequestId, error: SearchError) -> Response {
             StatusCode::CONFLICT,
             request_id,
             standard_api_error(ApiErrorCode::IdempotencyConflict, false),
+        ),
+        SearchError::QuotaExceeded(retry_after_ms) => crate::api_error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            request_id,
+            ApiError {
+                code: ApiErrorCode::QuotaExceeded,
+                retryable: true,
+                retry_after_ms: Some(retry_after_ms),
+                violations: Vec::new(),
+            },
         ),
         SearchError::Authentication(AuthenticationError::InvalidCredential) => {
             unauthenticated_response(request_id)
@@ -1163,6 +1286,8 @@ enum SearchError {
     NotFound,
     #[error("idempotency key was reused with a different request")]
     IdempotencyConflict,
+    #[error("developer target quota is exhausted")]
+    QuotaExceeded(u64),
     #[error(transparent)]
     Authentication(#[from] AuthenticationError),
     #[error("search storage is unavailable")]

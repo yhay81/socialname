@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "openapi.json",
-      "sha256": "1afdc89578725f80e4a76512a66cae11a761b782951262558bc89b92ace9c5e0"
+      "sha256": "fc8e962aeee235489bc333a9912a0559559f07ae69be23018ef2ea653c3337f8"
     },
     {
       "path": "schemas/api_error_response.schema.json",
@@ -37,6 +37,10 @@
     {
       "path": "schemas/deletion_request_resource.schema.json",
       "sha256": "408cf459b78945bdf443d2e30c477f574accfa91079589332a060f6829d4329c"
+    },
+    {
+      "path": "schemas/developer_report_resource.schema.json",
+      "sha256": "85d10a94e7e40bdcb040ee32e8c15dd8d011f2ce7ed2b4bcc5ec93afe4be7c0f"
     },
     {
       "path": "schemas/email_notification.schema.json",
@@ -112,7 +116,7 @@
     },
     {
       "path": "schemas/workspace_resource.schema.json",
-      "sha256": "127d1d3eb2f2fa2b4b741557e883c55f9128f9957d0d96828198b2c07cb879fe"
+      "sha256": "428a6dba251422ff0c00bd816bd51ca758a14c5cad182623818f3a7c55e1827a"
     },
     {
       "path": "sse.json",

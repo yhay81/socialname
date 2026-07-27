@@ -38,7 +38,7 @@ API schema version; it is not silently treated as an additive v1 change.
 The repository publishes every root beside an OpenAPI 3.1.2 description, an
 exact SSE transport contract, and a digest manifest under
 [`contracts/api/v1`](../contracts/api/v1/README.md). The generator-owned route
-registry contains all 22 current operations and their required scopes; server
+registry contains all 23 current operations and their required scopes; server
 tests independently prove that every published method/path is registered
 behind authentication with the same scope. See
 [API v1 contract publication](api-contract-publication.md).
@@ -344,7 +344,7 @@ relations, transition/delivery ownership, acknowledgement wire shape, and
 delivered-only acknowledgement relations. Operational-report coverage pins its
 target-free exact wire shape, closed windows, fixed targets, derived status,
 deletion milestone health, and backlog-age relations.
-Publication coverage additionally pins 22 unique operation IDs and
+Publication coverage additionally pins 23 unique operation IDs and
 method/path pairs, exact scopes, resolvable request/response schema roots,
 OpenAPI-to-SSE linkage, deterministic bytes, SHA-256 manifest entries, absence
 of unexpected generated JSON, and router registration.

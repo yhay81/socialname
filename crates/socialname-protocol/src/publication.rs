@@ -82,7 +82,7 @@ const IDEMPOTENCY: &[PublishedParameter] = &[PublishedParameter::IdempotencyKey]
 const RESUMABLE_STREAM: &[PublishedParameter] = &[PublishedParameter::LastEventId];
 const WINDOW: &[PublishedParameter] = &[PublishedParameter::Window];
 
-static OPERATIONS: [PublishedApiOperation; 22] = [
+static OPERATIONS: [PublishedApiOperation; 23] = [
     PublishedApiOperation {
         method: PublishedHttpMethod::Get,
         path: "/v1/workspace",
@@ -369,6 +369,19 @@ static OPERATIONS: [PublishedApiOperation; 22] = [
         response: PublishedResponseKind::Json("operational_report_resource"),
         returns_location: false,
     },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Get,
+        path: "/v1/developer/report",
+        operation_id: "getDeveloperReport",
+        required_scope: ApiKeyScope::UsageRead,
+        tag: "developer",
+        summary: "Read target-free quota, usage, backlog, and search service objectives.",
+        request_schema: None,
+        parameters: WINDOW,
+        success_statuses: OK,
+        response: PublishedResponseKind::Json("developer_report_resource"),
+        returns_location: false,
+    },
 ];
 
 #[must_use]
@@ -414,7 +427,8 @@ pub fn api_v1_openapi() -> Value {
             {"name": "evidence"},
             {"name": "deletion"},
             {"name": "notifications"},
-            {"name": "operations"}
+            {"name": "operations"},
+            {"name": "developer"}
         ],
         "paths": paths,
         "components": {
@@ -825,7 +839,7 @@ mod tests {
 
     #[test]
     fn publication_has_one_unique_operation_for_every_current_route() {
-        assert_eq!(published_api_v1_operations().len(), 22);
+        assert_eq!(published_api_v1_operations().len(), 23);
         let identities = published_api_v1_operations()
             .iter()
             .map(|operation| (operation.method, operation.path))
