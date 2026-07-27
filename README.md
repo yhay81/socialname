@@ -95,8 +95,11 @@ person.
   and fixed search-service objectives.
 - Target-free search-completion webhooks with idempotent per-search binding,
   terminal-state enqueue, signed delivery, cancellation, and deletion lineage.
-- Deterministic API v1 publication with 26 scoped operations, OpenAPI 3.1.2,
-  all Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
+- Tenant-local private search history and terminal, Event-ID-paginated export
+  under independent `search:read` and `data:export` scopes, with deletion
+  hiding and dependency-free resumable-SSE/export examples.
+- Deterministic API v1 publication with 28 scoped operations, OpenAPI 3.1.2,
+  33 Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
   SHA-256 drift manifest.
 - Ten representative site rules and 30 minimized offline fixture cases.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
@@ -104,12 +107,13 @@ person.
   consent, site selection, streaming evidence, and cancellation.
 
 Milestone 3's repository-completable software is implemented, and Milestone 4
-now has stable REST/JSON and SSE publication plus batch admission, quota,
-usage, service reporting, and search-completion webhooks. Real regional
-deployment, retained production SLO history, production notification evidence,
-and a hosted Developer API remain external gates. The next ordered repository
-slice adds remote and remote-assisted client source combinations without
-changing the local-first engine semantics.
+now has stable REST/JSON and SSE publication, batch admission, quota, usage,
+service reporting, search-completion webhooks, consent-bound remote clients,
+private search history, and bounded export examples. Real regional deployment,
+retained production SLO history, production notification/export evidence, and
+a hosted Developer API remain external gates. The next ordered repository
+slice adds plan entitlements and billing boundaries without coupling billing
+to the measurement engine.
 
 ## Build and verify
 
@@ -134,6 +138,7 @@ Verify the committed Developer API artifacts:
 
 ```console
 cargo run --locked -p socialname-protocol --bin socialname-api-contract -- check
+node --test examples/api-v1/client.test.mjs
 ```
 
 Run an explicitly local live probe:

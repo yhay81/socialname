@@ -10,7 +10,7 @@ destination ownership, live-rule eligibility, or availability claim.
 The authoritative package is
 [`contracts/api/v1`](../contracts/api/v1/README.md). It contains:
 
-- `openapi.json`: OpenAPI 3.1.2 for all 26 implemented authenticated
+- `openapi.json`: OpenAPI 3.1.2 for all 28 implemented authenticated
   REST/JSON and SSE operations;
 - `schemas/*.schema.json`: every independent
   `socialname-protocol::api_v1_schemas()` Draft 2020-12 root;
@@ -135,6 +135,9 @@ No SDK is committed until it reduces measured adoption friction.
 
 Hosted documentation, a production origin, release signing, package
 distribution, retained service-level history, and production compatibility
-observations remain external evidence gates. Quota, usage reporting, and
-search-completion webhook contracts are now included in this publication;
-their presence still makes no hosted-service or availability claim.
+observations remain external evidence gates. Quota, usage reporting,
+search-completion webhook, private-history, and terminal-export contracts are
+now included in this publication; their presence still makes no hosted-service
+or availability claim. Dependency-free Node.js examples cover SSE resumption
+and export pagination. A generated SDK remains uncommitted until observed
+language-specific adoption friction justifies its distribution and maintenance.

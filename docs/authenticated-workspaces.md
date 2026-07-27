@@ -62,8 +62,10 @@ Keys contain a nonempty, duplicate-free subset of at most 16 values from:
 Migrations `0002_api_key_authentication.sql` and
 `0010_consent_grant_lifecycle.sql`, `0011_evidence_capsule_retention.sql`, and
 `0016_operational_reporting.sql` and `0017_developer_usage_reporting.sql`
-evolve the same closed set and reject null or duplicate array entries. All
-scopes except `data:export` now have exact HTTP consumers. `operations:read`
+evolve the same closed set and reject null or duplicate array entries. Every
+scope now has an exact HTTP consumer. `data:export` protects only terminal
+private-search event export and does not grant history listing or Evidence
+Capsule reads. `operations:read`
 protects only the target-free tenant operations aggregate. `usage:read`
 protects only the Developer quota, usage, backlog, and search-objective
 aggregate. Neither grants access to watches, notification resources, deletion

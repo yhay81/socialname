@@ -35,3 +35,9 @@ unexpected generated JSON files. Existing v1 fields, enum values, tagged-union
 shapes, required scopes, status meanings, or SSE frame semantics are not
 silently changed. An incompatible change requires a new public contract
 version and an explicit migration policy.
+
+The publication currently contains 28 authenticated operations and 33
+independent JSON Schema roots. Adoption-focused, dependency-free Node.js
+examples for resumable search and paginated private-history export live under
+[`examples/api-v1`](../../../examples/api-v1/README.md); they do not replace
+the machine-readable contract or runtime validation.

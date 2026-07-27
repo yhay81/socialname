@@ -17,9 +17,10 @@ use socialname_protocol::{
     RuleHash, SearchCompletionDeliveryStatus, SearchCompletionOutcome, SearchCompletionWebhook,
     SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
     SearchCompletionWebhookSubscriptionState, SearchCreateRequest, SearchEvent, SearchEventData,
-    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SiteId, SuppressionReason,
-    SyncPolicy, TRANSITION_TO_DELIVERY_P95_TARGET_MS, Target, TargetSelection, Transition,
-    TransitionChange, TransitionConfirmation, TransitionId, Username, Validate,
+    SearchExportPage, SearchExportSchema, SearchHistoryPage, SearchId, SearchMode, SearchProgress,
+    SearchResource, SearchState, SearchTerminalState, SiteId, SuppressionReason, SyncPolicy,
+    TRANSITION_TO_DELIVERY_P95_TARGET_MS, Target, TargetSelection, Transition, TransitionChange,
+    TransitionConfirmation, TransitionId, Username, Validate,
     WATCH_RUN_SUCCESS_TARGET_BASIS_POINTS, WatchCreateRequest, WatchId, WatchListPage,
     WatchResource, WatchSchedule, WatchState, WatchTransitionEntry, WatchTransitionPage,
     WebhookNotification,
@@ -407,6 +408,150 @@ fn accepted_private_search_resource_has_one_exact_v1_wire_shape() {
         })
     );
     assert!(!format!("{resource:?}").contains("alice-private-target"));
+}
+
+#[test]
+fn search_history_and_export_have_exact_bounded_v1_wire_shapes() {
+    let search = SearchResource {
+        schema: ProtocolVersion::ApiV1,
+        search_id: SearchId::new("search_01").unwrap(),
+        state: SearchState::Cancelled,
+        request: SearchCreateRequest {
+            schema: ProtocolVersion::ApiV1,
+            targets: TargetSelection {
+                usernames: vec![Username::new("alice-private-target").unwrap()],
+                site_ids: vec![SiteId::new("github").unwrap()],
+            },
+            mode: SearchMode::Remote,
+            sync: SyncPolicy::Private,
+            consent_grant_id: Some(ConsentGrantId::new("grant_01").unwrap()),
+            maximum_age_ms: 60_000,
+            region_classes: vec![RegionClass::new("jp").unwrap()],
+        },
+        progress: SearchProgress {
+            total_targets: 1,
+            completed_targets: 0,
+            definitive_results: 0,
+            uncertain_results: 0,
+            operational_failures: 0,
+        },
+        created_at_unix_ms: 1_000,
+        updated_at_unix_ms: 2_000,
+    };
+    assert!(search.validate().is_ok());
+    let history = SearchHistoryPage {
+        schema: ProtocolVersion::ApiV1,
+        searches: vec![search.clone()],
+        next_cursor: Some(search.search_id.clone()),
+    };
+    assert!(history.validate().is_ok());
+    let history_json = serde_json::to_value(history).unwrap();
+    assert_eq!(history_json["schema"], API_V1_SCHEMA);
+    assert_eq!(history_json["searches"][0]["search_id"], "search_01");
+    assert_eq!(
+        history_json["searches"][0]["request"]["targets"]["usernames"][0],
+        "alice-private-target"
+    );
+    assert_eq!(history_json["next_cursor"], "search_01");
+
+    let progress = search.progress.clone();
+    let export = SearchExportPage {
+        schema: ProtocolVersion::ApiV1,
+        export_schema: SearchExportSchema::V1,
+        search,
+        events: vec![
+            SearchEvent {
+                schema: ProtocolVersion::ApiV1,
+                event_id: EventId::new("event_01").unwrap(),
+                search_id: SearchId::new("search_01").unwrap(),
+                sequence: 1,
+                emitted_at_unix_ms: 1_000,
+                data: SearchEventData::Started { total_targets: 1 },
+            },
+            SearchEvent {
+                schema: ProtocolVersion::ApiV1,
+                event_id: EventId::new("event_02").unwrap(),
+                search_id: SearchId::new("search_01").unwrap(),
+                sequence: 2,
+                emitted_at_unix_ms: 2_000,
+                data: SearchEventData::Finished {
+                    state: SearchTerminalState::Cancelled,
+                    progress,
+                },
+            },
+        ],
+        total_events: 2,
+        complete: true,
+        next_cursor: None,
+    };
+    assert!(export.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(export).unwrap(),
+        serde_json::json!({
+            "schema": API_V1_SCHEMA,
+            "export_schema": "socialname.dev/search-export/v1",
+            "search": {
+                "schema": API_V1_SCHEMA,
+                "search_id": "search_01",
+                "state": "cancelled",
+                "request": {
+                    "schema": API_V1_SCHEMA,
+                    "targets": {
+                        "usernames": ["alice-private-target"],
+                        "site_ids": ["github"]
+                    },
+                    "mode": "remote",
+                    "sync": "private",
+                    "consent_grant_id": "grant_01",
+                    "maximum_age_ms": 60_000,
+                    "region_classes": ["jp"]
+                },
+                "progress": {
+                    "total_targets": 1,
+                    "completed_targets": 0,
+                    "definitive_results": 0,
+                    "uncertain_results": 0,
+                    "operational_failures": 0
+                },
+                "created_at_unix_ms": 1_000,
+                "updated_at_unix_ms": 2_000
+            },
+            "events": [
+                {
+                    "schema": API_V1_SCHEMA,
+                    "event_id": "event_01",
+                    "search_id": "search_01",
+                    "sequence": 1,
+                    "emitted_at_unix_ms": 1_000,
+                    "data": {
+                        "type": "started",
+                        "total_targets": 1
+                    }
+                },
+                {
+                    "schema": API_V1_SCHEMA,
+                    "event_id": "event_02",
+                    "search_id": "search_01",
+                    "sequence": 2,
+                    "emitted_at_unix_ms": 2_000,
+                    "data": {
+                        "type": "finished",
+                        "state": "cancelled",
+                        "progress": {
+                            "total_targets": 1,
+                            "completed_targets": 0,
+                            "definitive_results": 0,
+                            "uncertain_results": 0,
+                            "operational_failures": 0
+                        }
+                    }
+                }
+            ],
+            "total_events": 2,
+            "complete": true,
+            "next_cursor": null
+        })
+    );
 }
 
 #[test]

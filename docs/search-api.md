@@ -102,6 +102,17 @@ the operation returns the same terminal resource without another terminal
 event. Product-data erasure uses the separate implemented lineage-aware
 workflow in [Lineage-backed deletion workflows](deletion-workflows.md).
 
+## Private history and export
+
+`GET /v1/searches` requires `search:read` and returns a tenant-local,
+creation-ordered page of complete search resources. `GET
+/v1/searches/{search_id}/export` independently requires `data:export` and
+returns the immutable ordered event history of a terminal search in bounded
+pages. Active export is a conflict, and any lineage-hidden target or event
+hides the whole search from both surfaces rather than returning a partial
+history. See
+[Private search history and export](private-search-history-export.md).
+
 ## Append-only event storage
 
 Migration `0003_search_event_stream.sql` adds tenant-RLS table
@@ -223,10 +234,13 @@ claim/reclaim fencing, retry exhaustion, observation/event idempotency,
 multi-search and watch fan-out, watch freshness reuse and byte reservation,
 global/regional assertion support and lineage, regional event projection,
 invalid-target handling, and cancellation, consent-withdrawal, and rule-health
-races. It additionally proves exact replay is charged once, concurrent
-same-tenant admission is serialized, quota rejection is whole-batch and
-target-free, and rejected work leaves no search row. Search-completion coverage
-also proves exact/conflicting registration replay, read/write scope separation,
+races. It additionally proves stable history pagination, independent export
+scope, terminal-only Event ID export traversal, cross-tenant hiding, and
+deletion-tombstone exclusion. It also proves exact replay is charged once,
+concurrent same-tenant admission is serialized, quota rejection is whole-batch
+and target-free, and rejected work leaves no search row. Search-completion
+coverage also proves exact/conflicting registration replay, read/write scope
+separation,
 two-tenant hiding, both terminal/registration commit orders, one logical
 delivery under repeated updates, cancellation and endpoint-disable behavior,
 target-free signed worker output, and search-to-delivery lineage.

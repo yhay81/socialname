@@ -71,10 +71,11 @@ pub use publication::{
 };
 pub use schema::api_v1_schemas;
 pub use search::{
-    Assertion, AssertionOutcome, AssertionQuality, DefinitiveResult, OperationalFailure,
-    OperationalFailureKind, RegionalAssertion, SearchCreateRequest, SearchEvent, SearchEventData,
-    SearchProgress, SearchResource, SearchState, SearchTerminalState, UncertainResult,
-    UncertaintyReason,
+    Assertion, AssertionOutcome, AssertionQuality, DefinitiveResult, MAX_SEARCH_EXPORT_EVENTS,
+    MAX_SEARCH_EXPORT_PAGE_EVENTS, MAX_SEARCH_HISTORY_PAGE_ITEMS, OperationalFailure,
+    OperationalFailureKind, RegionalAssertion, SEARCH_EXPORT_V1, SearchCreateRequest, SearchEvent,
+    SearchEventData, SearchExportPage, SearchExportSchema, SearchHistoryPage, SearchProgress,
+    SearchResource, SearchState, SearchTerminalState, UncertainResult, UncertaintyReason,
 };
 pub use search_webhook::{
     SearchCompletionDeliveryStatus, SearchCompletionOutcome, SearchCompletionWebhook,

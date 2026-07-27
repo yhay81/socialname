@@ -373,8 +373,10 @@ The complete boundary is specified in
 
 ```http
 POST /v1/searches
+GET  /v1/searches
 GET  /v1/searches/{search_id}
 GET  /v1/searches/{search_id}/events
+GET  /v1/searches/{search_id}/export
 DELETE /v1/searches/{search_id}
 ```
 
@@ -390,7 +392,12 @@ uses the SSE event UUID for `Last-Event-ID` resumption, rechecks authorization
 while connected, and bounds each connection. Polling remains available for
 simple clients. `DELETE` is idempotent cancellation and writes one terminal
 event; erasure is a separate governed workflow. See
-[Private search API and ordered event stream](search-api.md).
+[Private search API and ordered event stream](search-api.md). The list route is
+a stable tenant-local private-history index.
+Terminal export uses an independent `data:export` scope and Event ID pages;
+lineage-hidden data suppresses the complete search rather than leaking a
+partial view. See
+[Private search history and export](private-search-history-export.md).
 
 The signed worker now expands eligible pending targets under a narrow
 cross-tenant coordinator function, then performs all tenant data work under

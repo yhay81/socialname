@@ -40,6 +40,10 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
@@ -50,6 +54,9 @@ jobs:
 
       - name: Verify API v1 contracts
         run: cargo run --locked -p socialname-protocol --bin socialname-api-contract -- check
+
+      - name: Verify API v1 examples
+        run: node --test examples/api-v1/client.test.mjs
 
       - name: Apply PostgreSQL migrations
         run: cargo run --locked -p socialname-server -- migrate

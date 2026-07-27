@@ -14,6 +14,11 @@ use crate::{
     },
 };
 
+pub const MAX_SEARCH_HISTORY_PAGE_ITEMS: usize = 50;
+pub const MAX_SEARCH_EXPORT_PAGE_EVENTS: usize = 50;
+pub const MAX_SEARCH_EXPORT_EVENTS: usize = 1_026;
+pub const SEARCH_EXPORT_V1: &str = "socialname.dev/search-export/v1";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SearchCreateRequest {
@@ -138,6 +143,41 @@ impl Validate for SearchResource {
             )));
         }
         collect_validations(validations)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SearchHistoryPage {
+    pub schema: ProtocolVersion,
+    pub searches: Vec<SearchResource>,
+    pub next_cursor: Option<SearchId>,
+}
+
+impl Validate for SearchHistoryPage {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        if self.searches.len() > MAX_SEARCH_HISTORY_PAGE_ITEMS {
+            return Err(ValidationErrors::new(
+                "searches",
+                ValidationCode::TooManyItems,
+            ));
+        }
+        let mut ids = BTreeSet::new();
+        for search in &self.searches {
+            search.validate()?;
+            if !ids.insert(search.search_id.as_str()) {
+                return Err(ValidationErrors::new("searches", ValidationCode::Duplicate));
+            }
+        }
+        if self.next_cursor.as_ref() != self.searches.last().map(|search| &search.search_id)
+            && self.next_cursor.is_some()
+        {
+            return Err(ValidationErrors::new(
+                "next_cursor",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -539,6 +579,109 @@ impl Validate for SearchEvent {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SearchExportSchema {
+    #[default]
+    #[serde(rename = "socialname.dev/search-export/v1")]
+    V1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SearchExportPage {
+    pub schema: ProtocolVersion,
+    pub export_schema: SearchExportSchema,
+    pub search: SearchResource,
+    pub events: Vec<SearchEvent>,
+    pub total_events: u32,
+    pub complete: bool,
+    pub next_cursor: Option<EventId>,
+}
+
+impl Validate for SearchExportPage {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        self.search.validate()?;
+        if !matches!(
+            self.search.state,
+            SearchState::Completed | SearchState::Cancelled | SearchState::Failed
+        ) {
+            return Err(ValidationErrors::new(
+                "search.state",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        let total_events = usize::try_from(self.total_events)
+            .map_err(|_| ValidationErrors::new("total_events", ValidationCode::OutOfRange))?;
+        if !(2..=MAX_SEARCH_EXPORT_EVENTS).contains(&total_events) {
+            return Err(ValidationErrors::new(
+                "total_events",
+                ValidationCode::OutOfRange,
+            ));
+        }
+        if self.events.len() > MAX_SEARCH_EXPORT_PAGE_EVENTS || self.events.len() > total_events {
+            return Err(ValidationErrors::new(
+                "events",
+                ValidationCode::TooManyItems,
+            ));
+        }
+        if self.complete != self.next_cursor.is_none() {
+            return Err(ValidationErrors::new(
+                "complete",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+        if self.next_cursor.as_ref() != self.events.last().map(|event| &event.event_id)
+            && self.next_cursor.is_some()
+        {
+            return Err(ValidationErrors::new(
+                "next_cursor",
+                ValidationCode::InvalidRelation,
+            ));
+        }
+
+        let mut event_ids = BTreeSet::new();
+        let mut previous_sequence = None;
+        for event in &self.events {
+            event.validate()?;
+            if event.search_id != self.search.search_id
+                || event.sequence > u64::from(self.total_events)
+                || previous_sequence.is_some_and(|previous| event.sequence <= previous)
+            {
+                return Err(ValidationErrors::new(
+                    "events",
+                    ValidationCode::InvalidRelation,
+                ));
+            }
+            if !event_ids.insert(event.event_id.as_str()) {
+                return Err(ValidationErrors::new("events", ValidationCode::Duplicate));
+            }
+            previous_sequence = Some(event.sequence);
+        }
+
+        if self.complete && !self.events.is_empty() {
+            let final_event = self.events.last().expect("nonempty checked");
+            let expected_terminal = match self.search.state {
+                SearchState::Completed => SearchTerminalState::Completed,
+                SearchState::Cancelled => SearchTerminalState::Cancelled,
+                SearchState::Failed => SearchTerminalState::Failed,
+                SearchState::Accepted | SearchState::Running => unreachable!("terminal checked"),
+            };
+            if final_event.sequence != u64::from(self.total_events)
+                || !matches!(
+                    &final_event.data,
+                    SearchEventData::Finished { state, .. } if *state == expected_terminal
+                )
+            {
+                return Err(ValidationErrors::new(
+                    "events",
+                    ValidationCode::InvalidRelation,
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 fn collect_validations(
     validations: impl IntoIterator<Item = Result<(), ValidationErrors>>,
 ) -> Result<(), ValidationErrors> {
@@ -604,6 +747,69 @@ mod tests {
             }]),
             derivation_version: "assertion/v1".to_owned(),
         }
+    }
+
+    fn completed_search() -> SearchResource {
+        SearchResource {
+            schema: ProtocolVersion::ApiV1,
+            search_id: SearchId::new("search_01").unwrap(),
+            state: SearchState::Completed,
+            request: request(),
+            progress: SearchProgress {
+                total_targets: 1,
+                completed_targets: 1,
+                definitive_results: 0,
+                uncertain_results: 0,
+                operational_failures: 1,
+            },
+            created_at_unix_ms: 1_000,
+            updated_at_unix_ms: 2_000,
+        }
+    }
+
+    fn export_events() -> Vec<SearchEvent> {
+        vec![
+            SearchEvent {
+                schema: ProtocolVersion::ApiV1,
+                event_id: EventId::new("event_01").unwrap(),
+                search_id: SearchId::new("search_01").unwrap(),
+                sequence: 1,
+                emitted_at_unix_ms: 1_000,
+                data: SearchEventData::Started { total_targets: 1 },
+            },
+            SearchEvent {
+                schema: ProtocolVersion::ApiV1,
+                event_id: EventId::new("event_02").unwrap(),
+                search_id: SearchId::new("search_01").unwrap(),
+                sequence: 2,
+                emitted_at_unix_ms: 1_500,
+                data: SearchEventData::OperationalFailure {
+                    failure: OperationalFailure {
+                        target: Target {
+                            username: crate::Username::new("alice").unwrap(),
+                            site_id: SiteId::new("github").unwrap(),
+                        },
+                        kind: OperationalFailureKind::Timeout,
+                        source: ResultSource::ManagedProbe,
+                        occurred_at_unix_ms: 1_500,
+                        retryable: true,
+                        region_class: Some(RegionClass::new("jp").unwrap()),
+                        rule_hash: None,
+                    },
+                },
+            },
+            SearchEvent {
+                schema: ProtocolVersion::ApiV1,
+                event_id: EventId::new("event_03").unwrap(),
+                search_id: SearchId::new("search_01").unwrap(),
+                sequence: 3,
+                emitted_at_unix_ms: 2_000,
+                data: SearchEventData::Finished {
+                    state: SearchTerminalState::Completed,
+                    progress: completed_search().progress,
+                },
+            },
+        ]
     }
 
     #[test]
@@ -752,5 +958,50 @@ mod tests {
                 .get("regional_assertions")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn history_cursor_is_bound_to_the_last_search() {
+        let search = completed_search();
+        let page = SearchHistoryPage {
+            schema: ProtocolVersion::ApiV1,
+            searches: vec![search.clone()],
+            next_cursor: Some(search.search_id.clone()),
+        };
+        assert!(page.validate().is_ok());
+
+        let mut invalid = page;
+        invalid.next_cursor = Some(SearchId::new("search_02").unwrap());
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn export_pages_bind_terminal_state_order_and_resumption() {
+        let events = export_events();
+        let first = SearchExportPage {
+            schema: ProtocolVersion::ApiV1,
+            export_schema: SearchExportSchema::V1,
+            search: completed_search(),
+            events: events[..2].to_vec(),
+            total_events: 3,
+            complete: false,
+            next_cursor: Some(events[1].event_id.clone()),
+        };
+        assert!(first.validate().is_ok());
+
+        let final_page = SearchExportPage {
+            events: events[2..].to_vec(),
+            complete: true,
+            next_cursor: None,
+            ..first.clone()
+        };
+        assert!(final_page.validate().is_ok());
+
+        let mut wrong_terminal = final_page;
+        wrong_terminal.events[0].data = SearchEventData::Finished {
+            state: SearchTerminalState::Failed,
+            progress: completed_search().progress,
+        };
+        assert!(wrong_terminal.validate().is_err());
     }
 }

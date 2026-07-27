@@ -155,6 +155,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Private search API and ordered event stream](search-api.md) — consented
   idempotent creation, polling/cancellation, append-only events, and bounded
   resumable SSE with worker-created result and terminal events.
+- [Private search history and export](private-search-history-export.md) —
+  tenant-local discovery, terminal Event ID export, independent scopes,
+  deletion hiding, and adoption-focused examples.
 - [Signed managed worker boundary](managed-worker.md) — signed-metadata-only
   activation, DNS-rebinding/SSRF defenses, byte budgets, and one-shot
   operation.

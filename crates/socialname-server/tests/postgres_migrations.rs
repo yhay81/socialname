@@ -43,10 +43,10 @@ use socialname_protocol::{
     ProbeBudget, ProtocolVersion, RegionClass, ResultSource, RuleHash,
     SearchCompletionWebhookCreateRequest, SearchCompletionWebhookResource,
     SearchCompletionWebhookSubscriptionState, SearchCreateRequest, SearchEvent, SearchEventData,
-    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId,
-    SloStatus, SyncPolicy, Target, TargetSelection, Username, Validate, WatchCreateRequest,
-    WatchListPage, WatchPatchRequest, WatchResource, WatchSchedule, WatchState, WatchStateUpdate,
-    WatchTransitionPage, WorkspaceResource,
+    SearchExportPage, SearchHistoryPage, SearchId, SearchMode, SearchProgress, SearchResource,
+    SearchState, SearchTerminalState, SiteId, SloStatus, SyncPolicy, Target, TargetSelection,
+    Username, Validate, WatchCreateRequest, WatchListPage, WatchPatchRequest, WatchResource,
+    WatchSchedule, WatchState, WatchStateUpdate, WatchTransitionPage, WorkspaceResource,
 };
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
@@ -99,6 +99,7 @@ async fn initial_migration_enforces_tenant_evidence_and_deletion_boundaries() {
     assert_authenticated_workspace_boundary(&pool).await;
     assert_consent_grant_lifecycle_boundary(&pool).await;
     assert_private_search_and_event_stream_boundary(&pool).await;
+    assert_search_history_export_boundary(&pool).await;
     assert_watch_api_boundary(&pool).await;
     assert_managed_probe_job_boundary(&pool).await;
     assert_developer_usage_reporting_boundary(&pool).await;
@@ -522,6 +523,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "evidence:read",
                 "operations:read",
                 "usage:read",
+                "data:export",
                 "data:delete",
                 "notification:read",
                 "notification:write",
@@ -546,6 +548,7 @@ async fn install_api_key_fixtures(pool: &PgPool) {
                 "evidence:read",
                 "operations:read",
                 "usage:read",
+                "data:export",
                 "data:delete",
                 "notification:read",
                 "notification:write",
@@ -582,6 +585,16 @@ async fn install_api_key_fixtures(pool: &PgPool) {
             scopes: &["workspace:read"],
             state: "active",
             expires_at_unix_ms: Some(1_767_312_000_000),
+        },
+        ApiKeyFixture {
+            id: "00000000-0000-0000-0000-0000000000b7",
+            tenant_id: "00000000-0000-0000-0000-000000000001",
+            membership_id: "00000000-0000-0000-0000-000000000011",
+            prefix: "8888888888888888",
+            secret_byte: 0x88,
+            scopes: &["data:export"],
+            state: "active",
+            expires_at_unix_ms: None,
         },
     ] {
         let id = Uuid::parse_str(fixture.id).unwrap();
@@ -1915,6 +1928,215 @@ async fn assert_private_search_and_event_stream_boundary(administrator_pool: &Pg
         .unwrap();
     assert_eq!(capacity_released.status(), StatusCode::OK);
     drop(capacity_released);
+
+    application_pool.close().await;
+}
+
+async fn assert_search_history_export_boundary(administrator_pool: &PgPool) {
+    let application_database_url = env::var(TEST_APPLICATION_DATABASE_URL_ENV)
+        .expect("application database URL must accompany the PostgreSQL integration test");
+    let application_pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&application_database_url)
+        .await
+        .unwrap();
+    let reader_token = api_key_token("cccccccccccccccc", 0x33);
+    let export_token = api_key_token("8888888888888888", 0x88);
+    let other_tenant_token = api_key_token("bbbbbbbbbbbbbbbb", 0x22);
+
+    let search = create_private_search(&application_pool, "history-export").await;
+    let search_id = Uuid::parse_str(search.search_id.as_str()).unwrap();
+
+    let active_export = server_request(
+        &application_pool,
+        &format!("/v1/searches/{search_id}/export"),
+        Some(&export_token),
+    )
+    .await;
+    assert_eq!(active_export.status(), StatusCode::CONFLICT);
+    assert_api_error(active_export, ApiErrorCode::Conflict).await;
+
+    let reader_export = server_request(
+        &application_pool,
+        &format!("/v1/searches/{search_id}/export"),
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(reader_export.status(), StatusCode::FORBIDDEN);
+    assert_api_error(reader_export, ApiErrorCode::Forbidden).await;
+
+    let export_only_history =
+        server_request(&application_pool, "/v1/searches", Some(&export_token)).await;
+    assert_eq!(export_only_history.status(), StatusCode::FORBIDDEN);
+    assert_api_error(export_only_history, ApiErrorCode::Forbidden).await;
+
+    let first_history = server_request(
+        &application_pool,
+        "/v1/searches?limit=1",
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(first_history.status(), StatusCode::OK);
+    let first_history: SearchHistoryPage =
+        serde_json::from_value(json_body(first_history).await).unwrap();
+    assert!(first_history.validate().is_ok());
+    assert_eq!(first_history.searches.len(), 1);
+    assert!(first_history.next_cursor.is_some());
+    let first_search_id = first_history.searches[0].search_id.clone();
+
+    let second_history = server_request(
+        &application_pool,
+        &format!(
+            "/v1/searches?limit=1&after={}",
+            first_history.next_cursor.as_ref().unwrap().as_str()
+        ),
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(second_history.status(), StatusCode::OK);
+    let second_history: SearchHistoryPage =
+        serde_json::from_value(json_body(second_history).await).unwrap();
+    assert!(second_history.validate().is_ok());
+    assert_eq!(second_history.searches.len(), 1);
+    assert_ne!(second_history.searches[0].search_id, first_search_id);
+
+    for path in [
+        "/v1/searches?limit=0",
+        "/v1/searches?after=00000000-0000-0000-0000-000000000099",
+        "/v1/searches?private-target=forbidden",
+    ] {
+        let response = server_request(&application_pool, path, Some(&reader_token)).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"]["code"], "invalid_request");
+        assert!(!body.to_string().contains("private-target"));
+    }
+
+    complete_search_with_operational_failure(administrator_pool, search_id).await;
+    let mut after = None;
+    let mut exported_events = Vec::new();
+    loop {
+        let path = after.as_ref().map_or_else(
+            || format!("/v1/searches/{search_id}/export?limit=1"),
+            |cursor: &EventId| {
+                format!(
+                    "/v1/searches/{search_id}/export?limit=1&after={}",
+                    cursor.as_str()
+                )
+            },
+        );
+        let response = server_request(&application_pool, &path, Some(&export_token)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let page: SearchExportPage = serde_json::from_value(json_body(response).await).unwrap();
+        assert!(page.validate().is_ok());
+        assert_eq!(page.search.search_id.as_str(), search_id.to_string());
+        assert_eq!(page.total_events, 3);
+        exported_events.extend(page.events);
+        if page.complete {
+            assert!(page.next_cursor.is_none());
+            break;
+        }
+        after = page.next_cursor;
+    }
+    assert_eq!(
+        exported_events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+
+    let cross_tenant = server_request(
+        &application_pool,
+        &format!("/v1/searches/{search_id}/export"),
+        Some(&other_tenant_token),
+    )
+    .await;
+    assert_eq!(cross_tenant.status(), StatusCode::NOT_FOUND);
+    assert_api_error(cross_tenant, ApiErrorCode::NotFound).await;
+
+    let foreign_event: Uuid = sqlx::query_scalar(
+        "SELECT id FROM search_events \
+         WHERE tenant_id = $1 AND search_id <> $2 \
+         ORDER BY created_at LIMIT 1",
+    )
+    .bind(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap())
+    .bind(search_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    let foreign_cursor = server_request(
+        &application_pool,
+        &format!("/v1/searches/{search_id}/export?after={foreign_event}"),
+        Some(&export_token),
+    )
+    .await;
+    assert_eq!(foreign_cursor.status(), StatusCode::BAD_REQUEST);
+    assert_api_error(foreign_cursor, ApiErrorCode::InvalidRequest).await;
+
+    let tenant_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let deletion_request_id = Uuid::new_v4();
+    sqlx::query(
+        "WITH boundary AS (SELECT clock_timestamp() AS now) \
+         INSERT INTO deletion_requests (\
+             id, tenant_id, scope_kind, selector_token, state, requested_at, \
+             hide_by, support_withdrawal_by, primary_delete_by, \
+             derived_rebuild_by, backup_expiry_by\
+         ) \
+         SELECT $1, $2, 'target', decode(repeat('91', 32), 'hex'), 'accepted', now, \
+                now + interval '5 minutes', now + interval '1 hour', \
+                now + interval '24 hours', now + interval '7 days', \
+                now + interval '35 days' \
+         FROM boundary",
+    )
+    .bind(deletion_request_id)
+    .bind(tenant_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+    let search_target_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM search_targets WHERE tenant_id = $1 AND search_id = $2 LIMIT 1",
+    )
+    .bind(tenant_id)
+    .bind(search_id)
+    .fetch_one(administrator_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deletion_resource_matches (\
+             tenant_id, deletion_request_id, resource_kind, resource_id, hidden_at\
+         ) VALUES ($1, $2, 'search_target', $3, clock_timestamp())",
+    )
+    .bind(tenant_id)
+    .bind(deletion_request_id)
+    .bind(search_target_id)
+    .execute(administrator_pool)
+    .await
+    .unwrap();
+
+    let hidden_export = server_request(
+        &application_pool,
+        &format!("/v1/searches/{search_id}/export"),
+        Some(&export_token),
+    )
+    .await;
+    assert_eq!(hidden_export.status(), StatusCode::NOT_FOUND);
+    assert_api_error(hidden_export, ApiErrorCode::NotFound).await;
+    let visible_history = server_request(
+        &application_pool,
+        "/v1/searches?limit=50",
+        Some(&reader_token),
+    )
+    .await;
+    assert_eq!(visible_history.status(), StatusCode::OK);
+    let visible_history: SearchHistoryPage =
+        serde_json::from_value(json_body(visible_history).await).unwrap();
+    assert!(
+        visible_history
+            .searches
+            .iter()
+            .all(|entry| entry.search_id.as_str() != search_id.to_string())
+    );
 
     application_pool.close().await;
 }

@@ -81,6 +81,12 @@
       "search_event": {
         "$ref": "./schemas/search_event.schema.json"
       },
+      "search_export_page": {
+        "$ref": "./schemas/search_export_page.schema.json"
+      },
+      "search_history_page": {
+        "$ref": "./schemas/search_history_page.schema.json"
+      },
       "search_resource": {
         "$ref": "./schemas/search_resource.schema.json"
       },
@@ -1608,6 +1614,123 @@
       }
     },
     "/v1/searches": {
+      "get": {
+        "operationId": "listSearches",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/search_history_page.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List one bounded tenant-local page of managed search history.",
+        "tags": [
+          "searches"
+        ],
+        "x-socialname-required-scope": "search:read",
+        "x-socialname-unknown-query-parameters": "forbidden"
+      },
       "post": {
         "operationId": "createSearch",
         "parameters": [
@@ -2484,6 +2607,134 @@
           "searches"
         ],
         "x-socialname-required-scope": "search:read"
+      }
+    },
+    "/v1/searches/{search_id}/export": {
+      "get": {
+        "operationId": "exportSearch",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestId"
+          },
+          {
+            "in": "path",
+            "name": "search_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/search_export_page.schema.json"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/api_error_response.schema.json"
+                }
+              }
+            },
+            "description": "Closed API error. For SSE, this response occurs before streaming starts.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Sensitive API responses are never cacheable.",
+                "required": true,
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Disable response content-type sniffing.",
+                "required": true,
+                "schema": {
+                  "const": "nosniff",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Validated inbound request ID or a server-generated replacement.",
+                "required": true,
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export one immutable bounded page of terminal search events.",
+        "tags": [
+          "searches"
+        ],
+        "x-socialname-required-scope": "data:export",
+        "x-socialname-unknown-query-parameters": "forbidden"
       }
     },
     "/v1/watches": {

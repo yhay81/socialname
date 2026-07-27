@@ -82,7 +82,7 @@ const IDEMPOTENCY: &[PublishedParameter] = &[PublishedParameter::IdempotencyKey]
 const RESUMABLE_STREAM: &[PublishedParameter] = &[PublishedParameter::LastEventId];
 const WINDOW: &[PublishedParameter] = &[PublishedParameter::Window];
 
-static OPERATIONS: [PublishedApiOperation; 26] = [
+static OPERATIONS: [PublishedApiOperation; 28] = [
     PublishedApiOperation {
         method: PublishedHttpMethod::Get,
         path: "/v1/workspace",
@@ -108,6 +108,19 @@ static OPERATIONS: [PublishedApiOperation; 26] = [
         success_statuses: REPLAYABLE_CREATED,
         response: PublishedResponseKind::Json("search_resource"),
         returns_location: true,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Get,
+        path: "/v1/searches",
+        operation_id: "listSearches",
+        required_scope: ApiKeyScope::SearchRead,
+        tag: "searches",
+        summary: "List one bounded tenant-local page of managed search history.",
+        request_schema: None,
+        parameters: PAGE,
+        success_statuses: OK,
+        response: PublishedResponseKind::Json("search_history_page"),
+        returns_location: false,
     },
     PublishedApiOperation {
         method: PublishedHttpMethod::Get,
@@ -146,6 +159,19 @@ static OPERATIONS: [PublishedApiOperation; 26] = [
         parameters: RESUMABLE_STREAM,
         success_statuses: OK,
         response: PublishedResponseKind::SearchEventStream,
+        returns_location: false,
+    },
+    PublishedApiOperation {
+        method: PublishedHttpMethod::Get,
+        path: "/v1/searches/{search_id}/export",
+        operation_id: "exportSearch",
+        required_scope: ApiKeyScope::DataExport,
+        tag: "searches",
+        summary: "Export one immutable bounded page of terminal search events.",
+        request_schema: None,
+        parameters: PAGE,
+        success_statuses: OK,
+        response: PublishedResponseKind::Json("search_export_page"),
         returns_location: false,
     },
     PublishedApiOperation {
@@ -878,7 +904,7 @@ mod tests {
 
     #[test]
     fn publication_has_one_unique_operation_for_every_current_route() {
-        assert_eq!(published_api_v1_operations().len(), 26);
+        assert_eq!(published_api_v1_operations().len(), 28);
         let identities = published_api_v1_operations()
             .iter()
             .map(|operation| (operation.method, operation.path))

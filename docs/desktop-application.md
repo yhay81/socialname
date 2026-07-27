@@ -128,7 +128,8 @@ silently simulated by development builds.
 
 ## Next desktop slices
 
-1. Add private history and exports against the authenticated API.
+1. Expose the implemented private-history and terminal-export APIs in a
+   user-tested desktop workflow.
 2. Add watches, transition history, and notification configuration against the
    central API.
 3. Add narrowly validated profile opening and export commands rather than

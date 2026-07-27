@@ -143,9 +143,10 @@ fn server_required_scope(operation_id: &str) -> ApiKeyScope {
         | "cancelSearch"
         | "createSearchCompletionWebhook"
         | "cancelSearchCompletionWebhook" => ApiKeyScope::SearchWrite,
-        "getSearch" | "streamSearchEvents" | "getSearchCompletionWebhook" => {
+        "listSearches" | "getSearch" | "streamSearchEvents" | "getSearchCompletionWebhook" => {
             ApiKeyScope::SearchRead
         }
+        "exportSearch" => ApiKeyScope::DataExport,
         "createWatch" | "updateWatch" | "deleteWatch" => ApiKeyScope::WatchWrite,
         "listWatches" | "getWatch" | "listWatchTransitions" => ApiKeyScope::WatchRead,
         "createConsentGrant" | "withdrawConsentGrant" => ApiKeyScope::ConsentWrite,
@@ -183,6 +184,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             authenticate_request,
         ));
     let search_read_routes = Router::new()
+        .route("/v1/searches", get(search::list_searches))
         .route("/v1/searches/{search_id}", get(search::get_search))
         .route(
             "/v1/searches/{search_id}/events",
@@ -192,6 +194,18 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             ProtectedRouteState {
                 server: state.clone(),
                 required_scope: server_required_scope("getSearch"),
+            },
+            authenticate_request,
+        ));
+    let search_export_routes = Router::new()
+        .route(
+            "/v1/searches/{search_id}/export",
+            get(search::export_search),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            ProtectedRouteState {
+                server: state.clone(),
+                required_scope: server_required_scope("exportSearch"),
             },
             authenticate_request,
         ));
@@ -368,6 +382,7 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
         .merge(workspace_routes)
         .merge(search_create_routes)
         .merge(search_read_routes)
+        .merge(search_export_routes)
         .merge(search_cancel_routes)
         .merge(search_webhook_write_routes)
         .merge(search_webhook_read_routes)
@@ -742,8 +757,8 @@ mod tests {
             (
                 "GET",
                 "/v1/searches",
-                StatusCode::METHOD_NOT_ALLOWED,
-                "invalid_request",
+                StatusCode::UNAUTHORIZED,
+                "unauthenticated",
             ),
             (
                 "POST",

@@ -1393,7 +1393,7 @@ Status: **In progress**
       and service-level reporting.
 - [x] Implement `remote` and remote-assisted source combinations in CLI and
       desktop with visible, independent sync policies.
-- [ ] Add private cloud history, exports, API examples, and integration SDK
+- [x] Add private cloud history, exports, API examples, and integration SDK
       generation only where it reduces real adoption friction.
 - [ ] Add plan entitlements and billing boundaries without coupling billing to
       the measurement engine.
@@ -1599,6 +1599,61 @@ configured 920x640 minimum with no horizontal overflow or console warnings.
 Exact behavior and the external hosted/TLS/credential/multi-region evidence
 gates are documented in
 [`docs/remote-clients.md`](docs/remote-clients.md).
+
+Quality run
+[`30237275536`](https://github.com/yhay81/socialname/actions/runs/30237275536)
+passed Rust core, Windows/macOS desktop, monitoring console, and managed-worker
+OCI for commit `c871992`.
+
+Private search history, export, and adoption-example software evidence:
+
+```console
+cargo fmt --all -- --check
+# passed
+cargo run --locked -p socialname-protocol \
+  --bin socialname-api-contract -- check
+# verified exact committed OpenAPI with 28 operations, 33 JSON Schema roots,
+# SSE, and manifest
+cargo test --locked --workspace --all-targets
+# passed, including protocol 58 unit + 16 wire + 1 publication;
+# server 42 library + 2 binary; the PostgreSQL integration compiled and
+# remained environment-gated locally
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+# passed
+node --test examples/api-v1/client.test.mjs
+# 5 passed
+cargo run --locked -p socialname-cli -- rules validate
+# validated 10 rules; pack sha256=eb6c0754038b53aebe052ee8e7531c92f68555172dd3522e0874e2fbdc3f49a2
+cargo run --locked -p socialname-cli -- fixtures
+# verified 30 fixture cases across 10 sites
+cd apps/desktop
+npm ci
+npm run check
+npm run build
+# passed
+```
+
+`GET /v1/searches` now returns a forced-RLS tenant history ordered by immutable
+creation time and search ID. `GET /v1/searches/{search_id}/export` independently
+requires `data:export`, refuses nonterminal work, and pages the immutable
+`socialname.dev/search-export/v1` event set by Event ID with a 50-event page
+and 1,026-event whole-search ceiling. Any lineage-hidden target or event hides
+the whole search from both surfaces. Migration `0019` adds only the history
+index; export is a stateless projection and creates no duplicate retention or
+deletion store.
+
+The PostgreSQL 18 gate proves stable pagination, read/export scope separation,
+pre-terminal conflict, exact full traversal, malformed/foreign cursor
+rejection, two-tenant hiding, and deletion-tombstone suppression.
+Dependency-free Node.js 24 examples keep keys in environment variables, accept
+target-bearing input on stdin, resume/deduplicate strict SSE, and traverse
+history/export without unbounded accumulation. Their tests run in Quality.
+OpenAPI remains the generation input; no generated SDK is published because
+there is not yet a hosted origin, package-distribution policy, compatibility
+telemetry, or observed language-specific friction. Exact behavior is in
+[`docs/private-search-history-export.md`](docs/private-search-history-export.md).
+Hosted export handling, package distribution, adoption measurement, and
+availability remain external evidence and are not claimed.
 
 Acceptance gate:
 
@@ -1825,3 +1880,9 @@ Choose these only when their trigger is measured:
   bounded resumable SSE, actual-source output, and confirmed cancellation.
   Selected private cloud history, exports, and adoption-focused API examples
   next while keeping hosted service evidence external.
+- **2026-07-27:** Added tenant-local private search history, independent
+  terminal Event ID export, deletion-safe visibility, two executable Node.js
+  examples, and exact contract publication. Kept export stateless instead of
+  creating a second retention store and deferred generated SDK distribution
+  until hosted origin and language-specific adoption friction are observed.
+  Selected plan entitlements and billing boundaries next.

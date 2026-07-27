@@ -216,12 +216,20 @@ so status does not diverge across design records.
   compliance claim; production SLA history remains external evidence.
 - API v1 publication is generator-owned and committed as OpenAPI 3.1.2,
   independent Draft 2020-12 roots, an exact SocialName SSE contract, and a
-  SHA-256 drift manifest. One closed registry owns the 26 published
+  SHA-256 drift manifest. One closed registry owns the 28 published
   method/path/schema/scope descriptions; Axum keeps an independent
   operation-to-scope mapping and tests route registration plus exact scope
   agreement. The publication declares no production origin or availability.
   Existing v1 field, enum, union, scope, status, or SSE semantic
   incompatibility requires a new public version and migration policy.
+- Private search discovery uses stable tenant-local creation ordering under
+  `search:read`. Terminal export is a stateless
+  `socialname.dev/search-export/v1` event projection under independent
+  `data:export`, paged by Event ID and suppressed as a whole when lineage
+  deletion hides any target or event. It creates no duplicate payload store or
+  retention clock. Dependency-free Node.js examples cover SSE resumption and
+  export pagination; generated SDK publication waits for a hosted origin,
+  distribution policy, and observed language-specific adoption friction.
 - Developer quota admission meters the already-bounded target-pair Cartesian
   batch, not HTTP request count. One database-time UTC policy enforces both
   tenant and per-API-key daily ceilings before a new search commits; exact
@@ -270,6 +278,7 @@ so status does not diverge across design records.
 - [PostgreSQL schema and migrations](postgresql-schema.md)
 - [Authenticated private workspaces and API keys](authenticated-workspaces.md)
 - [Private search API and ordered event stream](search-api.md)
+- [Private search history and export](private-search-history-export.md)
 - [Managed probe jobs and observation ingestion](managed-jobs.md)
 - [Assertion recomputation and transition persistence](assertion-recomputation.md)
 - [Signed webhook delivery](webhook-delivery.md)
@@ -379,6 +388,10 @@ so status does not diverge across design records.
     relation, purpose-specific consent, memory-only/redacted credentials,
     redirect refusal, bounded idempotent creation, strict resumable
     SSE, actual-source result mapping, and confirmed API cancellation.
+29. **Done:** Add tenant-local managed-search history, terminal bounded export
+    under an independent scope, deletion-safe visibility, committed contract
+    artifacts, and dependency-free resumable-SSE/export examples without
+    prematurely publishing a generated SDK.
 
 Milestones 1 and 2 have completed their repository-completable software gates.
 Their external live-rule, destination-ownership, hosted-security, and managed
@@ -391,5 +404,6 @@ repository-complete, while actual multi-region deployment, retained production
 SLO history, and mail-provider evidence remain external gates. Milestone 4 has
 stable REST/JSON and SSE publication plus its bounded batch, polling,
 idempotency, quota, usage-report, search-completion webhook, and consent-bound
-remote client boundaries. The next ordered repository-completable work is
-private cloud history, exports, and adoption-focused API examples.
+remote client boundaries, private search history, bounded export, and
+adoption-focused examples. The next ordered repository-completable work is
+plan entitlements and billing boundaries.

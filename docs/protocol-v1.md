@@ -38,7 +38,7 @@ API schema version; it is not silently treated as an additive v1 change.
 The repository publishes every root beside an OpenAPI 3.1.2 description, an
 exact SSE transport contract, and a digest manifest under
 [`contracts/api/v1`](../contracts/api/v1/README.md). The generator-owned route
-registry contains all 26 current operations and their required scopes; server
+registry contains all 28 current operations and their required scopes; server
 tests independently prove that every published method/path is registered
 behind authentication with the same scope. See
 [API v1 contract publication](api-contract-publication.md).
@@ -162,6 +162,15 @@ uses the event ID as the SSE `id`, and accepts that UUID through
 have no persisted ID; they are not `SearchEvent` or a target outcome. The exact
 idempotency, consent, cancellation, and bounded reconnect behavior is specified
 in [Private search API and ordered event stream](search-api.md).
+
+`SearchHistoryPage` reuses complete `SearchResource` values with a last-item
+search cursor. `SearchExportPage` adds the literal
+`socialname.dev/search-export/v1`, a terminal resource, ascending bounded event
+page, total event count, completion flag, and Event ID cursor. Its validator
+binds every event to the search, rejects duplicate or nonascending identity,
+and requires the last complete event to be the terminal state represented by
+the resource. See
+[Private search history and export](private-search-history-export.md).
 
 The result variants deliberately remain separate:
 

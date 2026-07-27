@@ -44,7 +44,9 @@ tenant-checked admission locking, and bounded 400-day physical expiry.
 Migration `0018_search_completion_webhooks.sql` adds one tenant-RLS binding per
 search, generalizes delivery origin to a closed transition/search kind, and
 converges terminal-search and binding-insert order through one deduplicating
-enqueue function.
+enqueue function. Migration `0019_search_history_export.sql` adds the stable
+tenant/creation-time search-history index. It adds no product table, policy,
+payload copy, or privilege.
 
 PostgreSQL 18 is the development and CI baseline. SQLx embeds the migrations in
 `socialname-server`, records their checksums in `_sqlx_migrations`, and refuses

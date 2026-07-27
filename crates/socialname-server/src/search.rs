@@ -7,19 +7,25 @@ use std::{
 use async_stream::stream;
 use axum::{
     Json,
-    extract::{Extension, Path, State, rejection::JsonRejection},
+    extract::{
+        Extension, Path, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, HeaderValue, StatusCode, header::LOCATION},
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
 };
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use socialname_protocol::{
     API_V1_SCHEMA, ApiError, ApiErrorCode, ApiErrorResponse, ApiKeyScope, ConsentGrantId, EventId,
-    IdempotencyKey, ProtocolVersion, RegionClass, RequestId, SearchCreateRequest, SearchEvent,
-    SearchEventData, SearchId, SearchMode, SearchProgress, SearchResource, SearchState,
-    SearchTerminalState, SiteId, SyncPolicy, Username, Validate, ValidationCode, ValidationErrors,
+    IdempotencyKey, MAX_SEARCH_EXPORT_EVENTS, MAX_SEARCH_EXPORT_PAGE_EVENTS,
+    MAX_SEARCH_HISTORY_PAGE_ITEMS, ProtocolVersion, RegionClass, RequestId, SearchCreateRequest,
+    SearchEvent, SearchEventData, SearchExportPage, SearchExportSchema, SearchHistoryPage,
+    SearchId, SearchMode, SearchProgress, SearchResource, SearchState, SearchTerminalState, SiteId,
+    SyncPolicy, Username, Validate, ValidationCode, ValidationErrors,
 };
 use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
 use tokio::sync::OwnedSemaphorePermit;
@@ -40,6 +46,21 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const EVENT_STREAM_WINDOW: Duration = Duration::from_secs(30);
 const EVENT_RETRY_DELAY: Duration = Duration::from_secs(1);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const DEFAULT_HISTORY_PAGE_ITEMS: usize = 20;
+const DEFAULT_EXPORT_PAGE_EVENTS: usize = 20;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SearchPageQuery {
+    limit: Option<u16>,
+    after: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+struct PageRequest {
+    limit: usize,
+    after: Option<Uuid>,
+}
 
 pub(crate) async fn create_search(
     State(state): State<ServerState>,
@@ -116,6 +137,51 @@ pub(crate) async fn get_search(
     )
     .await
     {
+        Ok(resource) => Json(resource).into_response(),
+        Err(error) => error_response(request_id, error),
+    }
+}
+
+pub(crate) async fn list_searches(
+    State(state): State<ServerState>,
+    Extension(request_id): Extension<RequestId>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
+    query: Result<Query<SearchPageQuery>, QueryRejection>,
+) -> Response {
+    let page = match parse_page_query(
+        query,
+        DEFAULT_HISTORY_PAGE_ITEMS,
+        MAX_SEARCH_HISTORY_PAGE_ITEMS,
+    ) {
+        Ok(page) => page,
+        Err(error) => return error_response(request_id, error),
+    };
+    match load_search_history_page(&state.database, &principal, page).await {
+        Ok(resource) => Json(resource).into_response(),
+        Err(error) => error_response(request_id, error),
+    }
+}
+
+pub(crate) async fn export_search(
+    State(state): State<ServerState>,
+    Extension(request_id): Extension<RequestId>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
+    Path(search_id): Path<String>,
+    query: Result<Query<SearchPageQuery>, QueryRejection>,
+) -> Response {
+    let search_id = match parse_search_id(&search_id) {
+        Ok(search_id) => search_id,
+        Err(error) => return error_response(request_id, error),
+    };
+    let page = match parse_page_query(
+        query,
+        DEFAULT_EXPORT_PAGE_EVENTS,
+        MAX_SEARCH_EXPORT_PAGE_EVENTS,
+    ) {
+        Ok(page) => page,
+        Err(error) => return error_response(request_id, error),
+    };
+    match load_search_export_page(&state.database, &principal, search_id, page).await {
         Ok(resource) => Json(resource).into_response(),
         Err(error) => error_response(request_id, error),
     }
@@ -243,6 +309,34 @@ fn parse_last_event_id(headers: &HeaderMap) -> Result<Option<Uuid>, SearchError>
 fn parse_search_id(value: &str) -> Result<Uuid, SearchError> {
     Uuid::parse_str(value)
         .map_err(|_| SearchError::InvalidRequest("search_id", ValidationCode::InvalidFormat))
+}
+
+fn parse_page_query(
+    query: Result<Query<SearchPageQuery>, QueryRejection>,
+    default_limit: usize,
+    maximum_limit: usize,
+) -> Result<PageRequest, SearchError> {
+    let Query(query) =
+        query.map_err(|_| SearchError::InvalidRequest("query", ValidationCode::InvalidFormat))?;
+    let limit = usize::from(
+        query
+            .limit
+            .unwrap_or(u16::try_from(default_limit).map_err(|_| SearchError::Unavailable)?),
+    );
+    if !(1..=maximum_limit).contains(&limit) {
+        return Err(SearchError::InvalidRequest(
+            "limit",
+            ValidationCode::OutOfRange,
+        ));
+    }
+    let after = query
+        .after
+        .map(|value| {
+            Uuid::parse_str(&value)
+                .map_err(|_| SearchError::InvalidRequest("after", ValidationCode::InvalidFormat))
+        })
+        .transpose()?;
+    Ok(PageRequest { limit, after })
 }
 
 struct CreateSearchOutcome {
@@ -627,6 +721,229 @@ async fn insert_event(
     .await
     .map_err(|_| SearchError::Unavailable)?;
     Ok(())
+}
+
+async fn load_search_history_page(
+    pool: &PgPool,
+    principal: &AuthenticatedPrincipal,
+    page: PageRequest,
+) -> Result<SearchHistoryPage, SearchError> {
+    let mut transaction =
+        auth::begin_authorized_transaction(pool, principal, ApiKeyScope::SearchRead).await?;
+    ensure_visible_search_cursor(&mut transaction, principal.workspace_id, page.after).await?;
+    let ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT search.id \
+         FROM searches AS search \
+         WHERE search.tenant_id = $1 \
+           AND NOT EXISTS (\
+               SELECT 1 \
+               FROM search_targets AS target \
+               JOIN deletion_resource_matches AS matched \
+                 ON matched.tenant_id = target.tenant_id \
+                AND matched.resource_kind = 'search_target' \
+                AND matched.resource_id = target.id \
+               WHERE target.tenant_id = search.tenant_id \
+                 AND target.search_id = search.id\
+           ) \
+           AND NOT EXISTS (\
+               SELECT 1 \
+               FROM search_events AS event \
+               JOIN deletion_resource_matches AS matched \
+                 ON matched.tenant_id = event.tenant_id \
+                AND matched.resource_kind = 'search_event' \
+                AND matched.resource_id = event.id \
+               WHERE event.tenant_id = search.tenant_id \
+                 AND event.search_id = search.id\
+           ) \
+           AND (\
+               $2::uuid IS NULL \
+               OR EXISTS (\
+                   SELECT 1 FROM searches AS cursor \
+                   WHERE cursor.tenant_id = search.tenant_id AND cursor.id = $2 \
+                     AND (search.created_at, search.id) < (cursor.created_at, cursor.id)\
+               )\
+           ) \
+         ORDER BY search.created_at DESC, search.id DESC \
+         LIMIT $3",
+    )
+    .bind(principal.workspace_id)
+    .bind(page.after)
+    .bind(i64::try_from(page.limit + 1).map_err(|_| SearchError::Unavailable)?)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| SearchError::Unavailable)?;
+    let has_more = ids.len() > page.limit;
+    let mut searches = Vec::with_capacity(page.limit.min(ids.len()));
+    for id in ids.into_iter().take(page.limit) {
+        searches.push(load_search_resource(&mut transaction, principal.workspace_id, id).await?);
+    }
+    let next_cursor = has_more
+        .then(|| searches.last())
+        .flatten()
+        .map(|search| search.search_id.clone());
+    let resource = SearchHistoryPage {
+        schema: ProtocolVersion::ApiV1,
+        searches,
+        next_cursor,
+    };
+    resource.validate().map_err(|_| SearchError::Unavailable)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| SearchError::Unavailable)?;
+    Ok(resource)
+}
+
+async fn ensure_visible_search_cursor(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    cursor: Option<Uuid>,
+) -> Result<(), SearchError> {
+    let Some(cursor) = cursor else {
+        return Ok(());
+    };
+    if search_is_visible(transaction, tenant_id, cursor).await? {
+        Ok(())
+    } else {
+        Err(SearchError::InvalidRequest(
+            "after",
+            ValidationCode::InvalidRelation,
+        ))
+    }
+}
+
+async fn load_search_export_page(
+    pool: &PgPool,
+    principal: &AuthenticatedPrincipal,
+    search_id: Uuid,
+    page: PageRequest,
+) -> Result<SearchExportPage, SearchError> {
+    let mut transaction =
+        auth::begin_authorized_transaction(pool, principal, ApiKeyScope::DataExport).await?;
+    if !search_is_visible(&mut transaction, principal.workspace_id, search_id).await? {
+        return Err(SearchError::NotFound);
+    }
+    let search = load_search_resource(&mut transaction, principal.workspace_id, search_id).await?;
+    if !matches!(
+        search.state,
+        SearchState::Completed | SearchState::Cancelled | SearchState::Failed
+    ) {
+        return Err(SearchError::ExportNotTerminal);
+    }
+    let after_sequence = if let Some(after) = page.after {
+        sqlx::query_scalar(
+            "SELECT sequence \
+             FROM search_events \
+             WHERE tenant_id = $1 AND search_id = $2 AND id = $3",
+        )
+        .bind(principal.workspace_id)
+        .bind(search_id)
+        .bind(after)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| SearchError::Unavailable)?
+        .ok_or(SearchError::InvalidRequest(
+            "after",
+            ValidationCode::InvalidRelation,
+        ))?
+    } else {
+        0_i64
+    };
+    let total_events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM search_events \
+         WHERE tenant_id = $1 AND search_id = $2",
+    )
+    .bind(principal.workspace_id)
+    .bind(search_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| SearchError::Unavailable)?;
+    if !(2..=i64::try_from(MAX_SEARCH_EXPORT_EVENTS).unwrap_or(i64::MAX)).contains(&total_events) {
+        return Err(SearchError::Unavailable);
+    }
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT sequence, payload::text \
+         FROM search_events \
+         WHERE tenant_id = $1 AND search_id = $2 AND sequence > $3 \
+         ORDER BY sequence \
+         LIMIT $4",
+    )
+    .bind(principal.workspace_id)
+    .bind(search_id)
+    .bind(after_sequence)
+    .bind(i64::try_from(page.limit + 1).map_err(|_| SearchError::Unavailable)?)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| SearchError::Unavailable)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| SearchError::Unavailable)?;
+
+    let has_more = rows.len() > page.limit;
+    let mut events = Vec::with_capacity(page.limit.min(rows.len()));
+    for (sequence, payload) in rows.into_iter().take(page.limit) {
+        let event: SearchEvent =
+            serde_json::from_str(&payload).map_err(|_| SearchError::Unavailable)?;
+        event.validate().map_err(|_| SearchError::Unavailable)?;
+        if i64::try_from(event.sequence).ok() != Some(sequence) {
+            return Err(SearchError::Unavailable);
+        }
+        events.push(event);
+    }
+    let next_cursor = has_more
+        .then(|| events.last())
+        .flatten()
+        .map(|event| event.event_id.clone());
+    let resource = SearchExportPage {
+        schema: ProtocolVersion::ApiV1,
+        export_schema: SearchExportSchema::V1,
+        search,
+        events,
+        total_events: u32::try_from(total_events).map_err(|_| SearchError::Unavailable)?,
+        complete: !has_more,
+        next_cursor,
+    };
+    resource.validate().map_err(|_| SearchError::Unavailable)?;
+    Ok(resource)
+}
+
+async fn search_is_visible(
+    transaction: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    search_id: Uuid,
+) -> Result<bool, SearchError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (\
+            SELECT 1 FROM searches AS search \
+            WHERE search.tenant_id = $1 AND search.id = $2 \
+              AND NOT EXISTS (\
+                  SELECT 1 \
+                  FROM search_targets AS target \
+                  JOIN deletion_resource_matches AS matched \
+                    ON matched.tenant_id = target.tenant_id \
+                   AND matched.resource_kind = 'search_target' \
+                   AND matched.resource_id = target.id \
+                  WHERE target.tenant_id = search.tenant_id \
+                    AND target.search_id = search.id\
+              ) \
+              AND NOT EXISTS (\
+                  SELECT 1 \
+                  FROM search_events AS event \
+                  JOIN deletion_resource_matches AS matched \
+                    ON matched.tenant_id = event.tenant_id \
+                   AND matched.resource_kind = 'search_event' \
+                   AND matched.resource_id = event.id \
+                  WHERE event.tenant_id = search.tenant_id \
+                    AND event.search_id = search.id\
+              )\
+         )",
+    )
+    .bind(tenant_id)
+    .bind(search_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| SearchError::Unavailable)
 }
 
 async fn load_search(
@@ -1124,6 +1441,7 @@ fn stream_error_event(request_id: &RequestId, error: SearchError) -> Event {
                 SearchError::IdempotencyConflict => {
                     (ApiErrorCode::IdempotencyConflict, false, None)
                 }
+                SearchError::ExportNotTerminal => (ApiErrorCode::Conflict, false, None),
                 SearchError::QuotaExceeded(delay) => {
                     (ApiErrorCode::QuotaExceeded, true, Some(delay))
                 }
@@ -1176,6 +1494,11 @@ fn error_response(request_id: RequestId, error: SearchError) -> Response {
             StatusCode::CONFLICT,
             request_id,
             standard_api_error(ApiErrorCode::IdempotencyConflict, false),
+        ),
+        SearchError::ExportNotTerminal => crate::api_error_response(
+            StatusCode::CONFLICT,
+            request_id,
+            standard_api_error(ApiErrorCode::Conflict, false),
         ),
         SearchError::QuotaExceeded(retry_after_ms) => crate::api_error_response(
             StatusCode::TOO_MANY_REQUESTS,
@@ -1286,6 +1609,8 @@ enum SearchError {
     NotFound,
     #[error("idempotency key was reused with a different request")]
     IdempotencyConflict,
+    #[error("search export requires a terminal search")]
+    ExportNotTerminal,
     #[error("developer target quota is exhausted")]
     QuotaExceeded(u64),
     #[error(transparent)]
