@@ -62,6 +62,9 @@ sqlx = { version = "0.8.6", default-features = false, features = [
     "postgres",
     "runtime-tokio",
     "sqlite",
+    # Managed PostgreSQL endpoints (for example Neon) require TLS; rustls
+    # matches the engine's existing TLS stack and honors SSL_CERT_FILE.
+    "tls-rustls-ring",
     "uuid",
 ] }
 thiserror = "2.0.19"
