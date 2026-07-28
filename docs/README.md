@@ -179,6 +179,9 @@ access. Live canaries are intentionally a separate acceptance gate.
   implementation order.
 - [Accepted decisions 2026-07-28](decisions-2026-07-28.md) — one operated
   managed service; self-hosting removed as a product surface.
+- [First hosted deployment runbook](hosted-deployment.md) — provider
+  evaluation, published image digests, and the ordered path to the external
+  deployment evidence gates.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
   retention, lineage, and deletion guarantees.
 - [Bounded Evidence Capsule v1](evidence-capsule-v1.md) — closed sanitized

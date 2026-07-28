@@ -36,7 +36,12 @@ docker image inspect socialname-worker
 The quality workflow performs the same build, verifies the numeric user and
 entry point, and proves under `--network none` that `process-one` without
 `--allow-live` fails before reading its metadata, trust root, or database
-configuration. It does not log in to a registry or publish the image.
+configuration. On a push to `main` it additionally publishes the verified
+image (and the API server image from `deploy/server/Dockerfile`) to
+`ghcr.io/yhay81/socialname-worker` and `ghcr.io/yhay81/socialname-server`
+under a `sha-<revision>` tag, and records the immutable manifest digest in
+the run summary. Publication is registry evidence only: no region, database,
+or rule promotion is claimed by an image existing.
 
 ## One-shot workload model
 

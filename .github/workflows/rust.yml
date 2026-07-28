@@ -77,6 +77,9 @@ jobs:
     name: Managed worker OCI
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - uses: actions/checkout@v6
@@ -123,6 +126,85 @@ jobs:
           set -e
           test "$status" -ne 0
           test "$output" = "managed_worker_error=managed job processing requires --allow-live"
+
+      - name: Publish managed worker image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${{ github.repository_owner }}/socialname-worker"
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag socialname-worker "${image}:sha-${{ github.sha }}"
+          docker tag socialname-worker "${image}:main"
+          docker push "${image}:sha-${{ github.sha }}"
+          docker push "${image}:main"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${image}:sha-${{ github.sha }}")"
+          {
+            echo "## Managed worker image"
+            echo ""
+            echo "- source revision: \`${{ github.sha }}\`"
+            echo "- immutable digest: \`${digest}\`"
+            echo ""
+            echo "Deployments must pin this digest, not a mutable tag."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  server-image:
+    name: API server OCI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build API server image
+        run: >-
+          docker build
+          --file deploy/server/Dockerfile
+          --tag socialname-server
+          --build-arg VCS_REF=${{ github.sha }}
+          .
+
+      - name: Verify API server image
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_flags=(
+            --rm
+            --network none
+            --read-only
+            --cap-drop ALL
+            --security-opt no-new-privileges=true
+          )
+          docker run "${runtime_flags[@]}" socialname-server --help
+          test "$(docker image inspect socialname-server --format '{{.Config.User}}')" = "10001:10001"
+          test "$(docker image inspect socialname-server --format '{{json .Config.Entrypoint}}')" = '["/usr/local/bin/socialname-server"]'
+          test "$(docker image inspect socialname-server --format '{{.Config.StopSignal}}')" = "SIGTERM"
+          docker run "${runtime_flags[@]}" --entrypoint /bin/sh socialname-server \
+            -c 'test -r /opt/socialname/console/index.html'
+
+      - name: Publish API server image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${{ github.repository_owner }}/socialname-server"
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag socialname-server "${image}:sha-${{ github.sha }}"
+          docker tag socialname-server "${image}:main"
+          docker push "${image}:sha-${{ github.sha }}"
+          docker push "${image}:main"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${image}:sha-${{ github.sha }}")"
+          {
+            echo "## API server image"
+            echo ""
+            echo "- source revision: \`${{ github.sha }}\`"
+            echo "- immutable digest: \`${digest}\`"
+            echo ""
+            echo "Deployments must pin this digest, not a mutable tag."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   desktop:
     name: Desktop (${{ matrix.os }})
