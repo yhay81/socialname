@@ -72,6 +72,22 @@ recorded in the Quality run summary:
 
 Deployments must pin the manifest digest, never a mutable tag.
 
+## Deployment vehicle and repository secrets
+
+`deploy/api` is the Worker + Container project that serves the API server
+image at `api.socialname.net`, and
+[`.github/workflows/api.yml`](../.github/workflows/api.yml) verifies it on
+every change and deploys from `main` exactly when the required secrets
+exist — the same credential-gated pattern as the product page.
+
+| GitHub secret | Purpose | State |
+| --- | --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Page and Worker/Container deployment; needs Workers edit, Containers, and DNS edit on `socialname.net` and `yhay81.com` | operator to add |
+| `CLOUDFLARE_ACCOUNT_ID` | Target account for wrangler | operator to add |
+| `SOCIALNAME_MIGRATE_DATABASE_URL` | Neon schema-owner direct URL; the workflow applies embedded migrations through the published server image | operator to add |
+| `SOCIALNAME_SERVER_DATABASE_URL` | Non-owner application-role direct URL, forwarded to the Worker secret | after the role-provisioning slice |
+| `SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX` | Deletion-suppression key, forwarded to the Worker secret | set 2026-07-29 (fresh random, never displayed) |
+
 ## Ordered path
 
 1. **Operator accounts and secrets (human).** Add the `socialname.net` zone
@@ -79,19 +95,23 @@ Deployments must pin the manifest digest, never a mutable tag.
    project (PostgreSQL 18), and add the `CLOUDFLARE_API_TOKEN` and
    `CLOUDFLARE_ACCOUNT_ID` repository secrets so the product page deploys on
    push. No credential is ever committed.
-2. **Schema.** Run `socialname-server migrate` against the schema-owner URL.
+2. **Schema.** [`api.yml`](../.github/workflows/api.yml) applies the
+   embedded migrations through the published server image whenever the
+   `SOCIALNAME_MIGRATE_DATABASE_URL` secret exists.
 3. **Runtime roles.** Provision the non-owner application and worker roles
    with the same column-limited grants the PostgreSQL 18 integration test
    applies. Those grants currently live only in
    `crates/socialname-server/tests/postgres_migrations.rs`; extracting them
    into an audited operator command is the next repository-completable item
    so production roles cannot drift from the tested ones.
-4. **API server.** Deploy the server image by digest with the application
-   role URL and `SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX` from the platform
-   secret store, behind Cloudflare TLS on `api.socialname.net`. The
-   console is served on the same origin. Run `bootstrap-workspace` for the
-   first workspace and key. At this point the service is a hosted API with
-   zero promoted rules: searches are accepted, no probe executes.
+4. **API server.** [`api.yml`](../.github/workflows/api.yml) deploys
+   `deploy/api` — the Worker + Container wrapping
+   `deploy/server/Dockerfile` — to `api.socialname.net` behind Cloudflare
+   TLS, and forwards the runtime secrets with `wrangler secret put`. The
+   console is served on the same origin. Run `bootstrap-workspace` through
+   the published image for the first workspace and key. At this point the
+   service is a hosted API with zero promoted rules: searches are accepted,
+   no probe executes.
 5. **Regional workers.** Deploy the worker image by digest to three regions
    with the worker role URL, egress restricted to PostgreSQL plus signed rule
    hosts, and the read-only metadata/trust artifacts described in the

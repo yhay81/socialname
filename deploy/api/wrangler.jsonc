@@ -1,0 +1,50 @@
+{
+  // Worker + Container deployment for the managed API server (decision
+  // 2026-07-29: Neon + Cloudflare only). The container runs the same image
+  // as deploy/server/Dockerfile — server binary plus the same-origin
+  // monitoring console — as a scale-to-zero `lite` instance behind
+  // api.socialname.net.
+  //
+  // Secrets are never present in this file. `wrangler secret put` supplies
+  // SOCIALNAME_SERVER_DATABASE_URL (the non-owner application role) and
+  // SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX; the Durable Object forwards them
+  // into the container environment at start.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "socialname-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-28",
+  "containers": [
+    {
+      "class_name": "ApiServerContainer",
+      "image": "../server/Dockerfile",
+      // The server Dockerfile copies crates/ and apps/ from the repository
+      // root, so the build context must be the repository root.
+      "image_build_context": "../..",
+      "instance_type": "lite",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "API_SERVER",
+        "class_name": "ApiServerContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ApiServerContainer"]
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "api.socialname.net",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
