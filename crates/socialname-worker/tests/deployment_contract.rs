@@ -69,50 +69,194 @@ fn docker_context_excludes_credentials_canaries_and_build_outputs() {
     }
 }
 
+const MAIN_PUSH_GATE: &str = "github.event_name == 'push' && github.ref == 'refs/heads/main'";
+
 #[test]
-fn quality_workflow_builds_and_smoke_tests_without_publishing() {
+fn quality_workflow_publishes_verified_images_only_from_main() {
     let workflow: Value = serde_yaml_ng::from_str(QUALITY_WORKFLOW).expect("quality YAML parses");
-    let jobs = mapping(field(mapping(&workflow), "jobs"));
-    let job = mapping(field(jobs, "worker-image"));
+    let root = mapping(&workflow);
+    let workflow_permissions = mapping(field(root, "permissions"));
     assert_eq!(
-        field(job, "timeout-minutes").as_u64(),
-        Some(30),
-        "image job has a bounded runtime"
+        workflow_permissions.len(),
+        1,
+        "workflow-level permissions stay minimal"
     );
-    let steps = field(job, "steps")
+    assert_eq!(
+        field(workflow_permissions, "contents").as_str(),
+        Some("read"),
+        "workflow-level permissions remain read-only"
+    );
+
+    let jobs = mapping(field(root, "jobs"));
+    for (job_key, dockerfile, image, build_name, verify_name, publish_name) in [
+        (
+            "worker-image",
+            "deploy/worker/Dockerfile",
+            "socialname-worker",
+            "Build managed worker image",
+            "Verify managed worker image",
+            "Publish managed worker image",
+        ),
+        (
+            "server-image",
+            "deploy/server/Dockerfile",
+            "socialname-server",
+            "Build API server image",
+            "Verify API server image",
+            "Publish API server image",
+        ),
+    ] {
+        let job = mapping(field(jobs, job_key));
+        assert_eq!(
+            field(job, "timeout-minutes").as_u64(),
+            Some(30),
+            "{job_key} has a bounded runtime"
+        );
+        let permissions = mapping(field(job, "permissions"));
+        assert_eq!(
+            field(permissions, "contents").as_str(),
+            Some("read"),
+            "{job_key} keeps read-only repository access"
+        );
+        assert_eq!(
+            field(permissions, "packages").as_str(),
+            Some("write"),
+            "{job_key} declares the package publication grant explicitly"
+        );
+        let steps = field(job, "steps")
+            .as_sequence()
+            .expect("image job steps are a sequence");
+        let build = string(
+            field(named_step(steps, build_name), "run"),
+            "image build command",
+        );
+        assert!(build.contains("docker build"));
+        assert!(build.contains(dockerfile));
+        assert!(build.contains("--build-arg VCS_REF=${{ github.sha }}"));
+        let verify = string(
+            field(named_step(steps, verify_name), "run"),
+            "image verification command",
+        );
+        for expected in [
+            "--network none",
+            "--read-only",
+            "--cap-drop ALL",
+            "--security-opt no-new-privileges=true",
+            ".Config.User",
+            ".Config.Entrypoint",
+            ".Config.StopSignal",
+        ] {
+            assert!(
+                verify.contains(expected),
+                "missing image verification contract: {expected}"
+            );
+        }
+        let publish_step = named_step(steps, publish_name);
+        assert_eq!(
+            field(publish_step, "if").as_str(),
+            Some(MAIN_PUSH_GATE),
+            "{job_key} publishes only from a push to main"
+        );
+        let publish = string(field(publish_step, "run"), "image publish command");
+        let ghcr_image = format!("ghcr.io/${{{{ github.repository_owner }}}}/{image}");
+        assert!(
+            publish.contains(&ghcr_image),
+            "{job_key} publishes only its own GHCR image"
+        );
+        for expected in [
+            "docker login ghcr.io",
+            "--password-stdin",
+            "sha-${{ github.sha }}",
+            "RepoDigests",
+            "GITHUB_STEP_SUMMARY",
+        ] {
+            assert!(
+                publish.contains(expected),
+                "missing image publication contract: {expected}"
+            );
+        }
+    }
+
+    let worker_steps = field(mapping(field(jobs, "worker-image")), "steps")
         .as_sequence()
-        .expect("image job steps are a sequence");
-    let build = string(
-        field(named_step(steps, "Build managed worker image"), "run"),
-        "image build command",
-    );
-    assert!(build.contains("docker build"));
-    assert!(build.contains("deploy/worker/Dockerfile"));
-    assert!(build.contains("--build-arg VCS_REF=${{ github.sha }}"));
-    let verify = string(
-        field(named_step(steps, "Verify managed worker image"), "run"),
-        "image verification command",
+        .expect("worker image job steps are a sequence");
+    let worker_verify = string(
+        field(
+            named_step(worker_steps, "Verify managed worker image"),
+            "run",
+        ),
+        "worker verification command",
     );
     for expected in [
-        "--network none",
         r#"docker run "${runtime_flags[@]}" socialname-worker --help"#,
         "managed job processing requires --allow-live",
         "--metadata /missing/metadata.json",
         "--current-trust-file /missing/trust.json",
         "--minimum-metadata-sequence-exclusive 0",
-        "--read-only",
-        "--cap-drop ALL",
-        "--security-opt no-new-privileges=true",
-        ".Config.User",
-        ".Config.Entrypoint",
     ] {
         assert!(
-            verify.contains(expected),
-            "missing image verification contract: {expected}"
+            worker_verify.contains(expected),
+            "missing worker verification contract: {expected}"
         );
     }
-    assert!(!QUALITY_WORKFLOW.contains("docker push"));
-    assert!(!QUALITY_WORKFLOW.contains("docker login"));
+    let server_steps = field(mapping(field(jobs, "server-image")), "steps")
+        .as_sequence()
+        .expect("server image job steps are a sequence");
+    let server_verify = string(
+        field(named_step(server_steps, "Verify API server image"), "run"),
+        "server verification command",
+    );
+    for expected in [
+        r#"docker run "${runtime_flags[@]}" socialname-server --help"#,
+        "/opt/socialname/console/index.html",
+    ] {
+        assert!(
+            server_verify.contains(expected),
+            "missing server verification contract: {expected}"
+        );
+    }
+
+    for (job_name, job_value) in jobs {
+        let job_name = job_name.as_str().expect("job key is a string");
+        let Some(steps) = mapping(job_value)
+            .get(Value::String("steps".to_owned()))
+            .and_then(Value::as_sequence)
+        else {
+            continue;
+        };
+        for step in steps.iter().map(mapping) {
+            let run = step
+                .get(Value::String("run".to_owned()))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !run.contains("docker push") && !run.contains("docker login") {
+                continue;
+            }
+            let step_name = step
+                .get(Value::String("name".to_owned()))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            assert!(
+                step_name == "Publish managed worker image"
+                    || step_name == "Publish API server image",
+                "job {job_name}: only the named publish steps may touch a registry"
+            );
+            assert_eq!(
+                step.get(Value::String("if".to_owned()))
+                    .and_then(Value::as_str),
+                Some(MAIN_PUSH_GATE),
+                "job {job_name}: registry access is gated to pushes to main"
+            );
+            assert!(
+                !run.contains("secrets."),
+                "job {job_name}: registry access uses only the workflow-scoped token"
+            );
+            assert!(
+                run.contains("docker login ghcr.io"),
+                "job {job_name}: registry access is limited to ghcr.io"
+            );
+        }
+    }
 }
 
 fn mapping(value: &Value) -> &Mapping {

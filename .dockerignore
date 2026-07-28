@@ -9,7 +9,7 @@
 **/node_modules
 **/target
 .canary-output
-apps/console
+apps/console/dist
 docs
 rules/canaries
 tests
