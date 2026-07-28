@@ -26,7 +26,7 @@ person.
 
 ## Install
 
-The [product page](https://socialname.haya.works/) explains what
+The [product page](https://socialname.yhay81.com/) explains what
 SocialName does for a general audience. Full instructions, checksum
 verification, and the unsigned-build warnings are in
 [installation](docs/installation.md).

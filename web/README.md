@@ -1,6 +1,6 @@
 # Product page
 
-The public product page for <https://socialname.haya.works>, deployed to
+The public product page for <https://socialname.yhay81.com>, deployed to
 Cloudflare Workers static assets by
 [`.github/workflows/site.yml`](../.github/workflows/site.yml).
 
@@ -34,11 +34,11 @@ the checks still run in a fork or an unconfigured clone.
 
 1. In the Cloudflare dashboard, create an API token with **Edit Cloudflare
    Workers** permission for the account, plus **Zone → DNS → Edit** on the
-   `haya.works` zone so the custom domain record can be created.
+   `yhay81.com` zone so the custom domain record can be created.
 2. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as repository
    secrets.
 3. Push a change under `web/`. The first successful deployment creates the
-   `socialname-site` Worker and attaches the `socialname.haya.works` custom
+   `socialname-site` Worker and attaches the `socialname.yhay81.com` custom
    domain declared in `wrangler.jsonc`; Cloudflare provisions the DNS record
    and the certificate.
 

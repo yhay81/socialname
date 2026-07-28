@@ -11,7 +11,7 @@ cask "socialname-desktop" do
   url "https://github.com/yhay81/socialname/releases/download/v#{version}/SocialName_#{version}_universal.dmg"
   name "SocialName"
   desc "Local-first public identifier observability desktop application"
-  homepage "https://socialname.haya.works/"
+  homepage "https://socialname.yhay81.com/"
 
   depends_on macos: ">= :big_sur"
 

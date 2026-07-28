@@ -14,7 +14,7 @@
   },
   "routes": [
     {
-      "pattern": "socialname.haya.works",
+      "pattern": "socialname.yhay81.com",
       "custom_domain": true
     }
   ],

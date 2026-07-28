@@ -163,3 +163,6 @@ tests/.excluded_sites
 
 # Vim swap files
 *.swp
+
+# Wrangler local state and build output
+.wrangler/
