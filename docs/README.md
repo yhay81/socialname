@@ -210,6 +210,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Shared contribution ingestion v1](shared-contributions.md) — minimized
   consented client submissions with replay, quota, anomaly, diversity, and
   reputation admission controls, structurally outside `verified` truth.
+- [Installation](installation.md) — desktop, CLI, and self-hosted console
+  install paths, checksum verification, unsigned-build warnings, and the
+  distribution gaps that need accounts rather than code.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native

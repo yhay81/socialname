@@ -1,6 +1,7 @@
 use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
     time::Duration,
 };
 use uuid::Uuid;
@@ -22,6 +23,9 @@ pub const MAXIMUM_BODY_BYTES_ENV: &str = "SOCIALNAME_SERVER_MAXIMUM_BODY_BYTES";
 pub const MAXIMUM_IN_FLIGHT_ENV: &str = "SOCIALNAME_SERVER_MAXIMUM_IN_FLIGHT";
 pub const SUPPRESSION_HMAC_KEY_ENV: &str = "SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX";
 pub const EXPECTED_RESTORE_LEDGER_ID_ENV: &str = "SOCIALNAME_EXPECTED_RESTORE_LEDGER_ID";
+/// Directory holding a built monitoring-console bundle. When it is absent the
+/// server exposes no console route at all.
+pub const CONSOLE_DIRECTORY_ENV: &str = "SOCIALNAME_CONSOLE_DIR";
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct SuppressionHmacKey([u8; 32]);
@@ -73,6 +77,7 @@ pub struct ServerConfig {
     maximum_in_flight: usize,
     suppression_hmac_key: Option<SuppressionHmacKey>,
     expected_restore_ledger_id: Option<Uuid>,
+    console_directory: Option<PathBuf>,
 }
 
 impl Default for ServerConfig {
@@ -84,6 +89,7 @@ impl Default for ServerConfig {
             maximum_in_flight: DEFAULT_MAXIMUM_IN_FLIGHT,
             suppression_hmac_key: None,
             expected_restore_ledger_id: None,
+            console_directory: None,
         }
     }
 }
@@ -133,6 +139,7 @@ impl ServerConfig {
             maximum_in_flight,
             suppression_hmac_key: None,
             expected_restore_ledger_id: None,
+            console_directory: None,
         })
     }
 
@@ -194,6 +201,9 @@ impl ServerConfig {
                 })
             })
             .transpose()?;
+        if let Some(directory) = lookup(CONSOLE_DIRECTORY_ENV)? {
+            config = config.with_console_directory(PathBuf::from(directory))?;
+        }
         Ok(config)
     }
 
@@ -218,6 +228,31 @@ impl ServerConfig {
     }
 
     #[must_use]
+    pub fn console_directory(&self) -> Option<&Path> {
+        self.console_directory.as_deref()
+    }
+
+    /// Points the optional same-origin console route at one existing
+    /// directory. A missing or non-directory path is a configuration error
+    /// rather than a silently disabled route, because an operator who asked
+    /// for the console should not be told the console does not exist.
+    pub fn with_console_directory(mut self, directory: PathBuf) -> Result<Self, ConfigError> {
+        if !directory.is_dir() {
+            return Err(ConfigError::new(
+                CONSOLE_DIRECTORY_ENV,
+                "must name an existing directory containing a built console bundle",
+            ));
+        }
+        if !directory.join("index.html").is_file() {
+            return Err(ConfigError::new(
+                CONSOLE_DIRECTORY_ENV,
+                "must contain index.html from a built console bundle",
+            ));
+        }
+        self.console_directory = Some(directory);
+        Ok(self)
+    }
+
     pub fn suppression_hmac_key(&self) -> Option<&SuppressionHmacKey> {
         self.suppression_hmac_key.as_ref()
     }

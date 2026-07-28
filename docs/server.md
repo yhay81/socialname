@@ -129,6 +129,18 @@ dependency-free. Readiness probes PostgreSQL with a deadline shorter than the
 outer request deadline and returns HTTP 503 `not_ready` when storage is
 unavailable.
 
+Optionally, `SOCIALNAME_CONSOLE_DIR` adds unauthenticated `GET /console`
+routes that serve one built monitoring-console bundle on the server's own
+origin. The route exists only when the variable names an existing directory
+containing `index.html`; a missing, non-directory, or index-free path is a
+startup configuration error rather than a silently disabled console. The
+handler serves one flat bundle through an allowlisted extension set, a
+canonicalized-prefix containment check, and a bounded read, and adds its own
+restrictive `Content-Security-Policy`, `X-Frame-Options`, and
+`Referrer-Policy`. It exposes no product data, so it stays outside the
+authenticated boundary exactly like any single-page application shell. See
+[installation](installation.md).
+
 The implemented authenticated route surface is published under
 [`contracts/api/v1`](../contracts/api/v1/README.md). A server test independently
 compares all 41 published operation scopes with the scopes used to construct

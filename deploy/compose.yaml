@@ -1,0 +1,75 @@
+# Self-hosted SocialName monitoring stack.
+#
+# Brings up PostgreSQL 18, applies the embedded migrations, and starts the API
+# server with the monitoring console on its own origin at
+# http://127.0.0.1:8080/console.
+#
+#   cd deploy
+#   cp .env.example .env      # then edit the two generated secrets
+#   docker compose up --build
+#
+# This stack is a self-hosting convenience, not a production deployment. It
+# binds to loopback, terminates no TLS, runs no managed worker, and holds no
+# rule-pack trust root, so no site rule is promoted and no managed probe can
+# execute. Those remain the documented external deployment gates in
+# docs/regional-worker-deployment.md.
+
+name: socialname
+
+services:
+  database:
+    image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    environment:
+      POSTGRES_DB: socialname
+      POSTGRES_USER: socialname_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U socialname_owner -d socialname"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/server/Dockerfile
+    command: ["migrate"]
+    environment:
+      # Migrations deliberately use the schema-owner credential, which the
+      # request handler below never receives.
+      SOCIALNAME_DATABASE_URL: postgres://socialname_owner:${POSTGRES_PASSWORD}@database:5432/socialname
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: "no"
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/server/Dockerfile
+    environment:
+      SOCIALNAME_SERVER_DATABASE_URL: postgres://socialname_owner:${POSTGRES_PASSWORD}@database:5432/socialname
+      SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX: ${SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX:?set SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX in deploy/.env}
+      SOCIALNAME_SERVER_BIND: 0.0.0.0:8080
+      SOCIALNAME_CONSOLE_DIR: /opt/socialname/console
+    ports:
+      # Loopback only: this stack terminates no TLS.
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /usr/local/bin/socialname-server --help >/dev/null 2>&1 || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  database:

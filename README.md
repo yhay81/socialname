@@ -24,6 +24,44 @@ The product direction is:
 A matching username across sites is not proof that the accounts belong to one
 person.
 
+## Install
+
+Full instructions, checksum verification, and the unsigned-build warnings are
+in [installation](docs/installation.md).
+
+**Desktop application** — download the installer for your platform from the
+[latest release](https://github.com/yhay81/socialname/releases/latest), verify
+it against `SHA256SUMS.txt`, and install. It searches locally with no account
+and no synchronization.
+
+**Command line**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yhay81/socialname/main/scripts/install-cli.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/yhay81/socialname/main/scripts/install-cli.ps1 | iex
+```
+
+```bash
+socialname search octocat --site github \
+  --rules-dir ~/.socialname/rules/sites --allow-disabled
+```
+
+**Monitoring console** — self-host it together with the API server and
+PostgreSQL, then open <http://127.0.0.1:8080/console>:
+
+```bash
+cd deploy && cp .env.example .env && docker compose up --build
+```
+
+Two limits are deliberate rather than incidental. All ten site rules are
+discovery-only because none has passed the live canary gate, so local probes
+need the explicit `--allow-disabled` acknowledgement and no cached or managed
+reuse is available. Every artifact is unsigned, so Gatekeeper and SmartScreen
+warn: signing identities are external evidence this repository does not hold.
+
 ## Implemented
 
 - Rust workspace with domain, schema, compiler, engine, cache, application,

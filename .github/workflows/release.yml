@@ -1,0 +1,203 @@
+name: Release
+
+# Builds every installable artifact for one tag and attaches it to a draft
+# GitHub Release. The workflow signs nothing: code-signing certificates and
+# Apple notarization credentials are external evidence this repository does
+# not hold, so the published installers are unsigned and the install
+# documentation states the operating-system warnings that follow from that.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build every artifact without creating a release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cli:
+    name: CLI ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive: zip
+          - target: aarch64-pc-windows-msvc
+            runner: windows-latest
+            archive: zip
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            archive: tar
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive: tar
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: tar
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build the local CLI
+        run: cargo build --locked --release -p socialname-cli --target ${{ matrix.target }}
+
+      - name: Stage the archive contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="stage/socialname-${{ matrix.target }}"
+          mkdir -p "$stage"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            cp "target/${{ matrix.target }}/release/socialname.exe" "$stage/"
+          else
+            cp "target/${{ matrix.target }}/release/socialname" "$stage/"
+          fi
+          cp README.md LICENSE "$stage/"
+          # The CLI reads its site rules from disk, so the pack ships beside
+          # the binary and `--rules-dir` defaults stay usable after unpacking.
+          mkdir -p "$stage/rules"
+          cp -r rules/sites "$stage/rules/"
+          cp rules/README.md "$stage/rules/"
+
+      - name: Create the archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          name="socialname-cli-${{ matrix.target }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd stage && 7z a -tzip "../dist/${name}.zip" "socialname-${{ matrix.target }}/*" >/dev/null)
+          else
+            tar -czf "dist/${name}.tar.gz" -C stage "socialname-${{ matrix.target }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  desktop:
+    name: Desktop ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - label: macos-universal
+            runner: macos-latest
+            target: universal-apple-darwin
+          - label: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ matrix.label }}
+
+      - name: Install Linux bundling dependencies
+        if: matrix.runner == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Build the desktop bundles
+        working-directory: apps/desktop
+        run: npm run tauri -- build --target ${{ matrix.target }}
+
+      - name: Collect the installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          bundle="target/${{ matrix.target }}/release/bundle"
+          # Only installable artifacts are published; raw binaries and the
+          # unpacked .app directory stay behind.
+          find "$bundle" -type f \
+            \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.dmg' \
+               -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+            -exec cp {} dist/ \;
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: [cli, desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v5
+        with:
+          path: incoming
+
+      - name: Flatten artifacts and record checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find incoming -type f -exec cp {} dist/ \;
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" dist/* \
+            --draft \
+            --title "SocialName $TAG" \
+            --notes "Unsigned installers and archives built by \
+          .github/workflows/release.yml. Verify downloads against \
+          SHA256SUMS.txt. See docs/installation.md for the operating-system \
+          warnings that unsigned builds produce and for what works without an \
+          account."

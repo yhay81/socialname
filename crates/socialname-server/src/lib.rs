@@ -4,6 +4,7 @@ mod api_key;
 mod auth;
 mod config;
 mod consent;
+mod console;
 mod contribution;
 mod database;
 mod deletion;
@@ -57,9 +58,9 @@ use tower::{ServiceBuilder, limit::ConcurrencyLimitLayer};
 use tracing::Instrument;
 
 pub use config::{
-    BIND_ENV, ConfigError, EXPECTED_RESTORE_LEDGER_ID_ENV, MAXIMUM_BODY_BYTES_ENV,
-    MAXIMUM_IN_FLIGHT_ENV, REQUEST_TIMEOUT_ENV, SUPPRESSION_HMAC_KEY_ENV, ServerConfig,
-    SuppressionHmacKey,
+    BIND_ENV, CONSOLE_DIRECTORY_ENV, ConfigError, EXPECTED_RESTORE_LEDGER_ID_ENV,
+    MAXIMUM_BODY_BYTES_ENV, MAXIMUM_IN_FLIGHT_ENV, REQUEST_TIMEOUT_ENV, SUPPRESSION_HMAC_KEY_ENV,
+    ServerConfig, SuppressionHmacKey,
 };
 pub use database::{
     DATABASE_URL_ENV, DatabaseError, MIGRATOR, RUNTIME_DATABASE_URL_ENV,
@@ -482,9 +483,21 @@ pub fn build_router(config: ServerConfig, database: PgPool) -> Router {
             },
             authenticate_request,
         ));
+    // The console shell is served only when an operator supplies a bundle. It
+    // carries no product data and therefore stays outside the authenticated
+    // boundary, exactly like any single-page application shell.
+    let console_routes = if state.config.console_directory().is_some() {
+        Router::new()
+            .route("/console", get(console::index))
+            .route("/console/", get(console::index))
+            .route("/console/{*path}", get(console::asset))
+    } else {
+        Router::new()
+    };
     let routes = Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
+        .merge(console_routes)
         .merge(workspace_routes)
         .merge(organization_routes)
         .merge(organization_audit_routes)
