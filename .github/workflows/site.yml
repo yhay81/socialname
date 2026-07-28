@@ -1,7 +1,8 @@
 name: Site
 
 # Verifies and deploys the static product page to Cloudflare Workers static
-# assets at https://socialname.yhay81.com.
+# assets at https://socialname.net (socialname.yhay81.com stays attached for
+# existing links).
 #
 # The page is dependency-free: no build step, no bundler, and no third-party
 # request at runtime, so what is committed is exactly what is served. The

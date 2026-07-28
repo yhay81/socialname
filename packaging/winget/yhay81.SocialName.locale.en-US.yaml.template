@@ -5,7 +5,7 @@ Publisher: yhay81
 PublisherUrl: https://github.com/yhay81
 PublisherSupportUrl: https://github.com/yhay81/socialname/issues
 PackageName: SocialName
-PackageUrl: https://socialname.yhay81.com/
+PackageUrl: https://socialname.net/
 License: MIT
 LicenseUrl: https://github.com/yhay81/socialname/blob/main/LICENSE
 ShortDescription: Local-first public identifier observability with explainable evidence

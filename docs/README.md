@@ -16,7 +16,8 @@ The design was last reviewed on 2026-07-26.
 - [Accepted decisions](decisions-2026-07-24.md) records binding architecture,
   trust, governance, and client decisions;
   [2026-07-28](decisions-2026-07-28.md) adds the single operated-service
-  decision.
+  decision and [2026-07-29](decisions-2026-07-29.md) the domain and hosting
+  providers.
 - Focused design documents explain implementation details.
 
 Repository agents follow [`AGENTS.md`](../AGENTS.md). Product work must remain
@@ -179,6 +180,9 @@ access. Live canaries are intentionally a separate acceptance gate.
   implementation order.
 - [Accepted decisions 2026-07-28](decisions-2026-07-28.md) — one operated
   managed service; self-hosting removed as a product surface.
+- [Accepted decisions 2026-07-29](decisions-2026-07-29.md) — `socialname.net`
+  as the product domain; Neon plus Cloudflare Containers as the lowest-cost
+  hosting posture.
 - [First hosted deployment runbook](hosted-deployment.md) — provider
   evaluation, published image digests, and the ordered path to the external
   deployment evidence gates.

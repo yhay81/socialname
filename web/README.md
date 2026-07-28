@@ -1,7 +1,8 @@
 # Product page
 
-The public product page for <https://socialname.yhay81.com>, deployed to
-Cloudflare Workers static assets by
+The public product page for <https://socialname.net> (with
+<https://socialname.yhay81.com> kept attached for existing links), deployed
+to Cloudflare Workers static assets by
 [`.github/workflows/site.yml`](../.github/workflows/site.yml).
 
 `public/` is the entire site. It is plain HTML and CSS with no build step, no
@@ -32,15 +33,18 @@ without contacting the account.
 Deployment is skipped with a notice until both repository secrets exist, so
 the checks still run in a fork or an unconfigured clone.
 
-1. In the Cloudflare dashboard, create an API token with **Edit Cloudflare
+1. Add the `socialname.net` zone to the Cloudflare account (point the
+   registrar's nameservers at Cloudflare) so the custom domain can attach.
+2. In the Cloudflare dashboard, create an API token with **Edit Cloudflare
    Workers** permission for the account, plus **Zone → DNS → Edit** on the
-   `yhay81.com` zone so the custom domain record can be created.
-2. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as repository
+   `socialname.net` and `yhay81.com` zones so the custom domain records can
+   be created.
+3. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as repository
    secrets.
-3. Push a change under `web/`. The first successful deployment creates the
-   `socialname-site` Worker and attaches the `socialname.yhay81.com` custom
-   domain declared in `wrangler.jsonc`; Cloudflare provisions the DNS record
-   and the certificate.
+4. Push a change under `web/`. The first successful deployment creates the
+   `socialname-site` Worker and attaches the custom domains declared in
+   `wrangler.jsonc`; Cloudflare provisions the DNS records and the
+   certificates.
 
 ## Content rules
 

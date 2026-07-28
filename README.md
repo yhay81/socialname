@@ -28,7 +28,7 @@ person.
 
 ## Install
 
-The [product page](https://socialname.yhay81.com/) explains what
+The [product page](https://socialname.net/) explains what
 SocialName does for a general audience. Full instructions, checksum
 verification, and the unsigned-build warnings are in
 [installation](docs/installation.md).
@@ -252,7 +252,8 @@ docs/                        product, architecture, trust, and governance record
 Start with the [ultimate goal](docs/ultimate-goal.md), the
 [execution roadmap](ROADMAP.md), the [design index](docs/README.md), the
 accepted decisions ([2026-07-24](docs/decisions-2026-07-24.md),
-[2026-07-28](docs/decisions-2026-07-28.md)), and the
+[2026-07-28](docs/decisions-2026-07-28.md),
+[2026-07-29](docs/decisions-2026-07-29.md)), and the
 [Site Rule v1 validation record](docs/site-rule-v1-validation.md).
 The managed update trust and rollout contract is in
 [Signed Rule-Pack Distribution v1](docs/rule-pack-distribution-v1.md).

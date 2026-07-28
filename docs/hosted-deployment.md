@@ -25,28 +25,41 @@ PostgreSQL 18 integration gate tests directly.
   pooler/cache in front of an external PostgreSQL, usable from Workers. The
   native Axum server holds its own SQLx pool, so Hyperdrive adds nothing on
   this path.
-- **Neon (serverless PostgreSQL) is the leading candidate.** PostgreSQL 18 is
-  supported, pricing is usage-based, and roles can be created with plain SQL.
-  Use the **direct connection string, not the pooler**, for both server and
-  worker: forced RLS with transaction-local settings, advisory locks, and
-  `SKIP LOCKED` should not sit behind transaction pooling. Scale-to-zero is
-  neutralized by scheduler polling, so estimate compute as always-on.
+- **Neon is the decided database provider
+  ([2026-07-29](decisions-2026-07-29.md)).** PostgreSQL 18 is supported,
+  pricing is usage-based with a free tier, and roles can be created with
+  plain SQL. Use the **direct connection string, not the pooler**, for both
+  server and worker: forced RLS with transaction-local settings, advisory
+  locks, and `SKIP LOCKED` should not sit behind transaction pooling. Neon
+  requires TLS, so the workspace `sqlx` dependency enables
+  `tls-rustls-ring`.
+- Under the scheduled one-shot worker model below the database can suspend
+  between runs, so the free tier's compute allowance is the honest starting
+  point; an equivalent managed PostgreSQL 18 would be reconsidered only if
+  Neon cannot meet a gate.
 
-Any managed PostgreSQL 18 with role creation and direct connections is an
-acceptable substitute; the choice remains an implementation decision.
+### Compute — Cloudflare Containers (decided 2026-07-29)
 
-### Compute
-
-- **Cloudflare Containers** can run OCI images and pin placement, but its
-  regions are currently ENAM, WNAM, EEUR, and WEUR only. The canary gate
-  needs three managed regions with declared vantages, and an APAC vantage is
-  desirable, so Containers alone cannot host the worker fleet today.
-- **Small always-on machines** (for example Fly.io, or equivalent) fit the
-  API server and the per-region workers. Regional canary runners can share
-  the worker hosts as GitHub Actions self-hosted runners with region labels.
+- Containers run the published OCI images on the Workers Paid plan:
+  $5/month including 25 GiB-hours of memory, 375 vCPU-minutes, and 200
+  GB-hours of disk, with CPU billed on active usage only. A sleeping
+  container costs nothing.
+- The API server runs as a small (`lite`, 256 MiB) container that sleeps
+  between requests. Managed workers run as scheduled one-shot `process-one`
+  invocations driven by the Container `schedule()` API or a cron Worker,
+  which is exactly the documented one-shot workload model.
+- Placement regions are currently ENAM, WNAM, EEUR, and WEUR. Three distinct
+  regions from that set satisfy the three-region canary requirement; an
+  APAC vantage is deferred and would later be one small machine elsewhere
+  without changing this posture.
+- Container images deploy through Cloudflare's managed registry via
+  wrangler, fed from the digest-pinned GHCR images Quality publishes.
+- Open question for the canary phase: region-labelled GitHub Actions
+  self-hosted runners do not map cleanly onto sleeping containers; resolve
+  it per the 2026-07-29 decision record before any live canary run.
 - **Cloudflare stays in front**: DNS, TLS, and the product page use the
-  existing `yhay81.com` zone; R2 is available later for encrypted evidence
-  artifacts.
+  `socialname.net` zone (`socialname.yhay81.com` stays attached for existing
+  links); R2 is available later for encrypted evidence artifacts.
 
 ## Image source
 
@@ -61,8 +74,9 @@ Deployments must pin the manifest digest, never a mutable tag.
 
 ## Ordered path
 
-1. **Operator accounts and secrets (human).** Create the database project
-   (PostgreSQL 18) and the compute account. Add `CLOUDFLARE_API_TOKEN` and
+1. **Operator accounts and secrets (human).** Add the `socialname.net` zone
+   to the Cloudflare account, subscribe to Workers Paid, create the Neon
+   project (PostgreSQL 18), and add the `CLOUDFLARE_API_TOKEN` and
    `CLOUDFLARE_ACCOUNT_ID` repository secrets so the product page deploys on
    push. No credential is ever committed.
 2. **Schema.** Run `socialname-server migrate` against the schema-owner URL.
@@ -74,8 +88,7 @@ Deployments must pin the manifest digest, never a mutable tag.
    so production roles cannot drift from the tested ones.
 4. **API server.** Deploy the server image by digest with the application
    role URL and `SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX` from the platform
-   secret store, behind Cloudflare TLS on the chosen origin
-   (`api.socialname.yhay81.com` unless branding decides otherwise). The
+   secret store, behind Cloudflare TLS on `api.socialname.net`. The
    console is served on the same origin. Run `bootstrap-workspace` for the
    first workspace and key. At this point the service is a hosted API with
    zero promoted rules: searches are accepted, no probe executes.
@@ -92,6 +105,7 @@ Deployments must pin the manifest digest, never a mutable tag.
    response, then billing reconciliation once value is proven.
 
 Steps 2–5 are mechanical once step 1 exists; step 6 contains the real elapsed
-time and human review. The indicative running cost of the minimal always-on
-posture (database, one API machine, three worker machines) is a few tens of
-US dollars per month.
+time and human review. The indicative running cost of the chosen
+scale-to-zero posture is on the order of five to ten US dollars per month
+before real usage: the Workers Paid base fee plus small overages, with the
+database inside its free or low usage tier.

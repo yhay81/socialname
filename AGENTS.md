@@ -10,7 +10,7 @@ Read these sources in order before planning product or implementation work:
    boundaries, and decision filter.
 2. `ROADMAP.md` — the current milestone, ordered deliverables, acceptance
    gates, and recorded evidence.
-3. `docs/decisions-2026-07-24.md` and `docs/decisions-2026-07-28.md` —
+3. `docs/decisions-2026-07-24.md` and the later dated decision records —
    accepted architectural and governance decisions.
 4. The focused design document for the area being changed.
 

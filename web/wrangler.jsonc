@@ -13,6 +13,13 @@
     "not_found_handling": "404-page"
   },
   "routes": [
+    // socialname.net is the product domain (decision 2026-07-29); the
+    // original yhay81.com subdomain stays attached so existing links keep
+    // resolving.
+    {
+      "pattern": "socialname.net",
+      "custom_domain": true
+    },
     {
       "pattern": "socialname.yhay81.com",
       "custom_domain": true
