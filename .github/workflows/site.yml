@@ -1,0 +1,95 @@
+name: Site
+
+# Verifies and deploys the static product page to Cloudflare Workers static
+# assets at https://socialname.haya.works.
+#
+# The page is dependency-free: no build step, no bundler, and no third-party
+# request at runtime, so what is committed is exactly what is served. The
+# verification job runs on every change; deployment runs only on main and only
+# when the Cloudflare credentials exist, so a fork or an unconfigured
+# repository still gets the check without a broken deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - web/**
+      - .github/workflows/site.yml
+  pull_request:
+    paths:
+      - web/**
+      - .github/workflows/site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify the page is self-contained
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Reject external runtime references
+        run: |
+          set -euo pipefail
+          # A page that silently loads a font, a script, or a tracker from
+          # another origin would contradict the privacy claim it makes.
+          if grep -nEi 'src="https?://|href="https?://[^"]*\.(css|js)|<script' web/public/*.html; then
+            echo "web/public must not reference external scripts, styles, or fonts" >&2
+            exit 1
+          fi
+          for page in web/public/*.html; do
+            for reference in $(grep -oE '(href|src)="[^"#][^"]*"' "$page" \
+                | sed -E 's/^(href|src)="//; s/"$//' \
+                | grep -vE '^(https?:|mailto:|#)'); do
+              # "/" is the site root, which the deployment serves from
+              # index.html rather than from a file of that name.
+              [ "$reference" = "/" ] && continue
+              test -f "web/public/${reference#/}" || {
+                echo "${page} references missing local asset ${reference}" >&2
+                exit 1
+              }
+            done
+          done
+          test -f web/public/404.html || {
+            echo "not_found_handling is 404-page, so web/public/404.html must exist" >&2
+            exit 1
+          }
+          echo "every referenced asset is committed under web/public"
+
+      - name: Verify the Wrangler configuration
+        run: |
+          set -euo pipefail
+          # A dry run type-checks the configuration and resolves the asset
+          # directory without contacting the account or deploying anything.
+          npx --yes wrangler@4 deploy --dry-run --config web/wrangler.jsonc
+
+  deploy:
+    name: Deploy
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Report missing credentials
+        if: env.HAS_CLOUDFLARE != 'true'
+        run: |
+          echo "::notice::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are not set; skipping deployment."
+
+      - name: Deploy to Cloudflare
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy --config web/wrangler.jsonc

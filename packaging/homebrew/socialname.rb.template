@@ -4,7 +4,7 @@
 # that was not computed from the artifact it installs.
 class Socialname < Formula
   desc "Local-first public identifier observability CLI"
-  homepage "https://yhay81.github.io/socialname/"
+  homepage "https://socialname.haya.works/"
   version "__VERSION__"
   license "MIT"
 

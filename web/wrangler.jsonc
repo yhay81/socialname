@@ -1,0 +1,24 @@
+{
+  // Static-asset-only Worker for the SocialName product page. There is no
+  // `main` script: every request is answered from the committed files in this
+  // directory, so the deployed site runs no code and holds no state.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "socialname-site",
+  "compatibility_date": "2026-07-28",
+  "assets": {
+    // Only `public/` is uploaded, so this configuration file is never served.
+    "directory": "./public",
+    // Unknown paths return the committed 404 page rather than silently
+    // serving the landing page with a 200.
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "socialname.haya.works",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

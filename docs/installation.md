@@ -226,6 +226,8 @@ external review rather than on code:
 - signed and notarized macOS builds, and a signed Windows installer;
 - a merged `microsoft/winget-pkgs` submission, so `winget install` resolves;
 - a `HOMEBREW_TAP_TOKEN` secret, so releases update the tap automatically;
+- `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets, so the product
+  page at <https://socialname.haya.works> deploys on every change;
 - Scoop and Linux distribution repository packages;
 - a `crates.io` release of `socialname-cli`;
 - automatic updates for the desktop application;
