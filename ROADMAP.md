@@ -449,6 +449,46 @@ schema-v1-to-v2 migration, and complete database/sidecar deletion. App-core
 adds the cache-before-local and cancellation paths. Together these satisfy the
 1B software gate without weakening the still-pending external live-rule gate.
 
+Distribution software evidence:
+
+```console
+# .github/workflows/release.yml, workflow_dispatch dry run
+# https://github.com/yhay81/socialname/actions/runs/30336735286
+# 8 of 8 build jobs passed and produced:
+#   SocialName_0.2.0_x64-setup.exe          (Windows NSIS)
+#   SocialName_0.2.0_universal.dmg          (macOS universal)
+#   SocialName_0.2.0_amd64.AppImage
+#   SocialName_0.2.0_amd64.deb
+#   SocialName-0.2.0-1.x86_64.rpm
+#   socialname-cli-{x86_64,aarch64}-pc-windows-msvc.zip
+#   socialname-cli-{x86_64,aarch64}-apple-darwin.tar.gz
+#   socialname-cli-x86_64-unknown-linux-gnu.tar.gz
+sh -n scripts/install-cli.sh
+# both install scripts parse; checksum extraction verified against the
+# `hash  name` and `hash *name` forms, and an unlisted archive yields nothing
+socialname search octocat --site github --rules-dir rules/sites --allow-disabled
+# run from a reproduced archive layout: Found, E4StructuredIdentity
+SOCIALNAME_CONSOLE_DIR=apps/console/dist cargo run --locked -p socialname-server
+# GET /console 200 with its own CSP and X-Frame-Options: DENY,
+# /console/../Cargo.toml and /console/.env 404, GET /v1/workspace still 401
+```
+
+A tag drives one draft GitHub Release carrying every artifact plus a shared
+`SHA256SUMS.txt`. The desktop application embeds the rule pack, so it searches
+the ten representative sites after an ordinary install with no account, no
+configuration, and no synchronization. The CLI archives ship the pack beside
+the binary. `SOCIALNAME_CONSOLE_DIR` optionally serves the monitoring console
+from the API server's own origin, which keeps the console's same-origin,
+memory-only-key posture intact for self-hosting through `deploy/compose.yaml`.
+
+Every artifact is unsigned: Apple notarization and a Windows signing
+certificate are external evidence this repository does not hold, so Gatekeeper
+and SmartScreen warn and [`docs/installation.md`](docs/installation.md) states
+the exact warnings rather than hiding them. Package-manager channels
+(Homebrew, WinGet, Scoop, distribution repositories), a `crates.io` release,
+desktop auto-update, and a hosted console likewise remain external
+distribution gates.
+
 ## Milestone 2 — First paid monitoring loop
 
 Status: **Software gate complete; external evidence pending**
@@ -2253,6 +2293,14 @@ Choose these only when their trigger is measured:
   recomputation, and an operable bounded worker command. Kept labeled-canary
   threshold replay and scheduled production operation as external calibration
   gates and selected quorum-based `corroborated` assertions next.
+- **2026-07-28:** Made every product surface installable: a tag-driven release
+  workflow producing unsigned Windows, macOS, and Linux desktop installers
+  plus CLI archives for five targets under one checksum file,
+  checksum-verifying CLI install scripts, an optional same-origin console
+  route, and a self-hosting compose stack. Verified the pipeline with a full
+  dry run and reproduced the archive layout locally. Kept signing identities,
+  package-manager channels, auto-update, and a hosted console as external
+  distribution gates.
 - **2026-07-28:** Added strict quorum `corroborated` shared assertions in a
   policy-free cross-tenant store with one-vote-per-tenant/installation/
   network-group independence, asymmetric found and absence thresholds,

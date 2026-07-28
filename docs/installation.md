@@ -64,8 +64,17 @@ hold.
 
 ### Linux
 
-Use the `.AppImage` (`chmod +x` then run) or install the `.deb` with
-`sudo apt install ./socialname_<version>_amd64.deb`.
+Three artifacts are published. Install the package your distribution uses, or
+run the portable AppImage:
+
+```bash
+sudo apt install ./SocialName_<version>_amd64.deb
+sudo dnf install ./SocialName-<version>-1.x86_64.rpm
+chmod +x SocialName_<version>_amd64.AppImage && ./SocialName_<version>_amd64.AppImage
+```
+
+The AppImage is much larger than the packages because it carries its own
+WebKit runtime instead of using the system one.
 
 ### What the desktop application does
 
