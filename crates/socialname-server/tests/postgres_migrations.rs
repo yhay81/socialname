@@ -61,9 +61,10 @@ use socialname_protocol::{
 use socialname_rule_compiler::{CompiledRulePack, CompiledSiteRule, RuleCompiler};
 use socialname_server::{
     BackupExpiryVerificationInput, InitialRulePackTrust, PlanOperatorError, PlanReconciliation,
-    ReconciledAccessState, RuleRegistryError, ServerConfig, TargetDeletionSelector,
-    VerifiedTargetDeletionInput, apply_rule_pack_metadata, build_router, export_restore_ledger,
-    migrate_database, reconcile_plan_entitlement, replay_restore_ledger,
+    ReconciledAccessState, RoleName, RolePassword, RuleRegistryError, ServerConfig,
+    TargetDeletionSelector, VerifiedTargetDeletionInput, apply_rule_pack_metadata, build_router,
+    export_restore_ledger, migrate_database, reconcile_plan_entitlement,
+    render_application_role_sql, render_worker_role_sql, replay_restore_ledger,
     request_verified_target_deletion, verify_backup_expiry,
 };
 use socialname_worker::{
@@ -738,128 +739,12 @@ async fn assert_api_key_scope_constraints(pool: &PgPool) {
 }
 
 async fn assert_tenant_isolation(pool: &PgPool) {
-    pool.execute(sqlx::raw_sql(
-        r#"
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'socialname_migration_test_app') THEN
-                CREATE ROLE socialname_migration_test_app
-                    LOGIN PASSWORD 'socialname-test-password'
-                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-            END IF;
-        END
-        $$;
-        ALTER ROLE socialname_migration_test_app
-            LOGIN PASSWORD 'socialname-test-password'
-            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-        GRANT USAGE ON SCHEMA public TO socialname_migration_test_app;
-        GRANT SELECT ON tenants TO socialname_migration_test_app;
-        GRANT SELECT (
-            id, tenant_id, display_name, role, state, revision,
-            created_at, updated_at
-        ) ON memberships TO socialname_migration_test_app;
-        GRANT SELECT ON api_keys TO socialname_migration_test_app;
-        GRANT UPDATE (last_used_at, state, revoked_at) ON api_keys
-            TO socialname_migration_test_app;
-        GRANT SELECT ON
-            sites, clients, consent_grants, consent_events,
-            searches, search_targets, search_events,
-            watches, watch_targets, watch_notification_endpoints,
-            search_completion_webhooks,
-            notification_endpoints, watch_runs, watch_run_targets,
-            transitions, transition_basis, notification_deliveries,
-            notification_acknowledgements,
-            rule_versions, rule_health_records, evidence_capsules,
-            suppression_tokens,
-            deletion_requests, deletion_tasks, deletion_receipts,
-            deletion_resource_matches, observations,
-            data_lineage_edges, probe_jobs, probe_job_consumers,
-            developer_quota_policies, developer_usage_records,
-            organization_retention_policies, transition_reviews,
-            shared_contributions, contribution_sequences,
-            contribution_quota_counters, contributor_reputation
-            TO socialname_migration_test_app;
-        GRANT SELECT (
-            id, tenant_id, actor_membership_id, actor_api_key_id,
-            action, resource_kind, resource_id, occurred_at
-        ) ON audit_events TO socialname_migration_test_app;
-        GRANT SELECT (
-            tenant_id, plan_code, access_state, revision,
-            effective_at, access_until, updated_at
-        ) ON tenant_plan_entitlements TO socialname_migration_test_app;
-        GRANT INSERT ON
-            clients, consent_grants, consent_events,
-            searches, search_targets, search_events, watches, watch_targets,
-            watch_notification_endpoints, search_completion_webhooks,
-            deletion_requests, deletion_tasks,
-            suppression_tokens, deletion_resource_matches,
-            notification_acknowledgements, audit_events,
-            developer_usage_records, transition_review_events,
-            shared_contributions, contribution_sequences,
-            contribution_quota_counters, contributor_reputation
-            TO socialname_migration_test_app;
-        GRANT UPDATE (
-            high_water, replay_violations, last_violation_at, updated_at
-        ) ON contribution_sequences TO socialname_migration_test_app;
-        GRANT UPDATE (accepted_count) ON contribution_quota_counters
-            TO socialname_migration_test_app;
-        GRANT UPDATE (
-            tier, revision, active_days, last_active_day, suspended_at,
-            suspension_reason, updated_at
-        ) ON contributor_reputation TO socialname_migration_test_app;
-        GRANT UPDATE (last_seen_at) ON clients
-            TO socialname_migration_test_app;
-        GRANT UPDATE (role, state, revision, updated_at) ON memberships
-            TO socialname_migration_test_app;
-        GRANT UPDATE (
-            revision, minimum_watch_retention_days,
-            maximum_watch_retention_days, updated_by_membership_id, updated_at
-        ) ON organization_retention_policies
-            TO socialname_migration_test_app;
-        GRANT UPDATE (
-            state, revision, assigned_membership_id,
-            acknowledged_by_membership_id, acknowledged_at,
-            resolved_by_membership_id, resolved_at, resolution, updated_at
-        ) ON transition_reviews TO socialname_migration_test_app;
-        GRANT UPDATE (withdrawn_at) ON consent_grants
-            TO socialname_migration_test_app;
-        GRANT UPDATE (
-            state, next_attempt_at, delivered_at, last_error_code,
-            lease_owner, lease_started_at, lease_expires_at
-        ) ON notification_deliveries TO socialname_migration_test_app;
-        GRANT UPDATE (state, cancelled_at) ON search_completion_webhooks
-            TO socialname_migration_test_app;
-        GRANT UPDATE (state, updated_at, completed_at) ON searches
-            TO socialname_migration_test_app;
-        GRANT UPDATE (state, completed_at) ON search_targets
-            TO socialname_migration_test_app;
-        GRANT UPDATE (
-            state, revision, maximum_age_ms, interval_seconds, jitter_percent,
-            maximum_probes_per_run, maximum_bytes_per_run, retention_days,
-            next_run_at, updated_at
-        ) ON watches TO socialname_migration_test_app;
-        GRANT UPDATE (retired_at) ON watch_targets
-            TO socialname_migration_test_app;
-        GRANT UPDATE (state, completed_at) ON watch_runs, watch_run_targets
-            TO socialname_migration_test_app;
-        GRANT DELETE ON watch_notification_endpoints
-            TO socialname_migration_test_app;
-        GRANT EXECUTE ON FUNCTION socialname_authenticate_api_key(text, bytea)
-            TO socialname_migration_test_app;
-        GRANT EXECUTE ON FUNCTION socialname_lock_developer_quota(uuid)
-            TO socialname_migration_test_app;
-        GRANT EXECUTE ON FUNCTION socialname_has_plan_capability(uuid, text)
-            TO socialname_migration_test_app;
-        GRANT EXECUTE ON FUNCTION socialname_provision_organization_member(
-            uuid, uuid, uuid, text, text, text
-        ) TO socialname_migration_test_app;
-        GRANT EXECUTE ON FUNCTION
-            socialname_redact_deletion_job_targets(uuid, uuid)
-            TO socialname_migration_test_app;
-        GRANT EXECUTE ON FUNCTION socialname_restore_ledger_ready(uuid)
-            TO socialname_migration_test_app;
-        "#,
-    ))
+    let application_role = RoleName::new("socialname_migration_test_app").unwrap();
+    let application_password = RolePassword::new("socialname-test-password").unwrap();
+    pool.execute(sqlx::raw_sql(&render_application_role_sql(
+        &application_role,
+        &application_password,
+    )))
     .await
     .unwrap();
 
@@ -11022,125 +10907,12 @@ async fn install_managed_rule_fixtures(pool: &PgPool, rule_version_id: Uuid) {
 }
 
 async fn install_worker_role(pool: &PgPool) {
-    pool.execute(sqlx::raw_sql(
-        r#"
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT FROM pg_roles
-                WHERE rolname = 'socialname_migration_test_worker'
-            ) THEN
-                CREATE ROLE socialname_migration_test_worker
-                    LOGIN PASSWORD 'socialname-worker-test-password'
-                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-            END IF;
-        END
-        $$;
-        ALTER ROLE socialname_migration_test_worker
-            LOGIN PASSWORD 'socialname-worker-test-password'
-            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-        GRANT USAGE ON SCHEMA public TO socialname_migration_test_worker;
-        GRANT SELECT ON
-            consent_grants, searches, search_targets, search_events, probe_jobs,
-            probe_job_consumers, data_lineage_edges, audit_events,
-            rule_versions, watches, watch_targets,
-            watch_notification_endpoints, search_completion_webhooks,
-            notification_endpoints, watch_runs,
-            watch_run_targets, observations, assertions, assertion_support,
-            regional_assertions, regional_assertion_support, transitions,
-            transition_basis, notification_deliveries,
-            notification_delivery_attempts, evidence_capsules,
-            evidence_retention_receipts, deletion_requests,
-            deletion_resource_matches, deletion_tasks, suppression_tokens,
-            shared_contributions, contribution_validations,
-            contributor_reputation
-            TO socialname_migration_test_worker;
-        GRANT INSERT ON
-            search_events, probe_jobs, probe_job_consumers, observations,
-            assertions, assertion_support, regional_assertions,
-            regional_assertion_support, transitions, transition_basis,
-            notification_deliveries, notification_delivery_attempts,
-            audit_events, data_lineage_edges, watch_runs, watch_run_targets,
-            evidence_capsules
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (state, updated_at, completed_at) ON searches
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            requested_username, normalized_username, state, completed_at
-        ) ON search_targets
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (next_run_at, updated_at) ON watches
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            normalized_username, account_state, account_assertion_id,
-            account_state_since
-        ) ON watch_targets
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (is_current) ON assertions
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (is_current, withdrawn_at) ON assertions
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            confirmation_status, confirmation_basis, pending_reason,
-            suppression_reason
-        ) ON transitions TO socialname_migration_test_worker;
-        GRANT UPDATE (state, reserved_bytes, completed_at) ON watch_runs
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            state, probe_job_id, observation_id, observation_deleted_at,
-            reserved_bytes, completed_at
-        ) ON watch_run_targets TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            normalized_username, work_key_hash, state, attempt_count,
-            available_at, lease_owner, lease_expires_at, last_error_code,
-            priority, updated_at, completed_at
-        ) ON probe_jobs TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            state, attempt_count, next_attempt_at, delivered_at,
-            last_error_code, lease_owner, lease_started_at, lease_expires_at
-        ) ON notification_deliveries TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            state, support_withdrawn_at, primary_completed_at,
-            lease_owner, lease_expires_at, last_error_code
-        ) ON deletion_requests TO socialname_migration_test_worker;
-        GRANT UPDATE (support_withdrawn_at, primary_deleted_at)
-            ON deletion_resource_matches TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            state, attempt_count, completed_at, last_error_code
-        ) ON deletion_tasks TO socialname_migration_test_worker;
-        GRANT DELETE ON
-            assertion_support, regional_assertion_support,
-            transition_basis, notification_delivery_attempts,
-            notification_deliveries, transitions, regional_assertions,
-            assertions, evidence_retention_receipts, evidence_capsules,
-            search_events, observations, shared_contributions,
-            contribution_validations, data_lineage_edges
-            TO socialname_migration_test_worker;
-        GRANT UPDATE (
-            validated_overlaps, agreement_hits, agreement_misses,
-            revision, updated_at
-        ) ON contributor_reputation TO socialname_migration_test_worker;
-        GRANT EXECUTE ON FUNCTION
-            socialname_worker_resolve_rule(
-                text, bytea, bytea, text, bytea, bigint, bytea, bigint
-            ),
-            socialname_worker_rule_version_available(uuid, text),
-            socialname_worker_lock_next_target(uuid, text),
-            socialname_worker_lock_due_watch(uuid, text),
-            socialname_worker_lock_next_watch_target(uuid, text),
-            socialname_worker_claim_job(uuid, text, text, integer),
-            socialname_worker_lock_claim_consent(uuid, integer, text),
-            socialname_worker_claim_webhook_delivery(text, integer, integer),
-            socialname_worker_claim_email_delivery(text, integer, integer),
-            socialname_worker_enforce_evidence_retention(integer),
-            socialname_worker_enforce_developer_usage_retention(integer),
-            socialname_worker_validate_contributions(integer),
-            socialname_worker_derive_shared_assertions(integer),
-            socialname_worker_withdraw_shared_support(uuid, uuid),
-            socialname_worker_claim_deletion(text, integer)
-            TO socialname_migration_test_worker;
-        "#,
-    ))
+    let worker_role = RoleName::new("socialname_migration_test_worker").unwrap();
+    let worker_password = RolePassword::new("socialname-worker-test-password").unwrap();
+    pool.execute(sqlx::raw_sql(&render_worker_role_sql(
+        &worker_role,
+        &worker_password,
+    )))
     .await
     .unwrap();
 }

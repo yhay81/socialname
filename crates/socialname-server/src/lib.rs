@@ -16,6 +16,7 @@ mod notification;
 mod operations;
 mod plan;
 mod plan_operator;
+mod roles;
 mod rule_registry_operator;
 mod search;
 mod search_webhook;
@@ -77,6 +78,12 @@ pub use plan_operator::{
     PLAN_EFFECTIVE_AT_ENV, PLAN_EXPECTED_REVISION_ENV, PLAN_WORKSPACE_ID_ENV, PlanOperatorError,
     PlanReconciliation, PlanReconciliationOutput, ReconciledAccessState,
     reconcile_plan_entitlement, reconcile_plan_entitlement_from_env,
+};
+pub use roles::{
+    APPLICATION_ROLE_ENV, APPLICATION_ROLE_PASSWORD_ENV, InvalidRoleName, InvalidRolePassword,
+    ProvisionedRuntimeRoles, RoleName, RolePassword, RoleProvisionError, WORKER_ROLE_ENV,
+    WORKER_ROLE_PASSWORD_ENV, provision_runtime_roles, provision_runtime_roles_from_env,
+    render_application_role_sql, render_worker_role_sql,
 };
 pub use rule_registry_operator::{
     AppliedRulePack, AppliedRulePackOutput, INITIAL_RULE_TRUST_FILE_ENV, INITIAL_RULE_TRUST_ID_ENV,

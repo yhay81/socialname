@@ -85,7 +85,9 @@ exist — the same credential-gated pattern as the product page.
 | `CLOUDFLARE_API_TOKEN` | Page and Worker/Container deployment; needs Workers edit, Containers, and DNS edit on `socialname.net` and `yhay81.com` | operator to add |
 | `CLOUDFLARE_ACCOUNT_ID` | Target account for wrangler | operator to add |
 | `SOCIALNAME_MIGRATE_DATABASE_URL` | Neon schema-owner direct URL; the workflow applies embedded migrations through the published server image | operator to add |
-| `SOCIALNAME_SERVER_DATABASE_URL` | Non-owner application-role direct URL, forwarded to the Worker secret | after the role-provisioning slice |
+| `SOCIALNAME_APPLICATION_ROLE_PASSWORD` | Password for the `socialname_app` runtime role; consumed by `provision-roles` and the derived runtime URL | set 2026-07-29 (fresh random, never displayed) |
+| `SOCIALNAME_WORKER_ROLE_PASSWORD` | Password for the `socialname_worker` runtime role; consumed by `provision-roles` | set 2026-07-29 (fresh random, never displayed) |
+| `SOCIALNAME_SERVER_DATABASE_URL` | Optional explicit runtime URL override; otherwise the workflow derives it from the schema-owner host and the application-role password | optional |
 | `SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX` | Deletion-suppression key, forwarded to the Worker secret | set 2026-07-29 (fresh random, never displayed) |
 
 ## Ordered path
@@ -98,12 +100,13 @@ exist — the same credential-gated pattern as the product page.
 2. **Schema.** [`api.yml`](../.github/workflows/api.yml) applies the
    embedded migrations through the published server image whenever the
    `SOCIALNAME_MIGRATE_DATABASE_URL` secret exists.
-3. **Runtime roles.** Provision the non-owner application and worker roles
-   with the same column-limited grants the PostgreSQL 18 integration test
-   applies. Those grants currently live only in
-   `crates/socialname-server/tests/postgres_migrations.rs`; extracting them
-   into an audited operator command is the next repository-completable item
-   so production roles cannot drift from the tested ones.
+3. **Runtime roles.** [`api.yml`](../.github/workflows/api.yml) runs the
+   `provision-roles` operator command through the published server image
+   whenever the schema-owner URL and both generated role-password secrets
+   exist. The command and the PostgreSQL 18 integration gate render the
+   same grant templates in `crates/socialname-server/src/roles/`, so a
+   production role cannot drift from the tested one without failing the
+   gate.
 4. **API server.** [`api.yml`](../.github/workflows/api.yml) deploys
    `deploy/api` — the Worker + Container wrapping
    `deploy/server/Dockerfile` — to `api.socialname.net` behind Cloudflare
