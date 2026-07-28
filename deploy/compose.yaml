@@ -64,10 +64,12 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
+      # The operator surface is closed, so `--help` exits nonzero by design;
+      # check that the listener accepts a loopback TCP connection instead.
       test:
         - CMD-SHELL
         - >-
-          /usr/local/bin/socialname-server --help >/dev/null 2>&1 || exit 1
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' 2>/dev/null || exit 1
       interval: 30s
       timeout: 5s
       retries: 3

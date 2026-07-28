@@ -208,6 +208,7 @@ fn quality_workflow_publishes_verified_images_only_from_main() {
     );
     for expected in [
         r#"docker run "${runtime_flags[@]}" socialname-server --help"#,
+        "Error: CommandError",
         "/opt/socialname/console/index.html",
     ] {
         assert!(

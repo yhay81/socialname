@@ -178,12 +178,29 @@ jobs:
             --cap-drop ALL
             --security-opt no-new-privileges=true
           )
-          docker run "${runtime_flags[@]}" socialname-server --help
           test "$(docker image inspect socialname-server --format '{{.Config.User}}')" = "10001:10001"
           test "$(docker image inspect socialname-server --format '{{json .Config.Entrypoint}}')" = '["/usr/local/bin/socialname-server"]'
           test "$(docker image inspect socialname-server --format '{{.Config.StopSignal}}')" = "SIGTERM"
           docker run "${runtime_flags[@]}" --entrypoint /bin/sh socialname-server \
             -c 'test -r /opt/socialname/console/index.html'
+
+          # The operator surface is closed: arbitrary arguments, including
+          # --help, must be rejected without echoing them back.
+          set +e
+          help_output="$(docker run "${runtime_flags[@]}" socialname-server --help 2>&1)"
+          help_status="$?"
+          set -e
+          test "$help_status" -ne 0
+          test "$help_output" = "Error: CommandError"
+
+          # Serving without database configuration must fail closed before
+          # listening instead of starting a half-configured server.
+          set +e
+          timeout 30 docker run "${runtime_flags[@]}" socialname-server >/dev/null 2>&1
+          serve_status="$?"
+          set -e
+          test "$serve_status" -ne 0
+          test "$serve_status" -ne 124
 
       - name: Publish API server image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
