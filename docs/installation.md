@@ -1,17 +1,17 @@
 # Installing SocialName
 
-Status: **Unsigned artifacts; local surfaces usable, managed service
-self-hosted only**
+Status: **Unsigned artifacts; local surfaces usable; the managed service is
+not hosted yet, and self-hosting is not a product surface**
 
-SocialName has three installable surfaces. Read the honest capability summary
-first, because two of them do useful work today and one needs infrastructure
-you have to run yourself.
+SocialName has three surfaces. Read the honest capability summary first,
+because the two local ones do useful work today and the third ships with the
+managed service, which is not hosted yet.
 
 | Surface | Who it is for | Works without any account or server | Today's limit |
 | --- | --- | --- | --- |
 | Desktop application | Anyone | Yes | Ten representative sites; installers are unsigned |
 | Command line | Terminal users | Yes | Same ten sites; `--allow-disabled` needed for live probes |
-| Monitoring console (web) | Operators and teams | No | Needs a self-hosted server and PostgreSQL |
+| Monitoring console (web) | Operators and teams | No | Part of the managed service, which is not hosted yet |
 
 Two facts shape everything below and are not marketing caveats:
 
@@ -163,11 +163,15 @@ Rust rewrite. It is unrelated to the surfaces on this page.
 The console is the watch, transition, review, and operational-report surface.
 It consumes only `/v1` on its own origin and holds a pasted scoped API key in
 page memory alone — never in local storage, never in a cookie. There is no
-hosted instance: publishing one requires managed deployment credentials, a
+hosted instance yet: publishing one requires managed deployment credentials, a
 domain, and TLS, all of which are external gates recorded in
 [`docs/regional-worker-deployment.md`](regional-worker-deployment.md).
+Self-hosting is deliberately not a product surface — the managed service
+concentrates observations, rule health, and coalescing in one operated place
+([decision](decisions-2026-07-28.md)).
 
-Self-host it with the compose stack:
+Contributors working on the server, worker, or console run the same stack as
+a development harness:
 
 ```bash
 cd deploy

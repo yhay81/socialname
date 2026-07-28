@@ -121,6 +121,13 @@ one local process cannot provide efficiently:
 
 The central server is not a public archive of everyone ever searched.
 
+It is operated as **one multi-tenant SocialName service**. Self-hosting it is
+not a product surface: managed observations, rule health, coalescing, and the
+quality network create durable value only when they accumulate in a single
+operated service, and fragmenting them across isolated installations would
+dilute exactly the knowledge the server exists to build. The repository stays
+open source, but only the operated service is a supported product.
+
 ## Trustworthy knowledge model
 
 An observation is a measurement at a particular time and vantage. An assertion
@@ -198,6 +205,8 @@ SocialName will not:
 - claim that matching usernames prove common ownership;
 - silently upload local searches, targets, or observations;
 - create a public searchable archive of all queried identifiers;
+- offer or support self-hosted deployments of the managed service as a
+  product;
 - treat a block, timeout, login wall, or changed site as account absence;
 - accuse an account of impersonation based only on string similarity;
 - bypass authentication, CAPTCHA, paywalls, robots protections, or access

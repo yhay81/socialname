@@ -337,3 +337,6 @@ SocialName should not initially provide:
 - Authentication, CAPTCHA, paywall, or anti-bot bypass.
 - Storage of complete HTTP bodies by default.
 - User-supplied arbitrary URLs executed by managed workers.
+- A supported self-hosted distribution of the managed server, worker, or
+  console; the managed capability is one operated service
+  ([decision](decisions-2026-07-28.md)).

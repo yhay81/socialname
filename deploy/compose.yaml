@@ -1,4 +1,4 @@
-# Self-hosted SocialName monitoring stack.
+# SocialName development and integration stack.
 #
 # Brings up PostgreSQL 18, applies the embedded migrations, and starts the API
 # server with the monitoring console on its own origin at
@@ -8,7 +8,9 @@
 #   cp .env.example .env      # then edit the two generated secrets
 #   docker compose up --build
 #
-# This stack is a self-hosting convenience, not a production deployment. It
+# This stack is a development harness for server, worker, migration, and
+# console work — not a production deployment and not a supported product
+# distribution (docs/decisions-2026-07-28.md). It
 # binds to loopback, terminates no TLS, runs no managed worker, and holds no
 # rule-pack trust root, so no site rule is promoted and no managed probe can
 # execute. Those remain the documented external deployment gates in

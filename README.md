@@ -19,7 +19,9 @@ The product direction is:
 - a developer API using exactly the same engine and rule pack;
 - paid continuous monitoring, history, and notifications;
 - an opt-in central quality network that distinguishes verified,
-  corroborated, conflicted, stale, and blocked results.
+  corroborated, conflicted, stale, and blocked results;
+- one operated multi-tenant service — self-hosting is not a product surface
+  ([decision](docs/decisions-2026-07-28.md)).
 
 A matching username across sites is not proof that the accounts belong to one
 person.
@@ -51,12 +53,11 @@ socialname search octocat --site github \
   --rules-dir ~/.socialname/rules/sites --allow-disabled
 ```
 
-**Monitoring console** — self-host it together with the API server and
-PostgreSQL, then open <http://127.0.0.1:8080/console>:
-
-```bash
-cd deploy && cp .env.example .env && docker compose up --build
-```
+**Monitoring console** — part of the managed service, which is not hosted
+yet. Self-hosting is deliberately not a product surface; contributors working
+on the server, worker, or console can run the development stack in
+[`deploy/compose.yaml`](deploy/compose.yaml) and open
+<http://127.0.0.1:8080/console>.
 
 Two limits are deliberate rather than incidental. All ten site rules are
 discovery-only because none has passed the live canary gate, so local probes
@@ -250,7 +251,8 @@ docs/                        product, architecture, trust, and governance record
 
 Start with the [ultimate goal](docs/ultimate-goal.md), the
 [execution roadmap](ROADMAP.md), the [design index](docs/README.md), the
-[accepted decisions](docs/decisions-2026-07-24.md), and the
+accepted decisions ([2026-07-24](docs/decisions-2026-07-24.md),
+[2026-07-28](docs/decisions-2026-07-28.md)), and the
 [Site Rule v1 validation record](docs/site-rule-v1-validation.md).
 The managed update trust and rollout contract is in
 [Signed Rule-Pack Distribution v1](docs/rule-pack-distribution-v1.md).

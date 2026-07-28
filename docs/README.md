@@ -14,7 +14,9 @@ The design was last reviewed on 2026-07-26.
 - [`ROADMAP.md`](../ROADMAP.md) is the canonical execution order: current
   milestone, software gates, external evidence gates, and completion evidence.
 - [Accepted decisions](decisions-2026-07-24.md) records binding architecture,
-  trust, governance, and client decisions.
+  trust, governance, and client decisions;
+  [2026-07-28](decisions-2026-07-28.md) adds the single operated-service
+  decision.
 - Focused design documents explain implementation details.
 
 Repository agents follow [`AGENTS.md`](../AGENTS.md). Product work must remain
@@ -175,6 +177,8 @@ access. Live canaries are intentionally a separate acceptance gate.
   search/watch coalescing, and revision cancellation.
 - [Accepted decisions](decisions-2026-07-24.md) — binding choices and
   implementation order.
+- [Accepted decisions 2026-07-28](decisions-2026-07-28.md) — one operated
+  managed service; self-hosting removed as a product surface.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
   retention, lineage, and deletion guarantees.
 - [Bounded Evidence Capsule v1](evidence-capsule-v1.md) — closed sanitized
@@ -210,9 +214,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [Shared contribution ingestion v1](shared-contributions.md) — minimized
   consented client submissions with replay, quota, anomaly, diversity, and
   reputation admission controls, structurally outside `verified` truth.
-- [Installation](installation.md) — desktop, CLI, and self-hosted console
-  install paths, checksum verification, unsigned-build warnings, and the
-  distribution gaps that need accounts rather than code.
+- [Installation](installation.md) — desktop and CLI install paths, checksum
+  verification, unsigned-build warnings, and the distribution gaps that need
+  accounts rather than code.
 - [Representative validation](site-rule-v1-validation.md) — discovery evidence,
   ten-site proof set, fixtures, and live acceptance gates.
 - [Desktop application](desktop-application.md) — Tauri selection, native
