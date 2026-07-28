@@ -937,13 +937,37 @@ readable as that UID and that `process-one` without `--allow-live` exits before
 metadata, trust-root, or database access. Linux `SIGTERM` now cancels the same
 token as Ctrl-C during managed execution, leaving a fenced lease to expire
 safely.
-CI builds and smoke-tests the image but has no registry login or push path.
+CI builds and smoke-tests the image, and on a push to `main` now publishes
+the verified worker and API server images to GHCR with their immutable
+digests recorded in the run summary.
 Quality run
 [`30193340211`](https://github.com/yhay81/socialname/actions/runs/30193340211)
 passed Rust core, Windows/macOS desktop, monitoring console, and the new
 managed-worker OCI job for commit `e2bc7fd`.
 
-The deployment item remains unchecked: no registry artifact, approved regional
+Registry publication evidence:
+
+```console
+# Quality run for commit fe50ab4 passed all six jobs and published both
+# verified images:
+# https://github.com/yhay81/socialname/actions/runs/30374012200
+#   ghcr.io/yhay81/socialname-worker@sha256:e53cc4fc45b6233f3f78fb0a69b5761889b365e0e11f77e4877f4094eff03a56
+#   ghcr.io/yhay81/socialname-server@sha256:4f615cba989510a3442989fd27f91d2fbc6d26395c504ea83313fdd258264cb1
+cargo test --locked -p socialname-worker --test deployment_contract
+# 3 passed: context exclusions, pinned inert worker image, and main-only
+# gated GHCR publication using the workflow-scoped token
+```
+
+Publication is gated to pushes to `main`, uses only the workflow-scoped
+token, and is limited to `ghcr.io`; pull-request runs cannot publish. The
+API server image verification asserts the closed operator surface (`--help`
+is rejected as `Error: CommandError`) and a fail-closed start without
+database configuration, and carries the same-origin console bundle. The
+ordered operator path that consumes these digests is
+[`docs/hosted-deployment.md`](docs/hosted-deployment.md).
+
+The deployment item remains unchecked: the registry digests above satisfy
+only the artifact half of external evidence item 1, and no approved regional
 vantage, managed database credential, production-trusted rule-pack metadata,
 egress policy, or live cancellation observation exists. The exact evidence
 needed to close it is recorded in
