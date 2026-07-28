@@ -1,0 +1,29 @@
+PackageIdentifier: yhay81.SocialName
+PackageVersion: __VERSION__
+PackageLocale: en-US
+Publisher: yhay81
+PublisherUrl: https://github.com/yhay81
+PublisherSupportUrl: https://github.com/yhay81/socialname/issues
+PackageName: SocialName
+PackageUrl: https://yhay81.github.io/socialname/
+License: MIT
+LicenseUrl: https://github.com/yhay81/socialname/blob/main/LICENSE
+ShortDescription: Local-first public identifier observability with explainable evidence
+Description: >-
+  SocialName searches whether a public identifier exists on supported sites and
+  shows the evidence behind every answer: the evidence class, the matcher
+  outcome, the exact rule identity, and when the measurement was taken. The
+  desktop application runs locally by default with no account and no
+  synchronization. A matching username across sites is not proof that the
+  accounts belong to one person, and this build reports ten representative
+  sites whose rules have not yet passed their live validation gate.
+Moniker: socialname
+Tags:
+  - osint
+  - privacy
+  - username
+  - identity
+  - research
+ReleaseNotesUrl: https://github.com/yhay81/socialname/releases/tag/v__VERSION__
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

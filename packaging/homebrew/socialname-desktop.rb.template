@@ -1,0 +1,37 @@
+# Homebrew cask for the desktop application, rendered by
+# .github/workflows/release.yml from the published release artifacts.
+#
+# The bundle is unsigned and un-notarized, so Gatekeeper blocks the first
+# launch. The cask states that plainly instead of quietly stripping the
+# quarantine attribute on the user's behalf.
+cask "socialname-desktop" do
+  version "__VERSION__"
+  sha256 "__SHA256_UNIVERSAL_DMG__"
+
+  url "https://github.com/yhay81/socialname/releases/download/v#{version}/SocialName_#{version}_universal.dmg"
+  name "SocialName"
+  desc "Local-first public identifier observability desktop application"
+  homepage "https://yhay81.github.io/socialname/"
+
+  depends_on macos: ">= :big_sur"
+
+  app "SocialName.app"
+
+  caveats <<~TEXT
+    This build is neither signed nor notarized, so macOS blocks the first
+    launch. Open it once with Control-click -> Open, or clear the quarantine
+    attribute yourself:
+
+      xattr -dr com.apple.quarantine "#{appdir}/SocialName.app"
+
+    Do that only after verifying the download against SHA256SUMS.txt from the
+    same release.
+  TEXT
+
+  zap trash: [
+    "~/Library/Application Support/dev.socialname.desktop",
+    "~/Library/Caches/dev.socialname.desktop",
+    "~/Library/Preferences/dev.socialname.desktop.plist",
+    "~/Library/Saved Application State/dev.socialname.desktop.savedState",
+  ]
+end

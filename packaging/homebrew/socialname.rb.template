@@ -1,0 +1,58 @@
+# Rendered by .github/workflows/release.yml from the published release
+# artifacts. Placeholders are substituted with the tag and the exact SHA-256
+# digests recorded in SHA256SUMS.txt, so the formula never carries a checksum
+# that was not computed from the artifact it installs.
+class Socialname < Formula
+  desc "Local-first public identifier observability CLI"
+  homepage "https://yhay81.github.io/socialname/"
+  version "__VERSION__"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/yhay81/socialname/releases/download/v__VERSION__/socialname-cli-aarch64-apple-darwin.tar.gz"
+      sha256 "__SHA256_AARCH64_APPLE_DARWIN__"
+    end
+    on_intel do
+      url "https://github.com/yhay81/socialname/releases/download/v__VERSION__/socialname-cli-x86_64-apple-darwin.tar.gz"
+      sha256 "__SHA256_X86_64_APPLE_DARWIN__"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/yhay81/socialname/releases/download/v__VERSION__/socialname-cli-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "__SHA256_AARCH64_UNKNOWN_LINUX_GNU__"
+    end
+    on_intel do
+      url "https://github.com/yhay81/socialname/releases/download/v__VERSION__/socialname-cli-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "__SHA256_X86_64_UNKNOWN_LINUX_GNU__"
+    end
+  end
+
+  def install
+    bin.install "socialname"
+    # The CLI reads Site Rule v1 sources from disk. Keeping the pack inside
+    # the formula's own prefix lets the caveat below name one stable path.
+    pkgshare.install "rules"
+    doc.install "README.md"
+  end
+
+  def caveats
+    <<~TEXT
+      Site rules are installed at:
+        #{opt_pkgshare}/rules/sites
+
+      Every rule is still discovery-only, so a live probe needs an explicit
+      acknowledgement:
+        socialname search octocat --site github \\
+          --rules-dir #{opt_pkgshare}/rules/sites --allow-disabled
+    TEXT
+  end
+
+  test do
+    assert_match "socialname", shell_output("#{bin}/socialname --version")
+    listed = shell_output("#{bin}/socialname rules list --rules-dir #{opt_pkgshare}/rules/sites")
+    assert_match "github", listed
+  end
+end

@@ -47,12 +47,7 @@ esac
 
 case "$(uname -m)" in
     x86_64 | amd64) architecture=x86_64 ;;
-    arm64 | aarch64)
-        if [ "$platform" = unknown-linux-gnu ]; then
-            fail "Linux arm64 has no prebuilt archive yet; build with 'cargo install --git https://github.com/$REPOSITORY socialname-cli'"
-        fi
-        architecture=aarch64
-        ;;
+    arm64 | aarch64) architecture=aarch64 ;;
     *) fail "unsupported architecture '$(uname -m)'" ;;
 esac
 

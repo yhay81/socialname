@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SocialName — public identifier observability</title>
+    <meta
+      name="description"
+      content="Search whether a public username exists on supported sites and see the evidence behind every answer. Local by default: no account, no synchronization."
+    />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#install">Skip to install</a>
+
+    <header class="hero">
+      <div class="wrap">
+        <img class="mark" src="icon.svg" alt="" width="72" height="72" />
+        <h1>SocialName</h1>
+        <p class="lede">
+          Find out whether a public username exists on a site — and see exactly
+          why the answer is what it is.
+        </p>
+        <p class="sub">
+          Runs on your own machine by default. No account, no sign-in, and no
+          data sent anywhere.
+        </p>
+        <div class="cta">
+          <a class="button primary" href="#install">Install</a>
+          <a
+            class="button"
+            href="https://github.com/yhay81/socialname"
+            rel="noopener"
+            >Source code</a
+          >
+        </div>
+        <p class="status">
+          Early release · 10 sites · unsigned builds ·
+          <a href="#honest">read the limits first</a>
+        </p>
+      </div>
+    </header>
+
+    <main>
+      <section class="wrap band">
+        <h2>What it actually tells you</h2>
+        <p class="section-lede">
+          Most username checkers give you a checkmark. SocialName shows the
+          measurement behind it, so you can judge whether to trust the answer.
+        </p>
+        <div class="grid">
+          <article class="card">
+            <h3>Evidence, not a guess</h3>
+            <p>
+              Every result carries an evidence class. The strongest,
+              <code>E4</code>, means the site's own structured response named
+              the exact identifier. The weakest states plainly that nothing
+              about the account was learned.
+            </p>
+          </article>
+          <article class="card">
+            <h3>"Blocked" is not "absent"</h3>
+            <p>
+              A timeout, a rate limit, a CAPTCHA, or a login wall is reported as
+              an inconclusive measurement. It is never quietly turned into
+              "this account does not exist".
+            </p>
+          </article>
+          <article class="card">
+            <h3>Reproducible answers</h3>
+            <p>
+              Each result records the exact rule that produced it, when the
+              observation was taken, and when it expires. The same rule and the
+              same response give the same verdict.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Local by default</h3>
+            <p>
+              The desktop application and CLI probe directly from your machine
+              with synchronization set to <code>never</code>. Nothing is
+              uploaded, and there is no account to create.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap band alt">
+        <h2>What a result looks like</h2>
+        <pre class="terminal" aria-label="Example command line output"><code><span class="prompt">$</span> socialname search octocat --site github --allow-disabled
+
+github   status=complete  source=local_probe  sync=never
+observation  <span class="ok">Found</span>  E4StructuredIdentity
+             observed=2026-07-28T06:49:17Z  expires=+24h
+profile      https://github.com/octocat</code></pre>
+        <p class="note">
+          Real output from this build. <code>E4StructuredIdentity</code> means
+          GitHub's own structured response named that exact account, which is
+          the strongest evidence the engine recognises.
+        </p>
+      </section>
+
+      <section class="wrap band" id="sites">
+        <h2>Supported sites</h2>
+        <p class="section-lede">
+          Ten representative sites, chosen to cover different response shapes
+          rather than to inflate a count.
+        </p>
+        <ul class="sites">
+          <li>Bluesky</li>
+          <li>Docker Hub</li>
+          <li>GitHub</li>
+          <li>GitLab</li>
+          <li>mastodon.social</li>
+          <li>npm</li>
+          <li>Reddit</li>
+          <li>Steam</li>
+          <li>X</li>
+          <li>YouTube</li>
+        </ul>
+      </section>
+
+      <section class="wrap band alt" id="install">
+        <h2>Install</h2>
+        <div class="grid">
+          <article class="card">
+            <h3>Desktop application</h3>
+            <p>Windows, macOS, and Linux. Search from a window; no terminal.</p>
+            <p>
+              <a
+                class="button primary"
+                href="https://github.com/yhay81/socialname/releases/latest"
+                rel="noopener"
+                >Download</a
+              >
+            </p>
+            <p class="fine">
+              Verify your download against <code>SHA256SUMS.txt</code> in the
+              same release before installing.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Command line — macOS &amp; Linux</h3>
+            <pre
+              class="snippet"
+            ><code>curl -fsSL https://raw.githubusercontent.com/yhay81/socialname/main/scripts/install-cli.sh | sh</code></pre>
+            <p class="fine">
+              Verifies the checksum before installing and needs no
+              administrator rights. Read the script first — that advice applies
+              to every installer of this shape.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Command line — Windows</h3>
+            <pre
+              class="snippet"
+            ><code>irm https://raw.githubusercontent.com/yhay81/socialname/main/scripts/install-cli.ps1 | iex</code></pre>
+            <p class="fine">
+              Installs under <code>%LOCALAPPDATA%\SocialName</code> for the
+              current user only.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Self-hosted monitoring</h3>
+            <p>
+              Scheduled watches, change history, and team review run against
+              your own server and database.
+            </p>
+            <pre
+              class="snippet"
+            ><code>cd deploy &amp;&amp; cp .env.example .env
+docker compose up --build</code></pre>
+            <p class="fine">
+              Then open <code>http://127.0.0.1:8080/console</code>. There is no
+              hosted service yet.
+            </p>
+          </article>
+        </div>
+        <p class="note">
+          Full instructions, checksum verification, and the operating-system
+          warnings are in
+          <a
+            href="https://github.com/yhay81/socialname/blob/main/docs/installation.md"
+            rel="noopener"
+            >the installation guide</a
+          >.
+        </p>
+      </section>
+
+      <section class="wrap band" id="honest">
+        <h2>What this build does not do</h2>
+        <p class="section-lede">
+          These limits are real. They are listed here rather than discovered
+          after you install.
+        </p>
+        <div class="grid">
+          <article class="card warn">
+            <h3>Installers are unsigned</h3>
+            <p>
+              Windows SmartScreen and macOS Gatekeeper will warn, because the
+              project holds no code-signing certificate and no Apple notarization
+              identity. The installation guide documents the exact warnings and
+              how to proceed after checking the checksum.
+            </p>
+          </article>
+          <article class="card warn">
+            <h3>Site rules are unvalidated</h3>
+            <p>
+              No rule has yet passed the project's live validation gate, so the
+              CLI requires an explicit <code>--allow-disabled</code> flag before
+              it will probe. Results are real measurements; their long-term
+              reliability across regions has not been proven.
+            </p>
+          </article>
+          <article class="card warn">
+            <h3>No hosted service</h3>
+            <p>
+              Continuous monitoring, notifications, and the developer API exist
+              in the codebase but run only where you deploy them. There is no
+              sign-up, and nothing is operated for you.
+            </p>
+          </article>
+          <article class="card warn">
+            <h3>A match is not an identity</h3>
+            <p>
+              The same username on two sites is not evidence that one person
+              owns both. SocialName reports presence, never attribution, and it
+              will not bypass a login wall, a CAPTCHA, or an access control.
+            </p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <p>
+          MIT licensed ·
+          <a href="https://github.com/yhay81/socialname" rel="noopener"
+            >GitHub</a
+          >
+          ·
+          <a
+            href="https://github.com/yhay81/socialname/blob/main/docs/ultimate-goal.md"
+            rel="noopener"
+            >Product charter</a
+          >
+          ·
+          <a
+            href="https://github.com/yhay81/socialname/issues"
+            rel="noopener"
+            >Report an issue</a
+          >
+        </p>
+        <p class="fine">
+          This site is static, serves no cookies, and runs no analytics.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

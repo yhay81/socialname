@@ -87,6 +87,30 @@ at.
 
 ## Command line
 
+Archives are published for six targets: Windows, macOS, and Linux on both
+x86-64 and arm64.
+
+### Homebrew
+
+```bash
+brew install yhay81/tap/socialname            # command line
+brew install --cask yhay81/tap/socialname-desktop
+```
+
+The tap is updated by the release workflow when the tap credential is
+configured; until then use the prebuilt binary or the installer.
+
+### WinGet
+
+```powershell
+winget install yhay81.SocialName
+```
+
+The release workflow renders the WinGet manifests and attaches them to the
+release. Submitting them to `microsoft/winget-pkgs` is a separate
+authenticated pull request, so this command works only after that submission
+is merged.
+
 ### Prebuilt binary
 
 ```bash
@@ -196,11 +220,20 @@ rather than a silently disabled console.
 
 ## Not yet available
 
-These are distribution gaps, each blocked on an account or credential rather
-than on code:
+These are distribution gaps, each blocked on an account, a credential, or an
+external review rather than on code:
 
 - signed and notarized macOS builds, and a signed Windows installer;
-- Homebrew, WinGet, Scoop, and Linux repository packages;
+- a merged `microsoft/winget-pkgs` submission, so `winget install` resolves;
+- a `HOMEBREW_TAP_TOKEN` secret, so releases update the tap automatically;
+- Scoop and Linux distribution repository packages;
 - a `crates.io` release of `socialname-cli`;
 - automatic updates for the desktop application;
 - a hosted monitoring console.
+
+The Homebrew formula and cask and the three WinGet manifests are generated
+from each release by
+[`scripts/render-package-manifests.sh`](../scripts/render-package-manifests.sh),
+which reads every checksum from the release's own `SHA256SUMS.txt` and fails
+rather than emit a manifest with a missing digest or an unsubstituted
+placeholder.

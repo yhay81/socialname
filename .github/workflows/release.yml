@@ -46,6 +46,10 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             archive: tar
+          - target: aarch64-unknown-linux-gnu
+            # Native arm64 runner, so the archive needs no cross toolchain.
+            runner: ubuntu-24.04-arm
+            archive: tar
     steps:
       - uses: actions/checkout@v6
 
@@ -171,6 +175,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
+    env:
+      # `secrets` is unavailable in a step-level `if`, so the presence of the
+      # tap credential is resolved once here.
+      HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -187,13 +195,20 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      - name: Render the package-manager manifests
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          scripts/render-package-manifests.sh "${TAG#v}" dist dist/packaging
+
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh release create "$TAG" dist/* \
+          gh release create "$TAG" dist/*.* \
             --draft \
             --title "SocialName $TAG" \
             --notes "Unsigned installers and archives built by \
@@ -201,3 +216,32 @@ jobs:
           SHA256SUMS.txt. See docs/installation.md for the operating-system \
           warnings that unsigned builds produce and for what works without an \
           account."
+
+      - name: Publish the rendered manifests as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-manifests
+          path: dist/packaging/**
+          if-no-files-found: error
+
+      # Pushing to the Homebrew tap needs write access to a second
+      # repository, so it runs only when that credential exists. Without it
+      # the manifests are still produced and attached above.
+      - name: Update the Homebrew tap
+        if: env.HAS_TAP_TOKEN == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/yhay81/homebrew-tap.git" tap
+          mkdir -p tap/Formula tap/Casks
+          cp dist/packaging/homebrew/socialname.rb tap/Formula/socialname.rb
+          cp dist/packaging/homebrew/socialname-desktop.rb tap/Casks/socialname-desktop.rb
+          cd tap
+          git config user.name "socialname-release"
+          git config user.email "noreply@socialname.dev"
+          git add Formula/socialname.rb Casks/socialname-desktop.rb
+          git commit -m "socialname ${TAG}"
+          git push
