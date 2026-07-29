@@ -11,5 +11,4 @@
 .canary-output
 apps/console/dist
 docs
-rules/canaries
 tests

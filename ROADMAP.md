@@ -994,13 +994,43 @@ exposes: `ALTER ROLE` may set `SUPERUSER` and `BYPASSRLS` only as a
 superuser, which no managed owner is, and the provider rejects a password
 without mixed case or special characters.
 
+First live canary measurements (2026-07-29), run from a single vantage
+before building any fleet, so a failing rule would cost minutes rather than
+three regional deployments:
+
+```console
+cargo run --locked -p socialname-cli -- canaries run --site github \
+  --region local-validation --allow-live --json
+# completion=complete precision=10/10 coverage=10/10 conflicts=0
+# 10 planned and 10 completed requests, 6809 response bytes, p50 100ms
+cargo run --locked -p socialname-cli -- canaries run --site gitlab \
+  --region local-validation --allow-live --json
+# completion=complete precision=10/10 coverage=10/10 conflicts=0
+# p50 246ms, p95 377ms, no mismatched case
+```
+
+Both rules met every acceptance threshold — 100% conclusive precision, 100%
+conclusive coverage, zero conflicts — against the real sites. That is one
+vantage and one run each, so it is evidence that the rules measure
+correctly, not evidence of acceptance: the gate still requires three managed
+regions with three runs each over at least 24 hours.
+
+`deploy/canary` supplies that fleet as three region-constrained Cloudflare
+Container deployments on an eight-hour cron. The runner image carries the
+CLI, the exact rule pack, and the reviewed manifests, stays inert by default,
+and runs a canary only as an explicit `exec` carrying `--allow-live`. Each
+Worker has no route at all, so nothing but its own cron can reach it, and
+reports land in R2 keyed by site, region, and start time.
+
 The deployment item nevertheless remains unchecked. What exists is one
-region's API surface, not the managed measurement fleet: no regional worker
-workload, approved canary vantage, production-trusted rule-pack metadata,
+region's API surface plus canary vantages, not the managed measurement
+fleet: no regional worker workload, production-trusted rule-pack metadata,
 egress policy, or live cancellation observation exists yet, so every one of
 the 460 site rules is still discovery-only and no managed probe can execute.
-The deployed database is PostgreSQL 17 while the integration gate runs
-PostgreSQL 18; closing that gap is tracked as its own next item. The exact evidence
+The deployed database is PostgreSQL 17 while the core gate runs PostgreSQL
+18, which the added PostgreSQL 17 job now covers. Cloudflare places
+containers only in ENAM, WNAM, EEUR, and WEUR, so the fleet has no APAC
+vantage and cannot yet observe region-specific behaviour there. The exact evidence
 needed to close it is recorded in
 [`docs/regional-worker-deployment.md`](docs/regional-worker-deployment.md).
 Repository work can therefore continue independently with region-aware

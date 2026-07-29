@@ -1,0 +1,130 @@
+{
+  // Regional canary runner. One deployment per managed region, because the
+  // vantage a report declares is only meaningful if the process actually ran
+  // there. Acceptance needs three regions with three runs each over at least
+  // 24 hours, so the cron fires every eight hours.
+  //
+  // There is no route: this Worker is reached only by its own cron trigger,
+  // so no request can ask it to probe anything.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "socialname-canary-enam",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "containers": [
+    {
+      "class_name": "CanaryRunnerContainer",
+      "image": "./Dockerfile",
+      "image_build_context": "../..",
+      "instance_type": "lite",
+      "max_instances": 1,
+      "constraints": {
+        "regions": ["ENAM"]
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CANARY_RUNNER",
+        "class_name": "CanaryRunnerContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["CanaryRunnerContainer"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "REPORTS",
+      "bucket_name": "socialname-canary-reports"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 */8 * * *"]
+  },
+  "vars": {
+    "CANARY_REGION": "enam",
+    "CANARY_SITES": "github,gitlab"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "env": {
+    "wnam": {
+      "name": "socialname-canary-wnam",
+      "containers": [
+        {
+          "class_name": "CanaryRunnerContainer",
+          "image": "./Dockerfile",
+          "image_build_context": "../..",
+          "instance_type": "lite",
+          "max_instances": 1,
+          "constraints": {
+            "regions": ["WNAM"]
+          }
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "CANARY_RUNNER",
+            "class_name": "CanaryRunnerContainer"
+          }
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "REPORTS",
+          "bucket_name": "socialname-canary-reports"
+        }
+      ],
+      "triggers": {
+        "crons": ["20 */8 * * *"]
+      },
+      "vars": {
+        "CANARY_REGION": "wnam",
+        "CANARY_SITES": "github,gitlab"
+      }
+    },
+    "weur": {
+      "name": "socialname-canary-weur",
+      "containers": [
+        {
+          "class_name": "CanaryRunnerContainer",
+          "image": "./Dockerfile",
+          "image_build_context": "../..",
+          "instance_type": "lite",
+          "max_instances": 1,
+          "constraints": {
+            "regions": ["WEUR"]
+          }
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "CANARY_RUNNER",
+            "class_name": "CanaryRunnerContainer"
+          }
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "REPORTS",
+          "bucket_name": "socialname-canary-reports"
+        }
+      ],
+      "triggers": {
+        "crons": ["40 */8 * * *"]
+      },
+      "vars": {
+        "CANARY_REGION": "weur",
+        "CANARY_SITES": "github,gitlab"
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "socialname-canary-worker",
+  "private": true,
+  "scripts": {
+    "check": "tsc --noEmit",
+    "dry-run": "wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.114.0"
+  }
+}

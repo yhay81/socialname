@@ -60,13 +60,21 @@ fn docker_context_excludes_credentials_canaries_and_build_outputs() {
         "**/node_modules",
         "**/target",
         ".canary-output",
-        "rules/canaries",
     ] {
         assert!(
             patterns.contains(&expected),
             "missing Docker context exclusion: {expected}"
         );
     }
+
+    // Canary manifests are reviewed public artifacts that the regional runner
+    // image needs, so they are no longer excluded from every build context.
+    // The property that still matters is that the managed worker, which never
+    // runs a canary, does not carry them.
+    assert!(
+        !DOCKERFILE.contains("rules/canaries"),
+        "the managed worker image must not carry canary manifests"
+    );
 }
 
 const MAIN_PUSH_GATE: &str = "github.event_name == 'push' && github.ref == 'refs/heads/main'";
