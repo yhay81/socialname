@@ -145,6 +145,12 @@ pub fn render_worker_role_sql(role: &RoleName, password: &RolePassword) -> Strin
 fn render_role_sql(role: &RoleName, password: &RolePassword, grants_template: &str) -> String {
     let role = role.as_str();
     let password = password.quoted_literal();
+    // `SUPERUSER` and `BYPASSRLS` can only be *set* by a superuser, even when
+    // set to their negative form, and a managed PostgreSQL owner is not one.
+    // Creation still states them because they are the defaults there, while
+    // reprovisioning asserts the invariant instead of reasserting it: a role
+    // that somehow holds either attribute fails the transaction rather than
+    // silently keeping a privilege that would defeat forced tenant RLS.
     let creation = format!(
         "DO $$\n\
          BEGIN\n\
@@ -157,7 +163,19 @@ fn render_role_sql(role: &RoleName, password: &RolePassword, grants_template: &s
          $$;\n\
          ALTER ROLE {role}\n\
              LOGIN PASSWORD '{password}'\n\
-             NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;\n"
+             NOCREATEDB NOCREATEROLE NOINHERIT;\n\
+         DO $$\n\
+         BEGIN\n\
+             IF EXISTS (\n\
+                 SELECT FROM pg_roles\n\
+                 WHERE rolname = '{role}'\n\
+                   AND (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole)\n\
+             ) THEN\n\
+                 RAISE EXCEPTION\n\
+                     'runtime role {role} holds an elevated attribute';\n\
+             END IF;\n\
+         END\n\
+         $$;\n"
     );
     let grants = grants_template.replace(ROLE_PLACEHOLDER, role);
     debug_assert!(!grants.contains(ROLE_PLACEHOLDER));
@@ -319,6 +337,13 @@ mod tests {
             assert!(sql.contains("LOGIN PASSWORD 'pa''ss'"));
             assert!(sql.contains("NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"));
             assert!(sql.contains("GRANT USAGE ON SCHEMA public TO socialname_app;"));
+            // Reprovisioning must stay inside what a non-superuser owner of a
+            // managed database is allowed to do.
+            assert!(!sql.contains(
+                "ALTER ROLE socialname_app\n    LOGIN PASSWORD 'pa''ss'\n    NOSUPERUSER"
+            ));
+            assert!(sql.contains("rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole"));
+            assert!(sql.contains("holds an elevated attribute"));
         }
     }
 
