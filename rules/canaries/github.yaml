@@ -1,0 +1,42 @@
+schema: socialname.dev/canary-manifest/v1
+site_id: github
+issued_at: 2026-07-29T14:59:00Z
+expires_at: 2027-01-25T00:00:00Z
+# Every control is an organization or a platform-owned account. Personal
+# accounts are deliberately excluded: a rename or deletion there would fail the
+# canary and quarantine a rule that is in fact healthy.
+#
+# Each username below was verified by a real probe through the production
+# engine on 2026-07-29, which returned found with e4_structured_identity.
+positive:
+  - id: platform-official-github
+    username: github
+    kind: platform_official
+    reviewed_at: 2026-07-29T14:52:00Z
+    evidence_url: https://github.com/github
+  - id: platform-official-octocat
+    username: octocat
+    kind: platform_official
+    reviewed_at: 2026-07-29T14:52:00Z
+    evidence_url: https://github.com/octocat
+  - id: long-lived-microsoft
+    username: microsoft
+    kind: long_lived_public
+    reviewed_at: 2026-07-29T14:58:00Z
+    evidence_url: https://github.com/microsoft
+  - id: long-lived-apache
+    username: apache
+    kind: long_lived_public
+    reviewed_at: 2026-07-29T14:58:00Z
+    evidence_url: https://github.com/apache
+  - id: long-lived-kubernetes
+    username: kubernetes
+    kind: long_lived_public
+    reviewed_at: 2026-07-29T14:58:00Z
+    evidence_url: https://github.com/kubernetes
+negative:
+  generator:
+    alphabet: lowercase_alnum
+    random_length: 13
+    count: 5
+    attempts_per_candidate: 3

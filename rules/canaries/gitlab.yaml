@@ -1,0 +1,45 @@
+schema: socialname.dev/canary-manifest/v1
+site_id: gitlab
+issued_at: 2026-07-29T14:59:00Z
+expires_at: 2027-01-25T00:00:00Z
+# GitLab keeps groups and users in separate namespaces and this rule probes the
+# user namespace, so the platform-official account is joined by long-lived
+# public accounts of the company's founders and long-tenured staff rather than
+# by organizations. These carry more rename risk than GitHub's organizations,
+# which is recorded here so a future canary failure is read as a control
+# problem first rather than as site drift.
+#
+# Each username below was verified by a real probe through the production
+# engine on 2026-07-29, which returned found with e4_structured_identity.
+positive:
+  - id: platform-official-gitlab
+    username: gitlab
+    kind: platform_official
+    reviewed_at: 2026-07-29T14:55:00Z
+    evidence_url: https://gitlab.com/gitlab
+  - id: long-lived-sytses
+    username: sytses
+    kind: long_lived_public
+    reviewed_at: 2026-07-29T14:55:00Z
+    evidence_url: https://gitlab.com/sytses
+  - id: long-lived-dzaporozhets
+    username: dzaporozhets
+    kind: long_lived_public
+    reviewed_at: 2026-07-29T14:55:00Z
+    evidence_url: https://gitlab.com/dzaporozhets
+  - id: long-lived-andrewn
+    username: andrewn
+    kind: long_lived_public
+    reviewed_at: 2026-07-29T14:55:00Z
+    evidence_url: https://gitlab.com/andrewn
+  - id: long-lived-jobv
+    username: jobv
+    kind: long_lived_public
+    reviewed_at: 2026-07-29T14:55:00Z
+    evidence_url: https://gitlab.com/jobv
+negative:
+  generator:
+    alphabet: lowercase_alnum
+    random_length: 13
+    count: 5
+    attempts_per_candidate: 3
