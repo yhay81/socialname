@@ -4064,6 +4064,7 @@ dependencies = [
  "chrono",
  "clap",
  "hex",
+ "rand 0.10.2",
  "serde",
  "serde_json",
  "socialname-app-core",
@@ -4078,6 +4079,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

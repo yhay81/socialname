@@ -17,6 +17,7 @@ anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
 hex.workspace = true
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 socialname-app-core = { path = "../socialname-app-core" }
@@ -31,6 +32,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -10,6 +11,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use rand::RngExt;
 use serde::de::DeserializeOwned;
 use socialname_canary::{
     CanaryAggregationPolicy, CanaryHealthAssessor, CanaryManifestCompiler, CanaryReportAggregator,
@@ -17,15 +19,17 @@ use socialname_canary::{
     CanaryRunCompletion, CanaryRunner, CanaryShadowBuilder, CanaryShadowDisposition,
     CanaryShadowPair, CanaryShadowPolicy, CanaryShadowValidator, DeclaredVantage,
     PromotionBuildRequest, PromotionBuilder, PromotionEnvelope, PromotionSigningKey,
-    PromotionTrustPolicy, PromotionVerifier, RulePackMetadataBuildRequest, RulePackMetadataBuilder,
-    RulePackMetadataEnvelope, RulePackMetadataSigningKey, RulePackMetadataVerifier,
-    RulePackRolloutStage, RulePackTrustV1, ValidatedCanaryReport, plan_negative_generator,
+    PromotionTrustPolicy, PromotionVerifier, RULE_PACK_TRUST_V1, RulePackMetadataBuildRequest,
+    RulePackMetadataBuilder, RulePackMetadataEnvelope, RulePackMetadataSigningKey,
+    RulePackMetadataVerifier, RulePackRolloutStage, RulePackTrustV1, ValidatedCanaryReport,
+    plan_negative_generator,
 };
 use socialname_domain::{RuleHealthPolicy, RuleHealthRecord};
 use socialname_rule_compiler::RuleCompiler;
 use socialname_testkit::verify_fixtures;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
+use zeroize::Zeroize;
 
 mod search_command;
 
@@ -82,6 +86,33 @@ enum RulesCommand {
     TrustId {
         #[arg(long)]
         trust_file: PathBuf,
+    },
+    /// Generate one rule-pack signing key and its public trust root.
+    ///
+    /// The private seed is written to a new file and is never printed, so it
+    /// cannot end up in a shell history or a terminal transcript. Only the
+    /// public half is reported. Refusing to overwrite an existing seed file
+    /// means this command can never silently destroy the key an already
+    /// published trust root commits to.
+    GenerateSigningKey {
+        /// Stable label recorded in the trust root and in every signature.
+        #[arg(long)]
+        key_id: String,
+        /// Destination for the 32-byte seed as 64 hexadecimal characters.
+        #[arg(long)]
+        seed_file: PathBuf,
+        /// Destination for the public `rule-pack-trust/v1` document.
+        #[arg(long)]
+        trust_file: PathBuf,
+        /// Signatures required to accept metadata; a solo operator uses 1.
+        #[arg(long, default_value_t = 1)]
+        threshold: u16,
+        /// Trust generation, advanced by one on every rotation.
+        #[arg(long, default_value_t = 1)]
+        generation: u64,
+        /// When the trust root stops being accepted.
+        #[arg(long)]
+        expires_at: DateTime<Utc>,
     },
     /// Sign one exact pack, embedded site promotions, rollout stage, and trust generation.
     SignMetadata {
@@ -1185,6 +1216,62 @@ fn run_rules(arguments: RulesArgs) -> Result<()> {
                 load_bounded_json(&trust_file, MAX_RULE_PACK_TRUST_BYTES, "rule-pack trust")?;
             trust.validate_at(Utc::now().timestamp_millis())?;
             println!("{}", trust.content_id()?);
+        }
+        RulesCommand::GenerateSigningKey {
+            key_id,
+            seed_file,
+            trust_file,
+            threshold,
+            generation,
+            expires_at,
+        } => {
+            if threshold == 0 {
+                bail!("threshold must require at least one signature");
+            }
+            if threshold > 1 {
+                bail!(
+                    "this command issues one key, so a threshold above 1 could never be \
+                     satisfied; generate each key separately and assemble the trust root"
+                );
+            }
+            if expires_at <= Utc::now() {
+                bail!("expires-at must be in the future");
+            }
+
+            // The operating system CSPRNG backs `rand::rng()`, and this is
+            // the only randomness in the ceremony.
+            let mut seed: [u8; 32] = rand::rng().random();
+            let signing_key = RulePackMetadataSigningKey::from_seed(key_id.clone(), seed)?;
+
+            // Written before anything else and only if absent: an existing
+            // seed may already be committed to by a published trust root.
+            let mut file = fs::File::create_new(&seed_file)
+                .with_context(|| format!("refusing to overwrite {seed_file:?}"))?;
+            file.write_all(hex::encode(seed).as_bytes())
+                .with_context(|| format!("failed to write {seed_file:?}"))?;
+            file.sync_all()
+                .with_context(|| format!("failed to flush {seed_file:?}"))?;
+            seed.zeroize();
+
+            let trust = RulePackTrustV1 {
+                schema: RULE_PACK_TRUST_V1.to_owned(),
+                generation,
+                threshold,
+                keys: BTreeMap::from([(key_id.clone(), signing_key.verifying_key_hex())]),
+                expires_at_unix_ms: expires_at.timestamp_millis(),
+            };
+            trust.validate_at(Utc::now().timestamp_millis())?;
+            fs::write(&trust_file, serde_json::to_string_pretty(&trust)?)
+                .with_context(|| format!("failed to write {trust_file:?}"))?;
+
+            // The seed itself is deliberately absent from this output.
+            println!("key_id={key_id}");
+            println!("public_key={}", signing_key.verifying_key_hex());
+            println!("trust_id={}", trust.content_id()?);
+            println!("generation={generation}");
+            println!("threshold={threshold}");
+            println!("seed_file={}", seed_file.display());
+            println!("trust_file={}", trust_file.display());
         }
         RulesCommand::SignMetadata {
             rules_dir,
