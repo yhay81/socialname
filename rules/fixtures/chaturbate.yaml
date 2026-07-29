@@ -1,0 +1,28 @@
+schema: socialname.dev/fixture/v1
+site_id: chaturbate
+cases:
+- id: declared-present
+  username: cute18cute
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://chaturbate.com/cute18cute
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 404
+    final_url: https://chaturbate.com/snv1probe9f4d2c7b6a1e0000000000
+- id: access-blocked
+  username: cute18cute
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://chaturbate.com/cute18cute

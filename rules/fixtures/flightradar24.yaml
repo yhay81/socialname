@@ -1,0 +1,28 @@
+schema: socialname.dev/fixture/v1
+site_id: flightradar24
+cases:
+- id: declared-present
+  username: jebbrooks
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://my.flightradar24.com/jebbrooks
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 404
+    final_url: https://my.flightradar24.com/snv1probe9f4d2c7b6a1
+- id: access-blocked
+  username: jebbrooks
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://my.flightradar24.com/jebbrooks

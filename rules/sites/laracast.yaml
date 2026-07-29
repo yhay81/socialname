@@ -1,0 +1,76 @@
+schema: socialname.dev/site/v1
+id: laracast
+name: Laracast
+homepage: https://laracasts.com/
+profile_url: https://laracasts.com/@{username:path}
+namespace: person
+username:
+  pattern: ^[a-zA-Z0-9_-]{3,}$
+  case_sensitive: false
+  normalization: preserve
+probes:
+- id: profile
+  http:
+    method: GET
+    url: https://laracasts.com/@{username:path}
+    redirects:
+      mode: same_site
+      max_hops: 2
+    timeout:
+      dns_ms: 1500
+      connect_ms: 2000
+      first_byte_ms: 4000
+      total_ms: 6000
+    allowed_hosts:
+    - laracasts.com
+    headers: {}
+    body: null
+    expected_body: none
+    limits:
+      header_bytes: 32768
+      compressed_bytes: 2097152
+      decompressed_bytes: 4194304
+      inspected_bytes: 262144
+    transport_profile: browser_like
+plan:
+  type: single
+  probe: profile
+classification:
+  blocked:
+    any:
+    - status:
+        probe: profile
+        in:
+        - 403
+        - 429
+    - transport:
+        probe: profile
+        in:
+        - blocked
+        - rate_limited
+        - timeout
+        - dns
+        - connect
+        - tls
+        - redirect_rejected
+        - response_too_large
+        - decode
+  found:
+    status:
+      probe: profile
+      in:
+      - 200
+  not_found:
+    status:
+      probe: profile
+      in:
+      - 404
+  otherwise: inconclusive
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags:
+  - imported
+  - check-status-code
+  adult: false
+  notes: Imported from the Sherlock project (MIT) using its status_code check. Discovery-only until the live canary gate passes.

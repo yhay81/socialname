@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: signal
+cases:
+- id: declared-present
+  username: jlund
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://community.signalusers.org/u/jlund
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://community.signalusers.org/u/snv1probe9f4d2c7b6a1e0000000000
+    body: Oops! That page doesn’t exist or is private.
+- id: access-blocked
+  username: jlund
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://community.signalusers.org/u/jlund

@@ -1,0 +1,28 @@
+schema: socialname.dev/fixture/v1
+site_id: snapchat
+cases:
+- id: declared-present
+  username: teamsnapchat
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://www.snapchat.com/add/teamsnapchat
+- id: declared-absent
+  username: snvprobezqjxkvwmbtlfdghyrcpaeo
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 404
+    final_url: https://www.snapchat.com/add/snvprobezqjxkvwmbtlfdghyrcpaeo
+- id: access-blocked
+  username: teamsnapchat
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://www.snapchat.com/add/teamsnapchat

@@ -1,0 +1,28 @@
+schema: socialname.dev/fixture/v1
+site_id: irc-galleria
+cases:
+- id: declared-present
+  username: appas
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://irc-galleria.net/user/appas
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://irc-galleria.net/users/search?username={}
+- id: access-blocked
+  username: appas
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://irc-galleria.net/user/appas

@@ -256,13 +256,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn representative_pack_fixtures_pass() {
+    fn every_packed_rule_is_proven_by_fixtures() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let rules = RuleCompiler::new()
             .load_directory(root.join("rules/sites"))
             .unwrap();
         let report = verify_fixtures(&rules, root.join("rules/fixtures")).unwrap();
-        assert_eq!(report.sites, 10);
-        assert!(report.cases >= 30);
+        // Stated as a relation rather than a count so growing the pack cannot
+        // silently leave a rule unproven: every rule needs a fixture, and
+        // every fixture needs its found, not-found, and inconclusive cases.
+        assert_eq!(report.sites, rules.len());
+        assert!(report.cases >= report.sites * 3);
     }
 }

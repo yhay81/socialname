@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: yandexmusic
+cases:
+- id: declared-present
+  username: ya.playlist
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://music.yandex/users/ya.playlist/playlists
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://music.yandex/users/snv1probe9f4d2c7b6a1e0000000000/playlists
+    body: Ошибка 404
+- id: access-blocked
+  username: ya.playlist
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://music.yandex/users/ya.playlist/playlists

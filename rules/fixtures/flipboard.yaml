@@ -1,0 +1,28 @@
+schema: socialname.dev/fixture/v1
+site_id: flipboard
+cases:
+- id: declared-present
+  username: blue
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://flipboard.com/@blue
+- id: declared-absent
+  username: snv1probe9f4d2c
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 404
+    final_url: https://flipboard.com/@snv1probe9f4d2c
+- id: access-blocked
+  username: blue
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://flipboard.com/@blue

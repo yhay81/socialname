@@ -98,6 +98,8 @@ struct SherlockSite {
     headers: BTreeMap<String, String>,
     #[serde(rename = "isNSFW", default)]
     is_nsfw: bool,
+    #[serde(rename = "username_claimed")]
+    username_claimed: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -122,6 +124,7 @@ struct Report {
     relaxed_username: Vec<String>,
     dropped_headers: Vec<String>,
     nsfw: usize,
+    pruned: usize,
     dry_run: bool,
 }
 
@@ -137,6 +140,7 @@ impl Report {
         println!("relaxed_username_pattern={}", self.relaxed_username.len());
         println!("dropped_unsafe_headers={}", self.dropped_headers.len());
         println!("nsfw_tagged={}", self.nsfw);
+        println!("pruned_stale={}", self.pruned);
         for (site, reason) in &self.skipped_unsupported {
             println!("unsupported site={site} reason={reason}");
         }
@@ -167,6 +171,7 @@ fn run(arguments: Vec<OsString>) -> Result<Report, String> {
         ..Report::default()
     };
     let mut used_ids = curated.clone();
+    let mut written_ids = BTreeSet::new();
 
     for (name, raw_site) in sites {
         if name.starts_with('$') {
@@ -203,18 +208,40 @@ fn run(arguments: Vec<OsString>) -> Result<Report, String> {
 
         match build_rule(&id, &name, &site, &mut report) {
             Ok(rule) => {
+                // A rule without a fixture cannot pass the repository gate, so
+                // both artifacts are emitted together or neither is.
+                let fixture = match build_fixture(&id, &rule, &site) {
+                    Ok(fixture) => fixture,
+                    Err(SkipReason::Unsupported(reason)) => {
+                        report.skipped_unsupported.push((name, reason));
+                        continue;
+                    }
+                    Err(SkipReason::Insecure) => {
+                        report.skipped_insecure.push(name);
+                        continue;
+                    }
+                };
                 let yaml = serde_yaml_ng::to_string(&rule)
                     .map_err(|error| format!("cannot serialize {id}: {error}"))?;
                 let yaml = quote_unsafe_scalars(&yaml);
+                let fixture_yaml = serde_yaml_ng::to_string(&fixture)
+                    .map_err(|error| format!("cannot serialize fixture {id}: {error}"))?;
+                let fixture_yaml = quote_unsafe_scalars(&fixture_yaml);
                 if !options.dry_run {
                     let path = options.output_directory.join(format!("{id}.yaml"));
                     fs::write(&path, yaml)
                         .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+                    if let Some(fixture_directory) = &options.fixture_directory {
+                        let path = fixture_directory.join(format!("{id}.yaml"));
+                        fs::write(&path, fixture_yaml)
+                            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+                    }
                 }
                 if site.is_nsfw {
                     report.nsfw += 1;
                 }
-                used_ids.insert(id);
+                used_ids.insert(id.clone());
+                written_ids.insert(id);
                 report.written += 1;
             }
             Err(SkipReason::Insecure) => report.skipped_insecure.push(name),
@@ -224,13 +251,267 @@ fn run(arguments: Vec<OsString>) -> Result<Report, String> {
         }
     }
 
+    // A site upstream dropped, or one this run can no longer represent, must
+    // not linger as a stale rule with no fixture behind it.
+    if !options.dry_run {
+        report.pruned = prune_stale_output(
+            &options.output_directory,
+            options.fixture_directory.as_deref(),
+            &written_ids,
+            &curated,
+        )?;
+    }
+
     Ok(report)
+}
+
+/// Deletes importer-generated rules that this run did not produce, together
+/// with their fixtures. Hand-authored rules are never touched.
+fn prune_stale_output(
+    output_directory: &Path,
+    fixture_directory: Option<&Path>,
+    written_ids: &BTreeSet<String>,
+    curated: &BTreeSet<String>,
+) -> Result<usize, String> {
+    let entries = fs::read_dir(output_directory)
+        .map_err(|error| format!("cannot read {}: {error}", output_directory.display()))?;
+    let mut pruned = 0;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cannot read directory entry: {error}"))?;
+        let path = entry.path();
+        if !path
+            .extension()
+            .is_some_and(|extension| extension == "yaml")
+        {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if written_ids.contains(stem) || curated.contains(stem) {
+            continue;
+        }
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        if !is_importer_output(&content) {
+            continue;
+        }
+        fs::remove_file(&path)
+            .map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
+        if let Some(fixture_directory) = fixture_directory {
+            let fixture = fixture_directory.join(format!("{stem}.yaml"));
+            if fixture.exists() {
+                fs::remove_file(&fixture)
+                    .map_err(|error| format!("cannot remove {}: {error}", fixture.display()))?;
+            }
+        }
+        pruned += 1;
+    }
+    Ok(pruned)
 }
 
 #[derive(Debug)]
 enum SkipReason {
     Insecure,
     Unsupported(String),
+}
+
+/// A `socialname.dev/fixture/v1` document.
+///
+/// These cases are **synthetic**: they are derived from the upstream check the
+/// rule was built from, not recorded from a live site. They therefore prove
+/// that the compiled classification tree is coherent — that `found`,
+/// `not_found`, and the blocked path are each reachable and mutually
+/// exclusive — and deliberately prove nothing about how the site actually
+/// behaves. Establishing that remains the live canary gate's job.
+#[derive(Debug, serde::Serialize)]
+struct FixtureFile {
+    schema: String,
+    site_id: String,
+    cases: Vec<FixtureCase>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct FixtureCase {
+    id: String,
+    username: String,
+    expected: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_reason: Option<&'static str>,
+    responses: Vec<FixtureResponse>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct FixtureResponse {
+    probe_id: String,
+    transport: &'static str,
+    status: u16,
+    final_url: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    body: String,
+}
+
+const FIXTURE_V1: &str = "socialname.dev/fixture/v1";
+/// A body for the `found` case of a message check: it must not contain the
+/// upstream absence marker.
+const PRESENT_BODY: &str = "<html><body>socialname fixture: account page</body></html>";
+const NEGATIVE_BASES: [&str; 2] = [
+    "snv1probe9f4d2c7b6a1e0000000000",
+    "snvprobezqjxkvwmbtlfdghyrcpaeo",
+];
+
+fn build_fixture(
+    id: &str,
+    rule: &SiteRuleSource,
+    site: &SherlockSite,
+) -> Result<FixtureFile, SkipReason> {
+    let pattern = RegexBuilder::new(&rule.username.pattern)
+        .size_limit(2 * 1_024 * 1_024)
+        .build()
+        .map_err(|error| SkipReason::Unsupported(format!("username pattern: {error}")))?;
+    let probe = &rule.probes[0];
+    let present_username = acceptable_username(&pattern, site.username_claimed.as_deref());
+    let absent_username = acceptable_username(&pattern, None);
+
+    let present_url = render(&probe.http.url, &present_username);
+    let absent_url = render(&probe.http.url, &absent_username);
+
+    let (present, absent) = match site.error_type.as_str() {
+        "status_code" => {
+            let statuses = site
+                .error_code
+                .as_ref()
+                .map_or_else(|| vec![404], clone_one_or_many);
+            // A rule whose absence status is also its blocked status could
+            // never produce `not_found`; refuse it instead of emitting a
+            // fixture that contradicts the rule.
+            let absent_status = statuses
+                .into_iter()
+                .find(|status| !BLOCKED_STATUSES.contains(status))
+                .ok_or_else(|| {
+                    SkipReason::Unsupported(
+                        "absence status collides with the blocked statuses".to_owned(),
+                    )
+                })?;
+            (
+                (200, present_url.clone(), String::new()),
+                (absent_status, absent_url.clone(), String::new()),
+            )
+        }
+        "message" => {
+            let messages = site
+                .error_message
+                .as_ref()
+                .map(clone_one_or_many)
+                .unwrap_or_default();
+            let marker = messages.first().cloned().ok_or_else(|| {
+                SkipReason::Unsupported("message check without errorMsg".to_owned())
+            })?;
+            if messages
+                .iter()
+                .any(|message| PRESENT_BODY.contains(message.as_str()))
+            {
+                return Err(SkipReason::Unsupported(
+                    "absence marker also appears in a present page".to_owned(),
+                ));
+            }
+            (
+                (200, present_url.clone(), PRESENT_BODY.to_owned()),
+                (200, absent_url.clone(), marker),
+            )
+        }
+        "response_url" => {
+            let error_url = site.error_url.clone().ok_or_else(|| {
+                SkipReason::Unsupported("response_url check without errorUrl".to_owned())
+            })?;
+            if present_url.starts_with(&error_url) {
+                return Err(SkipReason::Unsupported(
+                    "present URL already matches the absence URL".to_owned(),
+                ));
+            }
+            (
+                (200, present_url.clone(), String::new()),
+                (200, error_url, String::new()),
+            )
+        }
+        other => {
+            return Err(SkipReason::Unsupported(format!(
+                "unsupported errorType {other}"
+            )));
+        }
+    };
+
+    let case = |case_id: &str,
+                username: &str,
+                expected: &'static str,
+                expected_reason: Option<&'static str>,
+                (status, final_url, body): (u16, String, String)| FixtureCase {
+        id: case_id.to_owned(),
+        username: username.to_owned(),
+        expected,
+        expected_reason,
+        responses: vec![FixtureResponse {
+            probe_id: probe.id.clone(),
+            transport: "completed",
+            status,
+            final_url,
+            body,
+        }],
+    };
+
+    Ok(FixtureFile {
+        schema: FIXTURE_V1.to_owned(),
+        site_id: id.to_owned(),
+        cases: vec![
+            case(
+                "declared-present",
+                &present_username,
+                "found",
+                None,
+                present,
+            ),
+            case(
+                "declared-absent",
+                &absent_username,
+                "not_found",
+                None,
+                absent,
+            ),
+            case(
+                "access-blocked",
+                &present_username,
+                "inconclusive",
+                Some("blocked"),
+                (403, present_url, String::new()),
+            ),
+        ],
+    })
+}
+
+/// Picks a username the rule's own policy accepts, preferring the upstream
+/// claimed account so the present case stays recognizable.
+fn acceptable_username(pattern: &regex::Regex, preferred: Option<&str>) -> String {
+    if let Some(preferred) = preferred
+        && pattern.is_match(preferred)
+    {
+        return preferred.to_owned();
+    }
+    for base in NEGATIVE_BASES {
+        for length in (1..=base.len()).rev() {
+            let candidate = &base[..length];
+            if pattern.is_match(candidate) {
+                return candidate.to_owned();
+            }
+        }
+    }
+    NEGATIVE_BASES[0].to_owned()
+}
+
+fn render(template: &str, username: &str) -> String {
+    template
+        .replace("{username:path}", username)
+        .replace("{username:query}", username)
+        .replace("{username:subdomain}", username)
 }
 
 fn build_rule(
@@ -677,6 +958,7 @@ fn is_importer_output(rule: &str) -> bool {
 struct Options {
     input: PathBuf,
     output_directory: PathBuf,
+    fixture_directory: Option<PathBuf>,
     curated_directory: Option<PathBuf>,
     dry_run: bool,
 }
@@ -685,6 +967,7 @@ impl Options {
     fn parse(arguments: Vec<OsString>) -> Result<Self, String> {
         let mut input = None;
         let mut output_directory = None;
+        let mut fixture_directory = None;
         let mut curated_directory = None;
         let mut dry_run = false;
         let mut arguments = arguments.into_iter();
@@ -698,6 +981,10 @@ impl Options {
                     output_directory =
                         Some(PathBuf::from(next_value(&mut arguments, "--output-dir")?));
                 }
+                "--fixture-dir" => {
+                    fixture_directory =
+                        Some(PathBuf::from(next_value(&mut arguments, "--fixture-dir")?));
+                }
                 "--curated-dir" => {
                     curated_directory =
                         Some(PathBuf::from(next_value(&mut arguments, "--curated-dir")?));
@@ -709,6 +996,7 @@ impl Options {
         Ok(Self {
             input: input.ok_or("--input is required")?,
             output_directory: output_directory.ok_or("--output-dir is required")?,
+            fixture_directory,
             curated_directory,
             dry_run,
         })

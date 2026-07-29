@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: pocketstars
+cases:
+- id: declared-present
+  username: hacker
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://pocketstars.com/hacker
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://pocketstars.com/snv1probe9f4d2c7b6a1e0000000000
+    body: Join Your Favorite Adult Stars
+- id: access-blocked
+  username: hacker
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://pocketstars.com/hacker

@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: pcgamer
+cases:
+- id: declared-present
+  username: admin
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://forums.pcgamer.com/members/?username=admin
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://forums.pcgamer.com/members/?username=snv1probe9f4d2c7b6a1e0000000000
+    body: The specified member cannot be found. Please enter a member's entire name.
+- id: access-blocked
+  username: admin
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://forums.pcgamer.com/members/?username=admin

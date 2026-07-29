@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: nationstates-nation
+cases:
+- id: declared-present
+  username: the_holy_principality_of_saint_mark
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://nationstates.net/nation=the_holy_principality_of_saint_mark
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://nationstates.net/nation=snv1probe9f4d2c7b6a1e0000000000
+    body: Was this your nation? It may have ceased to exist due to inactivity, but can rise again!
+- id: access-blocked
+  username: the_holy_principality_of_saint_mark
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://nationstates.net/nation=the_holy_principality_of_saint_mark

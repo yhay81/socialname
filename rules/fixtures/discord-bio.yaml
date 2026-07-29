@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: discord-bio
+cases:
+- id: declared-present
+  username: robert
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://discords.com/api-v2/bio/details/robert
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://discords.com/api-v2/bio/details/snv1probe9f4d2c7b6a1e0000000000
+    body: <title>Server Error (500)</title>
+- id: access-blocked
+  username: robert
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://discords.com/api-v2/bio/details/robert

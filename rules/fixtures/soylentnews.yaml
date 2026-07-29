@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: soylentnews
+cases:
+- id: declared-present
+  username: adam
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://soylentnews.org/~adam
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://soylentnews.org/~snv1probe9f4d2c7b6a1e0000000000
+    body: The user you requested does not exist, no matter how much you wish this might be the case.
+- id: access-blocked
+  username: adam
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://soylentnews.org/~adam

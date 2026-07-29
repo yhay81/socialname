@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: valorant-forums
+cases:
+- id: declared-present
+  username: Wolves
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://valorantforums.com/u/Wolves
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://valorantforums.com/u/snv1probe9f4d2c7b6a1e0000000000
+    body: The page you requested could not be found.
+- id: access-blocked
+  username: Wolves
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://valorantforums.com/u/Wolves

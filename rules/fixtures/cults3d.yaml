@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: cults3d
+cases:
+- id: declared-present
+  username: brown
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://cults3d.com/en/users/brown/creations
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://cults3d.com/en/users/snv1probe9f4d2c7b6a1e0000000000/creations
+    body: Oh dear, this page is not working!
+- id: access-blocked
+  username: brown
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://cults3d.com/en/users/brown/creations

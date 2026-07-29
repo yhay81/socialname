@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: breachsta-rs-forum
+cases:
+- id: declared-present
+  username: Sleepybubble
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://breachsta.rs/profile/Sleepybubble
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://breachsta.rs/profile/snv1probe9f4d2c7b6a1e0000000000
+    body: <title>Error - BreachStars</title>
+- id: access-blocked
+  username: Sleepybubble
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://breachsta.rs/profile/Sleepybubble

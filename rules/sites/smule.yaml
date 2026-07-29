@@ -1,0 +1,82 @@
+schema: socialname.dev/site/v1
+id: smule
+name: Smule
+homepage: https://www.smule.com/
+profile_url: https://www.smule.com/{username:path}
+namespace: person
+username:
+  pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$
+  case_sensitive: false
+  normalization: preserve
+probes:
+- id: profile
+  http:
+    method: GET
+    url: https://www.smule.com/{username:path}
+    redirects:
+      mode: same_site
+      max_hops: 2
+    timeout:
+      dns_ms: 1500
+      connect_ms: 2000
+      first_byte_ms: 4000
+      total_ms: 6000
+    allowed_hosts:
+    - www.smule.com
+    headers: {}
+    body: null
+    expected_body: bounded_text
+    limits:
+      header_bytes: 32768
+      compressed_bytes: 2097152
+      decompressed_bytes: 4194304
+      inspected_bytes: 262144
+    transport_profile: browser_like
+plan:
+  type: single
+  probe: profile
+classification:
+  blocked:
+    any:
+    - status:
+        probe: profile
+        in:
+        - 403
+        - 429
+    - transport:
+        probe: profile
+        in:
+        - blocked
+        - rate_limited
+        - timeout
+        - dns
+        - connect
+        - tls
+        - redirect_rejected
+        - response_too_large
+        - decode
+  found:
+    all:
+    - status:
+        probe: profile
+        in:
+        - 200
+    - not:
+        body:
+          probe: profile
+          op: contains
+          value: Smule | Page Not Found (404)
+  not_found:
+    body:
+      probe: profile
+      op: contains
+      value: Smule | Page Not Found (404)
+  otherwise: inconclusive
+metadata:
+  enabled: false
+  enabled_regions: []
+  tags:
+  - imported
+  - check-message
+  adult: false
+  notes: Imported from the Sherlock project (MIT) using its message check. Discovery-only until the live canary gate passes.

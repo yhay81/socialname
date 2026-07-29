@@ -1,0 +1,28 @@
+schema: socialname.dev/fixture/v1
+site_id: soop
+cases:
+- id: declared-present
+  username: udkn
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://api-channel.sooplive.co.kr/v1.1/channel/udkn/station
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 404
+    final_url: https://api-channel.sooplive.co.kr/v1.1/channel/snv1probe9f4d2c7b6a1e0000000000/station
+- id: access-blocked
+  username: udkn
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://api-channel.sooplive.co.kr/v1.1/channel/udkn/station

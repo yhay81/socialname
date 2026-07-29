@@ -1,0 +1,30 @@
+schema: socialname.dev/fixture/v1
+site_id: furaffinity
+cases:
+- id: declared-present
+  username: jesus
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://www.furaffinity.net/user/jesus
+    body: '<html><body>socialname fixture: account page</body></html>'
+- id: declared-absent
+  username: snv1probe9f4d2c7b6a1e0000000000
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://www.furaffinity.net/user/snv1probe9f4d2c7b6a1e0000000000
+    body: This user cannot be found.
+- id: access-blocked
+  username: jesus
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://www.furaffinity.net/user/jesus
