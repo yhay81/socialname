@@ -88,7 +88,12 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
-    ctx.waitUntil(runAllSites(env, new Date(event.scheduledTime)));
+    console.log(`canary cron fired region=${env.CANARY_REGION}`);
+    ctx.waitUntil(
+      runAllSites(env, new Date(event.scheduledTime)).catch((error: unknown) => {
+        console.log(`canary cron failed: ${String(error)}`);
+      }),
+    );
   },
 };
 
@@ -122,8 +127,13 @@ async function runAllSites(env: Env, scheduledAt: Date): Promise<void> {
         stderr: error instanceof Error ? error.message : String(error),
       };
     }
+    const key = reportKey(site, region, scheduledAt);
+    console.log(
+      `canary run site=${site} region=${region} exit=${outcome.exitCode} ` +
+        `stdout_bytes=${outcome.stdout.length} key=${key}`,
+    );
     await env.REPORTS.put(
-      reportKey(site, region, scheduledAt),
+      key,
       JSON.stringify({
         site,
         region,
