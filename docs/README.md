@@ -186,6 +186,9 @@ access. Live canaries are intentionally a separate acceptance gate.
 - [First hosted deployment runbook](hosted-deployment.md) — provider
   evaluation, published image digests, and the ordered path to the external
   deployment evidence gates.
+- [First rule promotion runbook](promotion-runbook.md) — what the canary
+  fleet already produces, the ordered path from reports to an activated
+  rule, and why promotion is deliberately not automated.
 - [Data governance](data-governance.md) — consent grants, evidence capsules,
   retention, lineage, and deletion guarantees.
 - [Bounded Evidence Capsule v1](evidence-capsule-v1.md) — closed sanitized
