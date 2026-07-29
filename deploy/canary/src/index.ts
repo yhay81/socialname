@@ -84,15 +84,25 @@ interface CanaryOutcome {
 
 export default {
   async scheduled(
-    _event: ScheduledController,
+    event: ScheduledController,
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
-    ctx.waitUntil(runAllSites(env));
+    ctx.waitUntil(runAllSites(env, new Date(event.scheduledTime)));
   },
 };
 
-async function runAllSites(env: Env): Promise<void> {
+/// Reports are keyed by the scheduled slot rather than by the moment a run
+/// happened, because the cron fires at fixed hours. That makes every key
+/// derivable without listing the bucket, and makes a retry of the same slot
+/// replace its own report instead of accumulating near-duplicates.
+function reportKey(site: string, region: string, scheduledAt: Date): string {
+  const day = scheduledAt.toISOString().slice(0, 10);
+  const hour = String(scheduledAt.getUTCHours()).padStart(2, "0");
+  return `canary/${site}/${region}/${day}/${hour}.json`;
+}
+
+async function runAllSites(env: Env, scheduledAt: Date): Promise<void> {
   const region = env.CANARY_REGION;
   const sites = env.CANARY_SITES.split(",")
     .map((site) => site.trim())
@@ -112,12 +122,12 @@ async function runAllSites(env: Env): Promise<void> {
         stderr: error instanceof Error ? error.message : String(error),
       };
     }
-    const key = `canary/${site}/${region}/${startedAt}.json`;
     await env.REPORTS.put(
-      key,
+      reportKey(site, region, scheduledAt),
       JSON.stringify({
         site,
         region,
+        scheduled_at: scheduledAt.toISOString(),
         started_at: startedAt,
         exit_code: outcome.exitCode,
         report: parseReport(outcome.stdout),
