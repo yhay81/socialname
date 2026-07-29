@@ -531,9 +531,9 @@ fn build_rule(
     let profile_url = url_template(&site.url)?;
 
     let mut allowed_hosts = BTreeSet::new();
-    allowed_hosts.insert(host_of(probe_target)?);
+    allowed_hosts.extend(probe_hosts(probe_target)?);
     if let Some(error_url) = &site.error_url {
-        allowed_hosts.insert(host_of(error_url)?);
+        allowed_hosts.extend(probe_hosts(error_url)?);
     }
 
     let method = match site.request_method.as_deref() {
@@ -824,7 +824,33 @@ fn url_template(raw: &str) -> Result<String, SkipReason> {
     Ok(raw.replacen("{}", &format!("{{username:{context}}}"), 1))
 }
 
-fn host_of(raw: &str) -> Result<String, SkipReason> {
+/// The hosts a probe URL may reach.
+///
+/// When the username renders into the authority, the reachable set is every
+/// single-label child of the fixed parent, so the rule declares that parent as
+/// a wildcard. The parent itself is included because sites of this shape
+/// commonly redirect an absent account to their apex.
+fn probe_hosts(raw: &str) -> Result<Vec<String>, SkipReason> {
+    let authority = authority_of(raw)?;
+    let Some((_, parent)) = authority.split_once('.') else {
+        return Err(SkipReason::Unsupported(format!(
+            "cannot determine a fixed host from {raw}"
+        )));
+    };
+    if !authority.contains("{}") {
+        return Ok(vec![authority]);
+    }
+    // Only a leading placeholder label is representable: anything else would
+    // render a host the parent cannot bound.
+    if !authority.starts_with("{}.") || parent.contains("{}") {
+        return Err(SkipReason::Unsupported(format!(
+            "username is not a single leading subdomain label in {raw}"
+        )));
+    }
+    Ok(vec![format!("*.{parent}"), parent.to_owned()])
+}
+
+fn authority_of(raw: &str) -> Result<String, SkipReason> {
     let scheme_end = raw
         .find("://")
         .ok_or_else(|| SkipReason::Unsupported("URL has no scheme".to_owned()))?
@@ -838,9 +864,9 @@ fn host_of(raw: &str) -> Result<String, SkipReason> {
         .next_back()
         .unwrap_or_default();
     let host = authority.split(':').next().unwrap_or_default();
-    if host.is_empty() || host.contains("{}") {
+    if host.is_empty() {
         return Err(SkipReason::Unsupported(format!(
-            "cannot determine a fixed host from {raw}"
+            "cannot determine a host from {raw}"
         )));
     }
     Ok(host.to_ascii_lowercase())
@@ -1037,10 +1063,21 @@ mod tests {
     #[test]
     fn hosts_come_from_the_fixed_part_of_the_url() {
         assert_eq!(
-            host_of("https://Example.com:443/u/{}").unwrap(),
-            "example.com"
+            probe_hosts("https://Example.com:443/u/{}").unwrap(),
+            ["example.com"]
         );
-        assert!(host_of("https://{}.example.com/").is_err());
+    }
+
+    #[test]
+    fn a_username_subdomain_declares_its_parent_as_a_wildcard() {
+        assert_eq!(
+            probe_hosts("https://{}.example.com/").unwrap(),
+            ["*.example.com", "example.com"]
+        );
+        // A placeholder anywhere but the leading label would render hosts the
+        // declared parent cannot bound.
+        assert!(probe_hosts("https://a.{}.example.com/").is_err());
+        assert!(probe_hosts("https://user-{}.example.com/").is_err());
     }
 
     #[test]

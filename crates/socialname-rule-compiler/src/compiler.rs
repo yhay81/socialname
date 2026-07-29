@@ -1,9 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    net::IpAddr,
-    path::Path,
-};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use regex::{Regex, RegexBuilder};
 use schemars::schema_for;
@@ -364,12 +359,6 @@ fn validate_probe(probe: &socialname_rule_schema::ProbeSource, errors: &mut Vec<
         errors.push(CompileError::InvalidAllowedHost(String::new()));
     }
 
-    let allowed_hosts: BTreeSet<_> = probe
-        .http
-        .allowed_hosts
-        .iter()
-        .map(|host| host.to_ascii_lowercase())
-        .collect();
     for host in &probe.http.allowed_hosts {
         if !valid_allowed_host(host) {
             errors.push(CompileError::InvalidAllowedHost(host.clone()));
@@ -382,14 +371,17 @@ fn validate_probe(probe: &socialname_rule_schema::ProbeSource, errors: &mut Vec<
         .replace("{username:path}", "socialname-probe")
         .replace("{username:query}", "socialname-probe")
         .replace("{username:subdomain}", "socialname-probe");
-    if let Ok(url) = Url::parse(&scrubbed) {
-        if let Some(host) = url.host_str() {
-            if !allowed_hosts.contains(&host.to_ascii_lowercase()) {
-                errors.push(CompileError::HostNotAllowed {
-                    host: host.to_owned(),
-                });
-            }
-        }
+    if let Ok(url) = Url::parse(&scrubbed)
+        && let Some(host) = url.host_str()
+        && !probe
+            .http
+            .allowed_hosts
+            .iter()
+            .any(|allowed| host_matches_allowed(host, allowed))
+    {
+        errors.push(CompileError::HostNotAllowed {
+            host: host.to_owned(),
+        });
     }
 
     if !(0..=10).contains(&probe.http.redirects.max_hops) {
@@ -437,23 +429,9 @@ fn validate_probe(probe: &socialname_rule_schema::ProbeSource, errors: &mut Vec<
     }
 }
 
-fn valid_allowed_host(host: &str) -> bool {
-    let host = host.trim().to_ascii_lowercase();
-    !host.is_empty()
-        && host.len() <= 253
-        && host != "localhost"
-        && !host.ends_with(".localhost")
-        && host.parse::<IpAddr>().is_err()
-        && host.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
-}
+// Host form and matching live in the schema crate so the compiler and the
+// probe engine can never disagree about which destinations a rule permits.
+use socialname_rule_schema::{host_matches_allowed, valid_allowed_host};
 
 fn validate_plan(
     plan: &ProbePlanSource,

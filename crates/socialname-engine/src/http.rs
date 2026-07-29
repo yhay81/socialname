@@ -20,6 +20,7 @@ use reqwest::{
 use socialname_rule_compiler::{CompiledSiteRule, render_identity_template, render_url_template};
 use socialname_rule_schema::{
     HttpMethod, ProbeSource, RedirectMode, RequestBodySource, TransportOutcome,
+    host_matches_allowed,
 };
 use url::Url;
 
@@ -961,7 +962,7 @@ fn validate_destination(url: &Url, allowed_hosts: &[String]) -> Result<(), Trans
         .to_ascii_lowercase();
     if !allowed_hosts
         .iter()
-        .any(|allowed| allowed.eq_ignore_ascii_case(&host))
+        .any(|allowed| host_matches_allowed(&host, allowed))
     {
         return Err(TransportOutcome::RedirectRejected);
     }
@@ -1241,6 +1242,33 @@ mod tests {
             .unwrap_err(),
             TransportOutcome::RedirectRejected
         );
+    }
+
+    #[test]
+    fn wildcard_destinations_stay_within_one_label_of_the_declared_parent() {
+        let allowed = ["*.example.test".to_owned()];
+        assert!(
+            validate_destination(
+                &Url::parse("https://alice.example.test/profile").unwrap(),
+                &allowed
+            )
+            .is_ok()
+        );
+        for rejected in [
+            // The parent is a distinct host and is not declared here.
+            "https://example.test/profile",
+            // A rendered username is one DNS label, so a deeper name is
+            // beyond anything the rule's own template could reach.
+            "https://a.b.example.test/profile",
+            // Ends with the parent text but is a different registrable domain.
+            "https://evil-example.test/profile",
+        ] {
+            assert_eq!(
+                validate_destination(&Url::parse(rejected).unwrap(), &allowed).unwrap_err(),
+                TransportOutcome::RedirectRejected,
+                "{rejected} must be rejected"
+            );
+        }
     }
 
     #[test]

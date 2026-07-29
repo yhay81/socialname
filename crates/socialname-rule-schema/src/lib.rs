@@ -1,12 +1,72 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, net::IpAddr};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const SITE_RULE_V1: &str = "socialname.dev/site/v1";
+
+const MAXIMUM_HOST_BYTES: usize = 253;
+const MAXIMUM_LABEL_BYTES: usize = 63;
+
+/// Whether an `allowed_hosts` entry is well formed.
+///
+/// An entry is either a literal hostname or a single-level wildcard such as
+/// `*.example.com`, which exists so a rule whose URL template renders the
+/// username into a subdomain can declare the hosts it may reach. A wildcard
+/// must name a concrete parent of at least two labels, so an entry can never
+/// widen the allowlist to a whole public suffix.
+#[must_use]
+pub fn valid_allowed_host(entry: &str) -> bool {
+    let entry = entry.trim().to_ascii_lowercase();
+    let (wildcard, host) = match entry.strip_prefix("*.") {
+        Some(parent) => (true, parent),
+        None => (false, entry.as_str()),
+    };
+    if host.is_empty()
+        || host.len() > MAXIMUM_HOST_BYTES
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host.parse::<IpAddr>().is_ok()
+    {
+        return false;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if wildcard && labels.len() < 2 {
+        return false;
+    }
+    labels.iter().all(|label| valid_host_label(label))
+}
+
+/// Whether a concrete host is permitted by one `allowed_hosts` entry.
+///
+/// A wildcard matches exactly one additional DNS label and never the parent
+/// itself, which keeps a subdomain rule's reach identical to what its own URL
+/// template is able to render.
+#[must_use]
+pub fn host_matches_allowed(host: &str, allowed: &str) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    let allowed = allowed.trim().to_ascii_lowercase();
+    match allowed.strip_prefix("*.") {
+        None => host == allowed,
+        Some(parent) => host
+            .strip_suffix(parent)
+            .and_then(|label| label.strip_suffix('.'))
+            .is_some_and(valid_host_label),
+    }
+}
+
+fn valid_host_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= MAXIMUM_LABEL_BYTES
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -437,4 +497,62 @@ const fn default_decompressed_bytes() -> usize {
 
 const fn default_inspected_bytes() -> usize {
     256 * 1_024
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wildcard_entries_require_a_concrete_parent() {
+        for valid in ["example.com", "*.example.com", "*.co.uk.example.com"] {
+            assert!(valid_allowed_host(valid), "{valid} should be accepted");
+        }
+        for invalid in [
+            "",
+            "*.com",
+            "*",
+            "*.",
+            "localhost",
+            "*.localhost",
+            "127.0.0.1",
+            "*.127.0.0.1",
+            "exa mple.com",
+            "-example.com",
+            "example-.com",
+        ] {
+            assert!(!valid_allowed_host(invalid), "{invalid} should be rejected");
+        }
+    }
+
+    #[test]
+    fn a_wildcard_matches_exactly_one_label_and_never_the_parent() {
+        assert!(host_matches_allowed("alice.example.com", "*.example.com"));
+        assert!(host_matches_allowed("ALICE.EXAMPLE.COM", "*.example.com"));
+        for host in [
+            // The parent itself is a different host and must be listed
+            // separately to be reachable.
+            "example.com",
+            // Nested labels would let one rendered name reach a host the
+            // template could never produce.
+            "a.b.example.com",
+            // A suffix that merely ends with the parent text is a different
+            // registrable domain.
+            "notexample.com",
+            "evil-example.com",
+            ".example.com",
+        ] {
+            assert!(
+                !host_matches_allowed(host, "*.example.com"),
+                "{host} must not match *.example.com"
+            );
+        }
+    }
+
+    #[test]
+    fn literal_entries_match_exactly() {
+        assert!(host_matches_allowed("example.com", "example.com"));
+        assert!(host_matches_allowed("Example.COM", "example.com"));
+        assert!(!host_matches_allowed("alice.example.com", "example.com"));
+    }
 }

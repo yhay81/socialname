@@ -1,0 +1,28 @@
+schema: socialname.dev/fixture/v1
+site_id: smugmug
+cases:
+- id: declared-present
+  username: winchester
+  expected: found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 200
+    final_url: https://winchester.smugmug.com
+- id: declared-absent
+  username: snv
+  expected: not_found
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 404
+    final_url: https://snv.smugmug.com
+- id: access-blocked
+  username: winchester
+  expected: inconclusive
+  expected_reason: blocked
+  responses:
+  - probe_id: profile
+    transport: completed
+    status: 403
+    final_url: https://winchester.smugmug.com
