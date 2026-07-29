@@ -300,6 +300,29 @@ input::placeholder {
   color: var(--text-muted);
 }
 
+.tier-filter {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 10px 2px 0;
+  gap: 6px;
+}
+
+.tier-chip {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tier-chip--on {
+  border-color: transparent;
+  color: var(--bg);
+  background: var(--text-primary);
+}
+
 .selection-actions {
   display: flex;
   align-items: center;

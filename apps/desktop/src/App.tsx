@@ -25,6 +25,42 @@ const verdictOrder: Verdict[] = [
   "invalid_username",
 ];
 
+// How strong an answer a site's rule can produce at best. This is a property
+// of the check itself, so it is knowable before searching: a rule that reads
+// the site's own structured identity can say far more than one that only sees
+// a status code.
+type EvidenceTier = "structured" | "body" | "redirect" | "status";
+
+const tierLabels: Record<EvidenceTier, string> = {
+  structured: "Structured identity",
+  body: "Page content",
+  redirect: "Redirect target",
+  status: "Status code only",
+};
+
+const tierHints: Record<EvidenceTier, string> = {
+  structured: "The site's own response names the exact account.",
+  body: "A marker in the page text distinguishes present from absent.",
+  redirect: "Absence is inferred from where the site redirects.",
+  status: "Only the response status separates present from absent.",
+};
+
+const tierOrder: EvidenceTier[] = ["structured", "body", "redirect", "status"];
+
+function siteTier(site: SiteSummary): EvidenceTier {
+  if (site.tags.includes("check-message")) {
+    return "body";
+  }
+  if (site.tags.includes("check-response-url")) {
+    return "redirect";
+  }
+  if (site.tags.includes("check-status-code")) {
+    return "status";
+  }
+  // Hand-authored rules read a structured response rather than a generic page.
+  return "structured";
+}
+
 function createSearchId() {
   return crypto.randomUUID();
 }
@@ -35,6 +71,7 @@ function App() {
   const [selectedSites, setSelectedSites] = useState<Set<string>>(new Set());
   const [username, setUsername] = useState("");
   const [siteFilter, setSiteFilter] = useState("");
+  const [tierFilter, setTierFilter] = useState<EvidenceTier | "all">("all");
   const [allowDiscovery, setAllowDiscovery] = useState(false);
   const [source, setSource] = useState<SearchSource>("local");
   const [sync, setSync] = useState<SyncPolicy>("never");
@@ -62,15 +99,29 @@ function App() {
 
   const filteredSites = useMemo(() => {
     const query = siteFilter.trim().toLowerCase();
-    if (!query) {
-      return sites;
-    }
-    return sites.filter(
-      (site) =>
+    return sites.filter((site) => {
+      if (tierFilter !== "all" && siteTier(site) !== tierFilter) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      return (
         site.name.toLowerCase().includes(query) ||
-        site.id.toLowerCase().includes(query),
-    );
-  }, [siteFilter, sites]);
+        site.id.toLowerCase().includes(query)
+      );
+    });
+  }, [siteFilter, sites, tierFilter]);
+
+  const tierCounts = useMemo(() => {
+    const counts = Object.fromEntries(
+      tierOrder.map((tier) => [tier, 0]),
+    ) as Record<EvidenceTier, number>;
+    for (const site of sites) {
+      counts[siteTier(site)] += 1;
+    }
+    return counts;
+  }, [sites]);
 
   const verdictCounts = useMemo(() => {
     const counts = Object.fromEntries(
@@ -277,23 +328,62 @@ function App() {
             />
           </label>
 
+          <div className="tier-filter" role="group" aria-label="Evidence strength">
+            <button
+              aria-pressed={tierFilter === "all"}
+              className={tierFilter === "all" ? "tier-chip tier-chip--on" : "tier-chip"}
+              onClick={() => setTierFilter("all")}
+              type="button"
+            >
+              All {sites.length}
+            </button>
+            {tierOrder.map((tier) => (
+              <button
+                aria-pressed={tierFilter === tier}
+                className={tierFilter === tier ? "tier-chip tier-chip--on" : "tier-chip"}
+                key={tier}
+                onClick={() => setTierFilter(tier)}
+                title={tierHints[tier]}
+                type="button"
+              >
+                {tierLabels[tier]} {tierCounts[tier]}
+              </button>
+            ))}
+          </div>
+
           <div className="selection-actions">
+            {/* Selection follows what is on screen: with hundreds of sites,
+                acting on the hidden ones would be a surprise. */}
             <button
               disabled={running}
               onClick={() =>
-                setSelectedSites(new Set(sites.map((site) => site.id)))
+                setSelectedSites((current) => {
+                  const next = new Set(current);
+                  for (const site of filteredSites) {
+                    next.add(site.id);
+                  }
+                  return next;
+                })
               }
               type="button"
             >
-              Select all
+              Select shown
             </button>
             <span />
             <button
               disabled={running}
-              onClick={() => setSelectedSites(new Set())}
+              onClick={() =>
+                setSelectedSites((current) => {
+                  const next = new Set(current);
+                  for (const site of filteredSites) {
+                    next.delete(site.id);
+                  }
+                  return next;
+                })
+              }
               type="button"
             >
-              Clear
+              Clear shown
             </button>
           </div>
 
@@ -311,8 +401,8 @@ function App() {
                 </span>
                 <span className="site-option__name">
                   <strong>{site.name}</strong>
-                  <small>
-                    {site.enabled ? "Verified" : "Research rule"}
+                  <small title={tierHints[siteTier(site)]}>
+                    {tierLabels[siteTier(site)]}
                   </small>
                 </span>
                 <span
