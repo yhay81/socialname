@@ -13,7 +13,7 @@ use url::Url;
 
 use crate::{
     CANARY_MANIFEST_V1, CanaryManifestError, CanaryManifestErrors, CanaryManifestSource,
-    NegativeAlphabet,
+    NegativeAlphabet, NegativeCanaryGeneratorSource,
 };
 
 const MAX_SOURCE_BYTES: usize = 64 * 1_024;
@@ -257,11 +257,7 @@ fn validate_negative_generator(
     errors: &mut Vec<CanaryManifestError>,
 ) {
     let generator = &source.negative.generator;
-    let minimum_random_length = match generator.alphabet {
-        NegativeAlphabet::LowercaseAlnum => 13,
-        NegativeAlphabet::Lowercase => 14,
-    };
-    if generator.random_length < minimum_random_length
+    if generator.random_length < minimum_random_length(generator.alphabet)
         || !(MIN_NEGATIVE_CANARIES..=MAX_NEGATIVE_CANARIES).contains(&generator.count)
         || !(1..=MAX_ATTEMPTS_PER_CANDIDATE).contains(&generator.attempts_per_candidate)
     {
@@ -269,18 +265,12 @@ fn validate_negative_generator(
         return;
     }
 
-    let alphabet_probe = match generator.alphabet {
-        NegativeAlphabet::LowercaseAlnum => "a1b2c3d4e5f6g7h8i9j0",
-        NegativeAlphabet::Lowercase => "abcdefghijklmnopqrstuvwxyz",
-    };
-    let mut candidate: String = alphabet_probe
-        .chars()
-        .cycle()
-        .take(generator.random_length)
-        .collect();
-    candidate.push_str(&generator.suffix);
-    if candidate.len() > MAX_GENERATED_USERNAME_BYTES
-        || rule.normalize_username(&candidate).as_deref() != Some(candidate.as_str())
+    let candidate = negative_generator_probe(
+        generator.alphabet,
+        generator.random_length,
+        &generator.suffix,
+    );
+    if !generator_probe_is_usable(rule, &candidate)
         || source
             .positive
             .iter()
@@ -288,6 +278,69 @@ fn validate_negative_generator(
     {
         errors.push(CanaryManifestError::InvalidNegativeGenerator);
     }
+}
+
+/// The shortest random segment that keeps a generated negative overwhelmingly
+/// unlikely to name a real account.
+#[must_use]
+pub const fn minimum_random_length(alphabet: NegativeAlphabet) -> usize {
+    match alphabet {
+        NegativeAlphabet::LowercaseAlnum => 13,
+        NegativeAlphabet::Lowercase => 14,
+    }
+}
+
+/// The representative candidate a generator configuration would produce.
+///
+/// Validation and planning share this so a manifest can never be planned in a
+/// shape the validator would then reject.
+#[must_use]
+pub fn negative_generator_probe(
+    alphabet: NegativeAlphabet,
+    random_length: usize,
+    suffix: &str,
+) -> String {
+    let alphabet_probe = match alphabet {
+        NegativeAlphabet::LowercaseAlnum => "a1b2c3d4e5f6g7h8i9j0",
+        NegativeAlphabet::Lowercase => "abcdefghijklmnopqrstuvwxyz",
+    };
+    let mut candidate: String = alphabet_probe.chars().cycle().take(random_length).collect();
+    candidate.push_str(suffix);
+    candidate
+}
+
+/// Whether the site's own username policy accepts a generated candidate
+/// unchanged, which it must for the negative to reach the site at all.
+#[must_use]
+pub fn generator_probe_is_usable(rule: &CompiledSiteRule, candidate: &str) -> bool {
+    candidate.len() <= MAX_GENERATED_USERNAME_BYTES
+        && rule.normalize_username(candidate).as_deref() == Some(candidate)
+}
+
+/// Finds a negative-generator configuration this site's username policy
+/// accepts, or `None` when the policy cannot admit a candidate of the required
+/// entropy — which means the site cannot be canaried under this contract.
+#[must_use]
+pub fn plan_negative_generator(rule: &CompiledSiteRule) -> Option<NegativeCanaryGeneratorSource> {
+    for alphabet in [
+        NegativeAlphabet::LowercaseAlnum,
+        NegativeAlphabet::Lowercase,
+    ] {
+        let minimum = minimum_random_length(alphabet);
+        for random_length in minimum..=MAX_GENERATED_USERNAME_BYTES {
+            let candidate = negative_generator_probe(alphabet, random_length, "");
+            if generator_probe_is_usable(rule, &candidate) {
+                return Some(NegativeCanaryGeneratorSource {
+                    alphabet,
+                    random_length,
+                    suffix: String::new(),
+                    count: MIN_NEGATIVE_CANARIES,
+                    attempts_per_candidate: 3,
+                });
+            }
+        }
+    }
+    None
 }
 
 fn valid_canary_id(value: &str) -> bool {

@@ -19,7 +19,7 @@ use socialname_canary::{
     PromotionBuildRequest, PromotionBuilder, PromotionEnvelope, PromotionSigningKey,
     PromotionTrustPolicy, PromotionVerifier, RulePackMetadataBuildRequest, RulePackMetadataBuilder,
     RulePackMetadataEnvelope, RulePackMetadataSigningKey, RulePackMetadataVerifier,
-    RulePackRolloutStage, RulePackTrustV1, ValidatedCanaryReport,
+    RulePackRolloutStage, RulePackTrustV1, ValidatedCanaryReport, plan_negative_generator,
 };
 use socialname_domain::{RuleHealthPolicy, RuleHealthRecord};
 use socialname_rule_compiler::RuleCompiler;
@@ -165,6 +165,22 @@ enum CanaryCommand {
         rules_dir: PathBuf,
         #[arg(long, default_value = "rules/canaries")]
         manifests_dir: PathBuf,
+    },
+    /// Report which sites can hold a canary manifest at all.
+    ///
+    /// A generated negative must carry enough entropy to be almost certainly
+    /// unclaimed, so a site whose username policy cannot accept a candidate
+    /// that long can never satisfy the manifest contract. Knowing that before
+    /// any review effort is spent is the point of this command.
+    Plan {
+        #[arg(long, default_value = "rules/sites")]
+        rules_dir: PathBuf,
+        /// Restrict the report to one site ID.
+        #[arg(long)]
+        site: Option<String>,
+        /// List every site rather than only the summary and the blocked ones.
+        #[arg(long)]
+        verbose: bool,
     },
     /// Run one bounded live canary set through the production engine.
     Run {
@@ -431,6 +447,53 @@ async fn run_canaries(arguments: CanaryArgs) -> Result<()> {
                 "validated {} canary manifests; {} site rules remain discovery-only",
                 manifests.len(),
                 discovery_rules
+            );
+        }
+        CanaryCommand::Plan {
+            rules_dir,
+            site,
+            verbose,
+        } => {
+            let rules = RuleCompiler::new()
+                .load_directory(&rules_dir)
+                .map_err(format_compile_errors)?;
+            let selected: Vec<_> = rules
+                .iter()
+                .filter(|rule| site.as_ref().is_none_or(|id| &rule.source.id == id))
+                .collect();
+            if selected.is_empty() {
+                anyhow::bail!("no site rule matched");
+            }
+            let mut ready = 0;
+            let mut blocked = Vec::new();
+            for rule in &selected {
+                match plan_negative_generator(rule) {
+                    Some(generator) => {
+                        ready += 1;
+                        if verbose {
+                            println!(
+                                "site={} negative_alphabet={:?} random_length={} count={}",
+                                rule.source.id,
+                                generator.alphabet,
+                                generator.random_length,
+                                generator.count
+                            );
+                        }
+                    }
+                    None => blocked.push(rule.source.id.clone()),
+                }
+            }
+            for id in &blocked {
+                println!("blocked site={id} reason=username_policy_rejects_generated_negative");
+            }
+            println!(
+                "canary-ready {ready} of {} sites; {} blocked",
+                selected.len(),
+                blocked.len()
+            );
+            println!(
+                "each ready site still needs {} reviewed positive controls, which are external evidence",
+                5
             );
         }
         CanaryCommand::Run {

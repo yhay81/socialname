@@ -18,7 +18,10 @@ pub use aggregate::{
     CanaryAcceptanceIssue, CanaryAggregationError, CanaryAggregationPolicy, CanaryRegionAggregate,
     CanaryReportAggregator, EvaluatedCanaryAggregate,
 };
-pub use compiler::{CanaryManifestCompiler, CompiledCanaryManifest};
+pub use compiler::{
+    CanaryManifestCompiler, CompiledCanaryManifest, generator_probe_is_usable,
+    minimum_random_length, negative_generator_probe, plan_negative_generator,
+};
 pub use error::{CanaryManifestError, CanaryManifestErrors};
 pub use health::{CanaryHealthAssessor, CanaryHealthError};
 pub use promotion::{
