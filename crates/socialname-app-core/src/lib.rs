@@ -44,24 +44,9 @@ const MAX_USERNAME_BYTES: usize = 256;
 const MAX_CONCURRENT_PROBES: usize = 8;
 const MAX_REGION_CLASS_CHARS: usize = 64;
 
-const EMBEDDED_RULES: [(&str, &str); 10] = [
-    ("bluesky", include_str!("../../../rules/sites/bluesky.yaml")),
-    (
-        "docker-hub",
-        include_str!("../../../rules/sites/docker-hub.yaml"),
-    ),
-    ("github", include_str!("../../../rules/sites/github.yaml")),
-    ("gitlab", include_str!("../../../rules/sites/gitlab.yaml")),
-    (
-        "mastodon-social",
-        include_str!("../../../rules/sites/mastodon-social.yaml"),
-    ),
-    ("npm", include_str!("../../../rules/sites/npm.yaml")),
-    ("reddit", include_str!("../../../rules/sites/reddit.yaml")),
-    ("steam", include_str!("../../../rules/sites/steam.yaml")),
-    ("x", include_str!("../../../rules/sites/x.yaml")),
-    ("youtube", include_str!("../../../rules/sites/youtube.yaml")),
-];
+// The embedded pack is generated from `rules/sites` at build time so it
+// cannot drift from what the repository actually publishes.
+include!(concat!(env!("OUT_DIR"), "/embedded_rules.rs"));
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1509,9 +1494,25 @@ mod tests {
     }
 
     #[test]
-    fn embedded_pack_contains_the_representative_set() {
+    fn the_embedded_pack_is_the_published_pack() {
         let core = AppCore::from_embedded_rules().unwrap();
-        assert_eq!(core.sites().len(), 10);
+        // Stated as a relation, not a count: the applications must ship every
+        // rule the repository publishes, so adding one can never leave the
+        // desktop and CLI silently behind.
+        let published = std::fs::read_dir(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rules/sites"),
+        )
+        .expect("rules/sites is readable")
+        .filter(|entry| {
+            entry.as_ref().is_ok_and(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "yaml")
+            })
+        })
+        .count();
+        assert_eq!(core.sites().len(), published);
         assert_eq!(core.rule_pack_hash().len(), 64);
     }
 

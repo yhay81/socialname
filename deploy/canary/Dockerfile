@@ -17,6 +17,9 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps/desktop/src-tauri ./apps/desktop/src-tauri
+# The application core embeds the published pack at build time, so the rules
+# must be present before the binary is compiled, not only in the runtime stage.
+COPY rules ./rules
 RUN cargo build --locked --release -p socialname-cli --bin socialname
 
 FROM ${RUNTIME_IMAGE} AS runtime
