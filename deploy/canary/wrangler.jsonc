@@ -11,6 +11,8 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-28",
   "compatibility_flags": ["nodejs_compat"],
+  // No HTTP surface at all: the cron trigger is the only way in.
+  "workers_dev": false,
   "containers": [
     {
       "class_name": "CanaryRunnerContainer",
@@ -56,6 +58,7 @@
   "env": {
     "wnam": {
       "name": "socialname-canary-wnam",
+      "workers_dev": false,
       "containers": [
         {
           "class_name": "CanaryRunnerContainer",
@@ -92,6 +95,7 @@
     },
     "weur": {
       "name": "socialname-canary-weur",
+      "workers_dev": false,
       "containers": [
         {
           "class_name": "CanaryRunnerContainer",
