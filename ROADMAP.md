@@ -966,10 +966,41 @@ database configuration, and carries the same-origin console bundle. The
 ordered operator path that consumes these digests is
 [`docs/hosted-deployment.md`](docs/hosted-deployment.md).
 
-The deployment item remains unchecked: the registry digests above satisfy
-only the artifact half of external evidence item 1, and no approved regional
-vantage, managed database credential, production-trusted rule-pack metadata,
-egress policy, or live cancellation observation exists. The exact evidence
+First hosted deployment evidence (2026-07-29):
+
+```console
+# Managed PostgreSQL (Neon, aws-us-east-1), schema applied by the operator
+# commands through their documented environment contract:
+cargo run --locked -p socialname-server -- migrate
+# 65 tables and 50 forced-RLS policies created
+cargo run --locked -p socialname-server -- provision-roles
+# application_role=socialname_app worker_role=socialname_worker
+# rerun is idempotent; neither role holds superuser, bypassrls, createdb,
+# or createrole, and the application role is denied INSERT on tenants
+cd deploy/api && npx wrangler deploy
+# Deployed socialname-api triggers: api.socialname.net (custom domain)
+curl https://api.socialname.net/health/live    # 200 status=live
+curl https://api.socialname.net/health/ready   # 200 status=ready (database-backed)
+curl https://api.socialname.net/console        # 200
+curl https://api.socialname.net/v1/workspace   # 401 without a key
+curl -H 'Authorization: Bearer <key>' https://api.socialname.net/v1/workspace
+# 200 with the bootstrapped workspace and its exact scope set
+```
+
+The API server now runs as a scale-to-zero Cloudflare Container against a
+managed database, behind TLS on its own origin, serving the same-origin
+console. Deployment surfaced two defects that only a real managed database
+exposes: `ALTER ROLE` may set `SUPERUSER` and `BYPASSRLS` only as a
+superuser, which no managed owner is, and the provider rejects a password
+without mixed case or special characters.
+
+The deployment item nevertheless remains unchecked. What exists is one
+region's API surface, not the managed measurement fleet: no regional worker
+workload, approved canary vantage, production-trusted rule-pack metadata,
+egress policy, or live cancellation observation exists yet, so every one of
+the 460 site rules is still discovery-only and no managed probe can execute.
+The deployed database is PostgreSQL 17 while the integration gate runs
+PostgreSQL 18; closing that gap is tracked as its own next item. The exact evidence
 needed to close it is recorded in
 [`docs/regional-worker-deployment.md`](docs/regional-worker-deployment.md).
 Repository work can therefore continue independently with region-aware
