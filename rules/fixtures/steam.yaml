@@ -1,5 +1,8 @@
 schema: socialname.dev/fixture/v1
 site_id: steam
+# Response shapes measured against live profiles on 2026-07-30. A real
+# profile does not always echo its own vanity path, so the found case is
+# anchored on the profile data block the page always carries instead.
 cases:
   - id: canonical-profile-found
     username: valve
@@ -12,7 +15,19 @@ cases:
         final_url: https://steamcommunity.com/id/valve
         headers:
           content-type: text/html
-        body: '<html><link rel="canonical" href="https://steamcommunity.com/id/valve"><title>Valve</title></html>'
+        body: '<html><link rel="canonical" href="https://steamcommunity.com/id/valve"><title>Steam Community :: Valve</title></html>'
+  - id: profile-data-found-without-vanity-echo
+    username: gabelogannewell
+    expected: found
+    minimum_evidence: e2_differential_template
+    responses:
+      - probe_id: profile
+        transport: completed
+        status: 200
+        final_url: https://steamcommunity.com/id/gabelogannewell
+        headers:
+          content-type: text/html
+        body: '<html><title>Steam Community :: Rabscuttle</title><script>g_rgProfileData = {"steamid":"76561197960287930","personaname":"Rabscuttle"};</script></html>'
   - id: soft-not-found
     username: snv1probe9f4d2c7b6a1e0000000000
     expected: not_found

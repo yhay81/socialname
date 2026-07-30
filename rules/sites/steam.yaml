@@ -40,12 +40,28 @@ classification:
           in: [200]
       - body:
           probe: profile
-          op: contains_template
-          value: 'https://steamcommunity.com/id/{username}'
-      - body:
-          probe: profile
           op: not_contains
           value: The specified profile could not be found.
+      # Prefer the page echoing the requested vanity path, which ties the
+      # answer to the exact username. Fall back to the profile data block a
+      # resolved profile always carries: a real profile whose page does not
+      # echo its own vanity path used to read as inconclusive, and the
+      # weaker evidence class reports honestly that the body did not name
+      # the account itself.
+      - any:
+          - body:
+              probe: profile
+              op: contains_template
+              value: 'https://steamcommunity.com/id/{username}'
+          - all:
+              - body:
+                  probe: profile
+                  op: contains
+                  value: g_rgProfileData
+              - body:
+                  probe: profile
+                  op: regex
+                  value: '"steamid":"[0-9]{6,20}"'
   not_found:
     all:
       - status:
