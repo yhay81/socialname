@@ -1,0 +1,49 @@
+schema: socialname.dev/canary-manifest/v1
+site_id: mastodon-social
+issued_at: 2026-07-30T18:20:00Z
+expires_at: 2027-01-26T00:00:00Z
+# Controls are the instance's own account, its creator, and long-lived
+# project accounts. Mastodon usernames are case-insensitive and this rule
+# normalizes to lowercase, which was confirmed by probing a mixed-case form
+# and observing it reach the same account.
+#
+# Each username below was verified by a real probe through the production
+# engine on 2026-07-30, which returned found with e4_structured_identity.
+#
+# Latency here varies more than on the other canaried sites: probes that
+# eventually succeeded also produced occasional timeouts, which the engine
+# reports as inconclusive rather than as absence. If this site fails its
+# acceptance window on conclusive coverage rather than on precision, read
+# that as instance latency, not as rule drift.
+positive:
+  - id: platform-official-mastodon
+    username: mastodon
+    kind: platform_official
+    reviewed_at: 2026-07-30T18:15:00Z
+    evidence_url: https://mastodon.social/@mastodon
+  - id: long-lived-gargron
+    username: gargron
+    kind: long_lived_public
+    reviewed_at: 2026-07-30T18:15:00Z
+    evidence_url: https://mastodon.social/@Gargron
+  - id: long-lived-rustlang
+    username: rustlang
+    kind: long_lived_public
+    reviewed_at: 2026-07-30T18:15:00Z
+    evidence_url: https://mastodon.social/@rustlang
+  - id: long-lived-torproject
+    username: torproject
+    kind: long_lived_public
+    reviewed_at: 2026-07-30T18:15:00Z
+    evidence_url: https://mastodon.social/@torproject
+  - id: long-lived-thunderbird
+    username: thunderbird
+    kind: long_lived_public
+    reviewed_at: 2026-07-30T18:15:00Z
+    evidence_url: https://mastodon.social/@thunderbird
+negative:
+  generator:
+    alphabet: lowercase_alnum
+    random_length: 13
+    count: 5
+    attempts_per_candidate: 3

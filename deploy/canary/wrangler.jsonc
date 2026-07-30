@@ -50,7 +50,7 @@
   },
   "vars": {
     "CANARY_REGION": "enam",
-    "CANARY_SITES": "github,gitlab"
+    "CANARY_SITES": "github,gitlab,mastodon-social"
   },
   "observability": {
     "enabled": true
@@ -90,7 +90,7 @@
       },
       "vars": {
         "CANARY_REGION": "wnam",
-        "CANARY_SITES": "github,gitlab"
+        "CANARY_SITES": "github,gitlab,mastodon-social"
       }
     },
     "weur": {
@@ -127,7 +127,7 @@
       },
       "vars": {
         "CANARY_REGION": "weur",
-        "CANARY_SITES": "github,gitlab"
+        "CANARY_SITES": "github,gitlab,mastodon-social"
       }
     }
   }
