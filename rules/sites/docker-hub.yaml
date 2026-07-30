@@ -49,6 +49,14 @@ classification:
               pointer: /name
               op: equals_template
               template: '{username}'
+          # An organization namespace redirects to /v2/orgs/ and names itself
+          # with orgname, so matching only username or name reported a
+          # plainly taken namespace as inconclusive.
+          - json:
+              probe: api
+              pointer: /orgname
+              op: equals_template
+              template: '{username}'
   not_found:
     status:
       probe: api

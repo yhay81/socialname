@@ -1,18 +1,36 @@
 schema: socialname.dev/fixture/v1
 site_id: docker-hub
+# Response shapes below were measured against the live API on 2026-07-30, not
+# assumed. The earlier user case asserted a "name" field that Docker Hub does
+# not return for either namespace kind, which is why an organization read as
+# inconclusive in practice while this fixture still passed.
 cases:
-  - id: structured-found
-    username: docker
+  - id: structured-found-user
+    username: tianon
     expected: found
     minimum_evidence: e4_structured_identity
     responses:
       - probe_id: api
         transport: completed
         status: 200
-        final_url: https://hub.docker.com/v2/users/docker/
+        final_url: https://hub.docker.com/v2/users/tianon/
         headers:
           content-type: application/json
-        body: '{"name":"docker","type":"Organization"}'
+        body: '{"id":"22e64c4874c111e4bea40242ac11001b","username":"tianon","full_name":"Tianon Gravi","type":"User"}'
+  - id: structured-found-organization
+    username: docker
+    expected: found
+    minimum_evidence: e4_structured_identity
+    responses:
+      # An organization namespace redirects to /v2/orgs/ and names itself with
+      # orgname rather than username.
+      - probe_id: api
+        transport: completed
+        status: 200
+        final_url: https://hub.docker.com/v2/orgs/docker
+        headers:
+          content-type: application/json
+        body: '{"id":"57b4593474c011e4bea40242ac11001b","orgname":"docker","full_name":"Docker, Inc.","type":"Organization"}'
   - id: endpoint-not-found
     username: snv1probe9f4d2c7b6a1e00000000
     expected: not_found
@@ -24,7 +42,7 @@ cases:
         final_url: https://hub.docker.com/v2/users/snv1probe9f4d2c7b6a1e00000000/
         headers:
           content-type: application/json
-        body: '{"detail":"Not found."}'
+        body: '{"errinfo":{"username":"snv1probe9f4d2c7b6a1e00000000"},"message":"User not found"}'
   - id: access-blocked
     username: docker
     expected: inconclusive
