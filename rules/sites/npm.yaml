@@ -51,4 +51,13 @@ metadata:
   enabled: false
   enabled_regions: []
   tags: [developer, package-registry, html]
-  notes: Disabled pending continuous validation of the HTML identity marker.
+  notes: >-
+    Disabled because npm currently has no dependable public existence signal.
+    Measured 2026-07-30. The profile page this rule reads is bot-protected and
+    starts returning 403 after modest probing, which the rule correctly
+    reports as blocked rather than as absence. The registry user endpoint
+    requires authentication. The public search API answers a different
+    question: maintainer:<name> returns zero results for a real account that
+    has published nothing, so treating it as existence would report a live
+    account as absent. Promotion waits for a signal that distinguishes
+    account existence, not for a workaround that guesses.
