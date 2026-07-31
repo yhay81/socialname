@@ -46,7 +46,7 @@
     }
   ],
   "triggers": {
-    "crons": ["0 */8 * * *"]
+    "crons": ["0 */4 * * *"]
   },
   "vars": {
     "CANARY_REGION": "enam",
@@ -86,7 +86,7 @@
         }
       ],
       "triggers": {
-        "crons": ["20 */8 * * *"]
+        "crons": ["20 */4 * * *"]
       },
       "vars": {
         "CANARY_REGION": "wnam",
@@ -123,7 +123,7 @@
         }
       ],
       "triggers": {
-        "crons": ["40 */8 * * *"]
+        "crons": ["40 */4 * * *"]
       },
       "vars": {
         "CANARY_REGION": "weur",
