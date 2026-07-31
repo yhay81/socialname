@@ -10,6 +10,20 @@ use crate::{
 pub const CANARY_AGGREGATE_V1: &str = "socialname.dev/canary-aggregate/v1";
 
 const ACCEPTANCE_WINDOW_HOURS: i64 = 24;
+/// How far apart a region's first and last accepted run must be.
+///
+/// This is deliberately shorter than the window. Every run must also lie
+/// inside the window, so demanding a span equal to the window width can only
+/// be met by runs landing on both edges to the millisecond — a bar no real
+/// schedule clears, which would leave every rule permanently unpromotable.
+///
+/// The margin also has to absorb the schedule itself. A four-hourly cron
+/// reaches at most a twenty-hour span inside a twenty-four-hour window, so a
+/// twenty-hour requirement would fail on sub-second jitter alone and on any
+/// single skipped run at either end. Eighteen hours still demands that
+/// evidence cover three quarters of a day rather than cluster in one part of
+/// it, with room for the schedule to be imperfect.
+const MINIMUM_REGION_SPAN_HOURS: i64 = 18;
 const MIN_REQUIRED_REGIONS: usize = 3;
 const MAX_REQUIRED_REGIONS: usize = 32;
 const MIN_RUNS_PER_REGION: u32 = 3;
@@ -379,7 +393,7 @@ fn evaluate_region(
         });
     }
     let actual_span = aggregate.last_finished_at - aggregate.first_finished_at;
-    let required_span = TimeDelta::hours(ACCEPTANCE_WINDOW_HOURS);
+    let required_span = TimeDelta::hours(MINIMUM_REGION_SPAN_HOURS);
     if actual_span < required_span {
         issues.push(CanaryAcceptanceIssue::IntervalTooShort {
             region: region.to_owned(),
@@ -649,6 +663,67 @@ mod tests {
             && region.summary.precision.denominator == 30
             && region.summary.conclusive_coverage.numerator == 30
             && region.summary.conclusive_coverage.denominator == 30));
+    }
+
+    #[test]
+    fn accepts_a_real_schedule_whose_runs_cannot_touch_both_window_edges() {
+        // What a four-hourly cron actually produces: the first run lands a
+        // little after the window opens and the last a little before it
+        // closes, with sub-second jitter on each. Requiring a span equal to
+        // the window width rejected exactly this, which made every rule
+        // permanently unpromotable.
+        let reports: Vec<_> = REGIONS
+            .into_iter()
+            .flat_map(|region| {
+                [
+                    timestamp(25, 0, 0) + TimeDelta::milliseconds(1_490),
+                    timestamp(25, 12, 0) + TimeDelta::milliseconds(870),
+                    timestamp(25, 22, 0) + TimeDelta::milliseconds(120),
+                ]
+                .into_iter()
+                .map(move |finished_at| validated_report(region, finished_at, Quality::Healthy))
+            })
+            .collect();
+
+        let aggregate = CanaryReportAggregator::new()
+            .aggregate_at(&reports, &policy(), timestamp(26, 0, 1))
+            .unwrap()
+            .into_aggregate();
+
+        assert_eq!(aggregate.disposition, CanaryAcceptanceDisposition::Accepted);
+        assert!(aggregate.issues.is_empty());
+    }
+
+    #[test]
+    fn rejects_runs_that_cover_only_part_of_the_day() {
+        // Three runs inside the window still fail when they cluster: the
+        // point of the span is that evidence covers a day, not that three
+        // reports exist.
+        let reports: Vec<_> = REGIONS
+            .into_iter()
+            .flat_map(|region| {
+                [
+                    timestamp(25, 0, 0),
+                    timestamp(25, 6, 0),
+                    timestamp(25, 14, 0),
+                ]
+                .into_iter()
+                .map(move |finished_at| validated_report(region, finished_at, Quality::Healthy))
+            })
+            .collect();
+
+        let aggregate = CanaryReportAggregator::new()
+            .aggregate_at(&reports, &policy(), timestamp(26, 0, 1))
+            .unwrap()
+            .into_aggregate();
+
+        assert_eq!(aggregate.disposition, CanaryAcceptanceDisposition::Rejected);
+        assert!(
+            aggregate
+                .issues
+                .iter()
+                .any(|issue| matches!(issue, CanaryAcceptanceIssue::IntervalTooShort { .. }))
+        );
     }
 
     #[test]
