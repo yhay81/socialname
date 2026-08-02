@@ -28,6 +28,19 @@ issuing a new trust root and redistributing it to every worker; leaking it
 means anyone can promote any rule. It belongs in a password manager, not in
 the scratchpad directory it was generated into.
 
+## Live evidence checkpoint
+
+On 2026-08-02 at 08:56 UTC, the independently scheduled trigger completed in
+[GitHub Actions run 30740747603](https://github.com/yhay81/socialname/actions/runs/30740747603).
+R2 then contained one fresh successful report for each combination of the
+three reviewed sites and ENAM, WNAM, and WEUR. All nine reports completed 10
+of 10 cases with 100% precision, 100% conclusive coverage, zero conflicts,
+and p95 latency between 110 ms and 252 ms.
+
+This is the first checkpoint for a new acceptance window, not accepted
+evidence by itself. Every region still needs at least two more fresh runs and
+an 18-hour first-to-last completion span before aggregation can pass.
+
 ## Ordering
 
 Each step consumes the previous step's output, so they cannot be reordered.

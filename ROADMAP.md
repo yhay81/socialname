@@ -1045,6 +1045,15 @@ successful ENAM reports, two WNAM reports, and one WEUR report. Every successful
 report was complete with 10/10 conclusive precision, 10/10 conclusive coverage,
 and zero conflicts, but WNAM and WEUR still lack enough time-spanning reports;
 this records healthy partial evidence and does not satisfy the external gate.
+After deploying the independent trigger, workflow
+[`30740747603`](https://github.com/yhay81/socialname/actions/runs/30740747603)
+started a fresh run in all three regions at 2026-08-02 08:56 UTC. The exact R2
+audit found nine successful reports: `github`, `gitlab`, and
+`mastodon-social` in ENAM, WNAM, and WEUR. Each completed 10/10 cases with
+10/10 precision, 10/10 conclusive coverage, zero conflicts, and p95 latency
+between 110 ms and 252 ms. This starts a new eligible window but remains one
+run per region with no 18-hour span, so it cannot be aggregated as accepted
+evidence yet.
 `.github/workflows/canary-fleet.yml` now type-checks and dry-runs all three
 regional configurations before deploying them from `main`; it has no
 aggregation, signing, promotion, or rule-activation authority.
