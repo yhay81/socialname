@@ -1,38 +1,44 @@
 ---
 name: Bug report
-about: Report a bug in Sherlock's functionality
-title: ''
-labels: bug 
-assignees: ''
-
+about: Report a reproducible SocialName defect
+title: ""
+labels: bug
+assignees: ""
 ---
 
-<!--
+## Before submitting
 
-######################################################################
-  WARNING!
-  IGNORING THE FOLLOWING TEMPLATE WILL RESULT IN ISSUE CLOSED AS INCOMPLETE
-######################################################################
+- [ ] I checked open and closed issues for the same problem.
+- [ ] I reproduced this with the latest release or current `main`.
+- [ ] This is not a security vulnerability or a false classification report.
+- [ ] I removed usernames, credentials, cookies, full response bodies, and
+      unrelated personal data.
 
--->
+Security vulnerabilities belong in
+[GitHub private vulnerability reporting](https://github.com/yhay81/socialname/security/advisories/new).
+Use the dedicated false-positive or false-negative template for a site
+classification problem.
+
+## Environment
+
+- SocialName version or commit:
+- Surface: CLI / desktop / API / console / worker
+- Operating system and version:
+- Execution mode: local / cache / remote / hybrid
+
+## Reproduction
+
+1.
+2.
+3.
+
+## Expected behavior
 
 
-## Checklist
-<!--
-Put x into all boxes (like this [x]) once you have completed what they say.
-Make sure complete everything in the checklist.
--->
+## Actual behavior
 
-- [ ] I'm reporting a bug in Sherlock's functionality
-- [ ] The bug I'm reporting is not a false positive or a false negative
-- [ ] I've verified that I'm running the latest version of Sherlock
-- [ ] I've checked for similar bug reports including closed ones
-- [ ] I've checked for pull requests that attempt to fix this bug
 
-## Description
-<!--
-Provide a detailed description of the bug that you have found in Sherlock.
-Provide the version of Sherlock you are running.
--->
+## Sanitized evidence
 
-WRITE DESCRIPTION HERE
+Include only minimal logs, error classes, request IDs, or screenshots needed
+to explain the defect. Do not include a private search target.

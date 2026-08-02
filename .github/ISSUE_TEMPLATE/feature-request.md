@@ -1,32 +1,30 @@
 ---
 name: Feature request
-about: Request a new functionality for Sherlock
-title: ''
+about: Propose a product or developer improvement
+title: ""
 labels: enhancement
-assignees: ''
-
+assignees: ""
 ---
 
-<!--
+## Before submitting
 
-######################################################################
-  WARNING!
-  IGNORING THE FOLLOWING TEMPLATE WILL RESULT IN ISSUE CLOSED AS INCOMPLETE
-######################################################################
+- [ ] I checked the ultimate goal, roadmap, and existing issues.
+- [ ] I described a user or operator problem, not only an implementation.
+- [ ] I considered local-first behavior, consent, privacy, and failure states.
 
--->
+## Problem
 
-## Checklist
-<!--
-Put x into all boxes (like this [x]) once you have completed what they say.
-Make sure complete everything in the checklist.
--->
-- [ ] I'm reporting a feature request
-- [ ] I've checked for similar feature requests including closed ones
+Who needs this, and what outcome is difficult today?
 
-## Description
-<!-- 
-Provide a detailed description of the feature you would like Sherlock to have
--->
+## Proposed behavior
 
-WRITE DESCRIPTION HERE
+Describe the smallest end-to-end behavior that would solve the problem.
+
+## Trust and privacy impact
+
+What data, permissions, external services, retention, or user consent would
+change? If none, say why.
+
+## Alternatives
+
+What existing workflow or smaller change did you consider?

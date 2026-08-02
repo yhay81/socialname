@@ -1,34 +1,31 @@
 ---
-name: Reporting false positive
-about: Reporting a site that is returning false positives
-title: ''
-labels: false positive 
-assignees: ''
-
+name: False positive report
+about: Report a missing account incorrectly classified as found
+title: ""
+labels: false positive
+assignees: ""
 ---
 
-<!--
+## Before submitting
 
-######################################################################
-  WARNING!
-  IGNORING THE FOLLOWING TEMPLATE WILL RESULT IN ISSUE CLOSED AS INCOMPLETE
-######################################################################
+- [ ] I am reporting exactly one site.
+- [ ] I checked for an existing report or fix.
+- [ ] I can demonstrate absence without exposing a private person's history.
+- [ ] I removed cookies, credentials, complete bodies, and unrelated profile
+      data.
 
--->
+## Observation
 
-## Checklist
-<!--
-Put x into all boxes (like this [x]) once you have completed what they say.
-Make sure complete everything in the checklist.
--->
-- [ ] I'm reporting a website that is returning **false positive** results
-- [ ] I've checked for similar site support requests including closed ones
-- [ ] I've checked for pull requests attempting to fix this false positive
-- [ ] I'm only reporting **one** site (create a seperate issue for each site)
+- Site ID:
+- SocialName version or commit:
+- Rule-pack hash, if shown:
+- Execution mode and region or network vantage:
+- Observation time in UTC:
+- Actual result and evidence class:
+- Expected result:
 
-## Description
-<!--
-Provide the username that is causing Sherlock to return a false positive, along with any other information that might help us fix this false positive.
--->
+## Minimal evidence
 
-WRITE DESCRIPTION HERE
+Include only the matcher, response class, generated-negative method, or
+sanitized trace needed to reproduce the classification. Do not post a private
+person's identifier as a negative control.

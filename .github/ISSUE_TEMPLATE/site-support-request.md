@@ -1,37 +1,32 @@
 ---
 name: Site support request
-about: Request support for a new site
-title: ''
+about: Request one new public site rule
+title: ""
 labels: site support request
-assignees: ''
-
+assignees: ""
 ---
 
-<!--
+## Before submitting
 
-######################################################################
-  WARNING!
-  IGNORING THE FOLLOWING TEMPLATE WILL RESULT IN ISSUE CLOSED AS INCOMPLETE
-######################################################################
+- [ ] I am requesting exactly one site.
+- [ ] I checked existing and removed rules and open and closed issues.
+- [ ] The account-presence route is public and does not require login,
+      CAPTCHA bypass, payment, or a user session.
+- [ ] I will not post a private person's username as test evidence.
 
--->
+## Site
 
-## Checklist
-<!--
-Put x into all boxes (like this [x]) once you have completed what they say.
-Make sure complete everything in the checklist.
--->
+- Name:
+- Homepage URL:
+- Public profile URL shape:
+- Username rules, if documented:
 
-- [ ] I'm requesting support for a new site
-- [ ] I've checked for similar site support requests including closed ones
-- [ ] I've checked that the site I am requesting has not been removed in the past and is not documented in [removed_sites.md](https://github.com/sherlock-project/sherlock/blob/master/removed_sites.md)
-- [ ] The site I am requesting support for is not a pornographic website
-- [ ] I'm only requesting support of **one** website (create a seperate issue for each site)
+## Stable public controls
 
-## Description
-<!--
-Provide the url to the website and the name of the website.
-If there is anything else you want to mention regarding the site support request include that in this section.
--->
+Link to public, long-lived official or project-controlled accounts that could
+be reviewed as positive controls. Do not paste complete page bodies.
 
-URL:
+## Known failure or blocking behavior
+
+Describe redirects, soft 404s, rate limits, bot challenges, or regional
+differences you have observed without attempting to bypass them.

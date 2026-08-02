@@ -1,33 +1,21 @@
 ---
 name: Question
-about: Ask us a question
-title: ''
+about: Ask about SocialName behavior, direction, or contribution
+title: ""
 labels: question
-assignees: ''
-
+assignees: ""
 ---
 
-<!--
+## Before submitting
 
-######################################################################
-  WARNING!
-  IGNORING THE FOLLOWING TEMPLATE WILL RESULT IN ISSUE CLOSED AS INCOMPLETE.
-######################################################################
-
--->
-
-## Checklist
-<!--
-Put x into all boxes (like this [x]) once you have completed what they say.
-Make sure complete everything in the checklist.
--->
-- [ ] I'm asking a question regarding Sherlock
-- [ ] My question is not a tech support question.
-
-**We are not your tech support**. 
-If you have questions related to `pip`, `git`, or something that is not related to Sherlock, please ask them on [StackOverflow](https://stackoverflow.com/) or [r/learnpython](https://www.reddit.com/r/learnpython/)
-
+- [ ] I checked the README, installation guide, roadmap, and existing issues.
+- [ ] I removed credentials, private search targets, and unrelated personal
+      information.
 
 ## Question
 
-ASK YOUR QUESTION HERE
+What are you trying to understand or accomplish?
+
+## Context
+
+Which SocialName surface, version, and documentation are relevant?
