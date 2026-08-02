@@ -15,6 +15,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps/desktop/src-tauri ./apps/desktop/src-tauri
+COPY vendor ./vendor
 RUN cargo build --locked --release -p socialname-server --bin socialname-server
 
 FROM ${NODE_IMAGE} AS console
