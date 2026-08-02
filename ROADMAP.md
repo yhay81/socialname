@@ -995,6 +995,17 @@ exposes: `ALTER ROLE` may set `SUPERUSER` and `BYPASSRLS` only as a
 superuser, which no managed owner is, and the provider rejects a password
 without mixed case or special characters.
 
+API run
+[`30739367117`](https://github.com/yhay81/socialname/actions/runs/30739367117)
+on 2026-08-02 percent-encoded the generated runtime-role password, proved the
+same immutable server image could reach the database with that role, deployed
+with the least-privilege Cloudflare token while preserving the
+operator-managed custom domain, and then passed the public `/health/live` and
+database-backed `/health/ready` checks. The same-origin `/console` route also
+returned 200. Cold database readiness now gets a bounded five-second attempt;
+liveness remains independent and every product route still fails closed while
+the database is unavailable.
+
 First live canary measurements (2026-07-29), run from a single vantage
 before building any fleet, so a failing rule would cost minutes rather than
 three regional deployments:
@@ -1021,8 +1032,10 @@ each region's first and last completions at least 18 hours apart.
 Container deployments on a two-hour cron. The runner image carries the
 CLI, the exact rule pack, and the reviewed manifests, stays inert by default,
 and runs a canary only as an explicit `exec` carrying `--allow-live`. Each
-Worker has no route at all, so nothing but its own cron can reach it, and
-reports land in R2 keyed by site, region, and start time.
+Worker accepts its own cron plus an independently scheduled, purpose-secret
+authenticated POST; missing or invalid credentials cannot start a probe, and
+preview URLs stay disabled. Reports land in R2 keyed by site, region, and
+scheduled slot, so both schedulers can cover the same slot without duplication.
 
 On 2026-08-02 the current runner image and two-hour schedules were deployed to
 ENAM, WNAM, and WEUR. `wrangler containers info` reported the new application

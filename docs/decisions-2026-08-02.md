@@ -26,3 +26,10 @@ This record extends [Decisions: 2026-07-29](decisions-2026-07-29.md). The
   CI deployment needs Worker and Container permissions but not continuing Zone
   Workers Routes authority. The existing domain is checked after deployment;
   changing or recreating it remains an explicit operator action.
+- The regional canary Workers expose a `workers.dev` trigger only as a second,
+  independently scheduled path around missed Cloudflare cron delivery. It is
+  POST-only, requires a purpose-specific secret compared in constant time,
+  fails closed when that secret is absent, and has preview URLs disabled. The
+  endpoint can run only the checked-in reviewed controls; it cannot accept a
+  search target, aggregate evidence, sign, promote, or enable a rule. Duplicate
+  schedulers converge on the same scheduled report slot.

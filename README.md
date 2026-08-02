@@ -53,13 +53,14 @@ socialname search octocat --site github \
   --rules-dir ~/.socialname/rules/sites --allow-disabled
 ```
 
-**Monitoring console** — part of the managed service, which is not hosted
-yet. Self-hosting is deliberately not a product surface; contributors working
-on the server, worker, or console can run the development stack in
-[`deploy/compose.yaml`](deploy/compose.yaml) and open
-<http://127.0.0.1:8080/console>.
+**Monitoring console** — the early managed deployment is available at
+[api.socialname.net/console](https://api.socialname.net/console). It requires a
+scoped API key and is not yet a production service with an SLA or public
+account provisioning. Self-hosting is deliberately not a product surface;
+contributors can run the development stack in
+[`deploy/compose.yaml`](deploy/compose.yaml).
 
-Two limits are deliberate rather than incidental. All ten site rules are
+Two limits are deliberate rather than incidental. All 460 site rules are
 discovery-only because none has passed the live canary gate, so local probes
 need the explicit `--allow-disabled` acknowledgement and no cached or managed
 reuse is available. Every artifact is unsigned, so Gatekeeper and SmartScreen
@@ -148,7 +149,8 @@ warn: signing identities are external evidence this repository does not hold.
 - Deterministic API v1 publication with 38 scoped operations, OpenAPI 3.1.2,
   45 Draft 2020-12 JSON Schema roots, an exact resumable SSE contract, and a
   SHA-256 drift manifest.
-- Ten representative site rules and 30 minimized offline fixture cases.
+- 460 discovery-only site rules with 1,382 minimized offline fixture cases;
+  three sites also have reviewed live-canary manifests.
 - Discovery-only quarantine for rules that are not yet live-canary qualified.
 - Tauri 2 desktop application for Windows and macOS with explicit research
   consent, site selection, streaming evidence, and cancellation.
@@ -157,10 +159,11 @@ Milestone 3's repository-completable software is implemented, Milestone 4 has
 stable REST/JSON and SSE publication, batch admission, quota, usage, service
 reporting, search-completion webhooks, consent-bound remote clients, private
 search history, bounded export examples, and provider-neutral plan
-entitlements. Real regional deployment, retained production SLO history,
-production notification/export evidence, a payment-provider integration, and
-a hosted Developer API remain external gates. Milestone 5 has begun with its
-repository-complete Team organization, role, review, audit, and retention
+entitlements. The API and same-origin console now have an early managed
+deployment. Real regional worker deployment, retained production SLO history,
+production notification/export evidence, public account provisioning, and a
+payment-provider integration remain external gates. Milestone 5 has begun with
+its repository-complete Team organization, role, review, audit, and retention
 workflow; collaboration and shared-evidence work remain ordered next.
 
 ## Build and verify

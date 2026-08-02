@@ -17,7 +17,7 @@ evidence it cannot verify.
 | --- | --- |
 | Site rules | 460, all `enabled: false` |
 | Canary manifests | `github`, `gitlab`, `mastodon-social`; controls verified by real probes |
-| Canary fleet | ENAM, WNAM, WEUR Cloudflare Containers, cron every 2 hours |
+| Canary fleet | ENAM, WNAM, WEUR Cloudflare Containers; Cloudflare cron plus an independently scheduled authenticated trigger |
 | Report store | R2 `socialname-canary-reports`, keyed by scheduled slot |
 | Trust root | generation 1, threshold 1, expires 2028-01-01 |
 | Signing key | generated locally, held by the operator, never in the repository |

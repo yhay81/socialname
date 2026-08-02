@@ -61,7 +61,8 @@ The first vertical slice is implemented in the repository:
   hashing;
 - asynchronous HTTP probe engine and explainable deterministic classifier;
 - local CLI commands for rule validation, fixture validation, and live probing;
-- ten representative rules with 30 minimized offline cases;
+- 460 discovery-only rules with 1,382 minimized offline cases, including the
+  ten representative rule shapes used to accept Site Rule v1;
 - independent, time-bounded positive/negative canary manifests with strict
   semantic validation against compiled site rules;
 - a bounded, cancellable canary runner using the production measurement engine

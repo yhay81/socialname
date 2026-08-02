@@ -1,21 +1,21 @@
 # Installing SocialName
 
-Status: **Unsigned artifacts; local surfaces usable; the managed service is
-not hosted yet, and self-hosting is not a product surface**
+Status: **Unsigned artifacts; local surfaces usable; early managed API and
+console deployed; self-hosting is not a product surface**
 
-SocialName has three surfaces. Read the honest capability summary first,
-because the two local ones do useful work today and the third ships with the
-managed service, which is not hosted yet.
+SocialName has three surfaces. Read the honest capability summary first: the
+two local ones work without an account, while the managed console is an early
+operator deployment without public account provisioning or an SLA.
 
 | Surface | Who it is for | Works without any account or server | Today's limit |
 | --- | --- | --- | --- |
-| Desktop application | Anyone | Yes | Ten representative sites; installers are unsigned |
-| Command line | Terminal users | Yes | Same ten sites; `--allow-disabled` needed for live probes |
-| Monitoring console (web) | Operators and teams | No | Part of the managed service, which is not hosted yet |
+| Desktop application | Anyone | Yes | 460 discovery-only sites; installers are unsigned |
+| Command line | Terminal users | Yes | 460 discovery-only sites; `--allow-disabled` needed for live probes |
+| Monitoring console (web) | Operators and teams | No | Early managed deployment; a pre-provisioned scoped key is required |
 
 Two facts shape everything below and are not marketing caveats:
 
-- **All ten site rules are discovery-only.** No rule has passed the live
+- **All 460 site rules are discovery-only.** No rule has passed the live
   canary gate, so nothing is promoted. Local searches still run and return
   real evidence; the CLI just requires you to acknowledge that with
   `--allow-disabled`, and cached or managed reuse stays disabled.
@@ -78,9 +78,9 @@ WebKit runtime instead of using the system one.
 
 ### What the desktop application does
 
-It searches the ten representative sites locally, streams results as they
-arrive, and shows the evidence class, matcher outcome, timing, and rule
-identity behind every verdict. The default is local execution with
+It searches the checked-in discovery-only rule pack locally, streams results
+as they arrive, and shows the evidence class, matcher outcome, timing, and
+rule identity behind every verdict. The default is local execution with
 `sync=never`: no account, no telemetry, and no request to any SocialName
 service. Remote and cached-first modes exist but need a server you point it
 at.
@@ -161,11 +161,11 @@ Rust rewrite. It is unrelated to the surfaces on this page.
 ## Monitoring console (web)
 
 The console is the watch, transition, review, and operational-report surface.
-It consumes only `/v1` on its own origin and holds a pasted scoped API key in
-page memory alone — never in local storage, never in a cookie. There is no
-hosted instance yet: publishing one requires managed deployment credentials, a
-domain, and TLS, all of which are external gates recorded in
-[`docs/regional-worker-deployment.md`](regional-worker-deployment.md).
+The early managed instance is at
+[api.socialname.net/console](https://api.socialname.net/console). It consumes
+only `/v1` on its own origin and holds a pasted scoped API key in page memory
+alone — never in local storage, never in a cookie. Access currently requires a
+pre-provisioned key; there is no public signup or production SLA.
 Self-hosting is deliberately not a product surface — the managed service
 concentrates observations, rule health, and coalescing in one operated place
 ([decision](decisions-2026-07-28.md)).
@@ -230,12 +230,11 @@ external review rather than on code:
 - signed and notarized macOS builds, and a signed Windows installer;
 - a merged `microsoft/winget-pkgs` submission, so `winget install` resolves;
 - a `HOMEBREW_TAP_TOKEN` secret, so releases update the tap automatically;
-- `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets, so the product
-  page at <https://socialname.net> deploys on every change;
 - Scoop and Linux distribution repository packages;
 - a `crates.io` release of `socialname-cli`;
 - automatic updates for the desktop application;
-- a hosted monitoring console.
+- public managed-service account and API-key provisioning;
+- production-approved regional workers and promoted rule metadata.
 
 The Homebrew formula and cask and the three WinGet manifests are generated
 from each release by
