@@ -98,3 +98,10 @@ todo = "warn"
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# Tauri v2's Linux GTK3 backend is pinned to glib 0.18. The published 0.18.5
+# crate contains RUSTSEC-2024-0429 and no compatible fixed release exists yet.
+# This checksum-verified local source carries only the upstream two-character
+# soundness fix; provenance is recorded beside the vendored crate.
+[patch.crates-io]
+glib = { path = "vendor/glib-0.18.5" }
