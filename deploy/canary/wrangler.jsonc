@@ -6,15 +6,20 @@
   // hours so several best-effort trigger misses can occur without making the
   // evidence window impossible.
   //
-  // There is no route: this Worker is reached only by its own cron trigger,
-  // so no request can ask it to probe anything.
+  // Cloudflare's cron proved unreliable enough that one region produced
+  // nothing for a full day, so an external scheduler can also start a run
+  // over HTTP. That path is guarded by a shared secret compared in constant
+  // time, and refuses everything when no secret is configured.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "socialname-canary-enam",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-28",
   "compatibility_flags": ["nodejs_compat"],
-  // No HTTP surface at all: the cron trigger is the only way in.
-  "workers_dev": false,
+  // The trigger endpoint needs a reachable origin. Authorization, not
+  // unreachability, is what keeps a request from starting a probe.
+  "workers_dev": true,
+  // Preview URLs would be additional reachable origins nobody asked for.
+  "preview_urls": false,
   "containers": [
     {
       "class_name": "CanaryRunnerContainer",
@@ -60,7 +65,8 @@
   "env": {
     "wnam": {
       "name": "socialname-canary-wnam",
-      "workers_dev": false,
+      "workers_dev": true,
+      "preview_urls": false,
       "containers": [
         {
           "class_name": "CanaryRunnerContainer",
@@ -97,7 +103,8 @@
     },
     "weur": {
       "name": "socialname-canary-weur",
-      "workers_dev": false,
+      "workers_dev": true,
+      "preview_urls": false,
       "containers": [
         {
           "class_name": "CanaryRunnerContainer",

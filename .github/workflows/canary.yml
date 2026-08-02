@@ -1,0 +1,63 @@
+name: Canary
+
+# Starts a regional canary run from outside Cloudflare.
+#
+# The fleet already has its own cron, but that cron proved unreliable enough
+# that one region produced nothing for a full day. Acceptance needs runs near
+# both ends of a day, so a missed trigger does not merely thin the evidence,
+# it makes the 24-hour window impossible to close. This scheduler fails
+# independently of Cloudflare's, and either path alone is sufficient — the
+# report key is the slot, so two triggers in one slot overwrite rather than
+# duplicate.
+#
+# GitHub's own schedule is also best effort. That is the point: two
+# independent best-effort triggers miss together far less often than one.
+#
+# This workflow starts probes against third-party sites, so it runs only with
+# the shared trigger secret and skips entirely without it.
+
+on:
+  schedule:
+    # Offset from the Cloudflare crons so the two schedulers do not stack on
+    # the same minute.
+    - cron: "10 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    name: Trigger ${{ matrix.region }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        region: [enam, wnam, weur]
+    env:
+      TRIGGER_TOKEN: ${{ secrets.CANARY_TRIGGER_TOKEN }}
+      WORKERS_SUBDOMAIN: ${{ secrets.CLOUDFLARE_WORKERS_SUBDOMAIN }}
+    steps:
+      - name: Report missing credentials
+        if: env.TRIGGER_TOKEN == '' || env.WORKERS_SUBDOMAIN == ''
+        run: |
+          echo "::notice::CANARY_TRIGGER_TOKEN or CLOUDFLARE_WORKERS_SUBDOMAIN is not set; skipping."
+
+      - name: Start the regional canary run
+        if: env.TRIGGER_TOKEN != '' && env.WORKERS_SUBDOMAIN != ''
+        run: |
+          set -euo pipefail
+          url="https://socialname-canary-${{ matrix.region }}.${WORKERS_SUBDOMAIN}.workers.dev/"
+          # The worker accepts and runs asynchronously, so a 202 means the run
+          # started, not that it finished. Its outcome lands in R2 either way.
+          status="$(curl -sS -o /tmp/response.json -w '%{http_code}' \
+            --max-time 60 --retry 3 --retry-delay 10 --retry-connrefused \
+            -X POST -H "Authorization: Bearer ${TRIGGER_TOKEN}" "$url")"
+          echo "status=$status"
+          cat /tmp/response.json
+          test "$status" = "202"
