@@ -569,7 +569,11 @@ async fn live() -> Json<HealthResponse> {
 }
 
 async fn ready(State(state): State<ServerState>) -> Response {
-    let database_timeout = (state.config.request_timeout() / 2).min(Duration::from_secs(1));
+    // A scale-to-zero managed database can need more than one second for DNS,
+    // TLS, and pool establishment. Keep readiness bounded well below the
+    // request deadline, but let the first probe finish warming the connection
+    // instead of cancelling every cold attempt at one second.
+    let database_timeout = (state.config.request_timeout() / 2).min(Duration::from_secs(5));
     let available = if let Some(restore_run_id) = state.config.expected_restore_ledger_id() {
         tokio::time::timeout(
             database_timeout,
