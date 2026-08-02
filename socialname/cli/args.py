@@ -2,6 +2,7 @@ from typing import Union
 import argparse
 import platform
 import sys
+from urllib.parse import urlsplit
 
 import requests
 from socialname.__version__ import __version__, __title__
@@ -31,6 +32,44 @@ def timeout_check(value: Union[float, int, str]) -> float:
             f"Timeout '{value}' must be greater than 0.0s."
         )
     return timeout
+
+
+def proxy_check(value: str) -> str:
+    """Validate a proxy URL without resolving or contacting the endpoint."""
+
+    if not value or any(character.isspace() for character in value):
+        raise argparse.ArgumentTypeError(
+            "Proxy URL must not be empty or contain whitespace."
+        )
+
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"Invalid proxy URL: {error}")
+
+    supported_schemes = {
+        "http",
+        "https",
+        "socks4",
+        "socks4a",
+        "socks5",
+        "socks5h",
+    }
+    if parsed.scheme.lower() not in supported_schemes:
+        raise argparse.ArgumentTypeError(
+            "Proxy URL scheme must be http, https, socks4, socks4a, socks5, or socks5h."
+        )
+    if parsed.hostname is None:
+        raise argparse.ArgumentTypeError("Proxy URL must include a host.")
+    if port is None:
+        raise argparse.ArgumentTypeError("Proxy URL must include a port.")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise argparse.ArgumentTypeError(
+            "Proxy URL must not include a path, query string, or fragment."
+        )
+
+    return value
 
 
 def get_args() -> argparse.Namespace:
@@ -124,6 +163,7 @@ def get_args() -> argparse.Namespace:
         metavar="PROXY_URL",
         action="store",
         dest="proxy",
+        type=proxy_check,
         default=None,
         help="Make requests over a proxy. e.g. socks5://127.0.0.1:1080",
     )
@@ -208,13 +248,13 @@ def get_args() -> argparse.Namespace:
 
 def check_args(args: argparse.Namespace) -> None:
     # Argument check
-    # TODO(yhay81) regex check on args.proxy
     if args.tor and (args.proxy is not None):
         raise ValueError("Tor and Proxy cannot be set at the same time.")
 
     # Make prompts
     if args.proxy is not None:
-        print("Using the proxy: " + args.proxy)
+        args.proxy = proxy_check(args.proxy)
+        print("Using the configured proxy")
 
     if args.tor or args.unique_tor:
         print("Using Tor to make requests")
