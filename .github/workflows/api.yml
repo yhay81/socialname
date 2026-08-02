@@ -130,14 +130,19 @@ jobs:
           if [ -n "$EXPLICIT_URL" ]; then
             value="$EXPLICIT_URL"
           else
-            case "$MIGRATE_URL" in
-              *@*) ;;
-              *)
-                echo "::error::SOCIALNAME_MIGRATE_DATABASE_URL has no host part to derive the runtime URL from"
-                exit 1
-                ;;
-            esac
-            value="postgres://socialname_app:${APPLICATION_ROLE_PASSWORD}@${MIGRATE_URL#*@}"
+            # URL setters percent-encode reserved password characters. String
+            # concatenation would turn values containing @, :, /, ?, or #
+            # into a different and usually invalid PostgreSQL URL.
+            value="$(node <<'NODE'
+          const url = new URL(process.env.MIGRATE_URL);
+          if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
+            throw new Error("SOCIALNAME_MIGRATE_DATABASE_URL is not PostgreSQL");
+          }
+          url.username = "socialname_app";
+          url.password = process.env.APPLICATION_ROLE_PASSWORD;
+          process.stdout.write(url.toString());
+          NODE
+            )"
           fi
           printf '%s' "$value" | npx wrangler secret put SOCIALNAME_SERVER_DATABASE_URL
 
@@ -149,6 +154,49 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SECRET_VALUE: ${{ secrets.SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX }}
         run: printf '%s' "$SECRET_VALUE" | npx wrangler secret put SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX
+
+      - name: Verify the runtime database credentials
+        if: env.HAS_HMAC_KEY == 'true' && (env.HAS_SERVER_URL == 'true' || (env.HAS_MIGRATE_URL == 'true' && env.HAS_ROLE_PASSWORDS == 'true'))
+        env:
+          EXPLICIT_URL: ${{ secrets.SOCIALNAME_SERVER_DATABASE_URL }}
+          MIGRATE_URL: ${{ secrets.SOCIALNAME_MIGRATE_DATABASE_URL }}
+          APPLICATION_ROLE_PASSWORD: ${{ secrets.SOCIALNAME_APPLICATION_ROLE_PASSWORD }}
+          SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX: ${{ secrets.SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPLICIT_URL" ]; then
+            SOCIALNAME_SERVER_DATABASE_URL="$EXPLICIT_URL"
+          else
+            SOCIALNAME_SERVER_DATABASE_URL="$(node <<'NODE'
+          const url = new URL(process.env.MIGRATE_URL);
+          if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
+            throw new Error("SOCIALNAME_MIGRATE_DATABASE_URL is not PostgreSQL");
+          }
+          url.username = "socialname_app";
+          url.password = process.env.APPLICATION_ROLE_PASSWORD;
+          process.stdout.write(url.toString());
+          NODE
+            )"
+          fi
+          export SOCIALNAME_SERVER_DATABASE_URL
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          smoke_container="socialname-api-runtime-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker run --detach --rm \
+            --name "$smoke_container" \
+            --publish 127.0.0.1:18080:8080 \
+            --env SOCIALNAME_SERVER_DATABASE_URL \
+            --env SOCIALNAME_SUPPRESSION_HMAC_KEY_HEX \
+            "ghcr.io/${{ github.repository_owner }}/socialname-server:main"
+          trap 'docker stop "$smoke_container" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/health/ready >/dev/null; then
+              echo "runtime database readiness passed"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::runtime database readiness did not pass within 30 seconds"
+          exit 1
 
       # Secrets are synchronized before deployment so a route-permission or
       # container-rollout failure cannot leave production on stale runtime

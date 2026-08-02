@@ -12,7 +12,9 @@ interface Env {
 // precedes `wrangler secret put` cannot answer requests.
 export class ApiServerContainer extends Container<Env> {
   defaultPort = 8080;
-  sleepAfter = "10m";
+  // Keep scale-to-zero responsive to secret rotation as well as inexpensive:
+  // a newly started process receives the current Worker secret values.
+  sleepAfter = "1m";
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
