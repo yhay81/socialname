@@ -82,6 +82,25 @@ enum RulesCommand {
         #[arg(long)]
         all: bool,
     },
+    /// Render the public coverage page from the rule pack.
+    ///
+    /// The page states, per site, the strongest evidence its rule can produce
+    /// and whether that rule has passed the live canary gate. Generating it
+    /// from the pack is the point: a hand-written list would drift, and a
+    /// coverage claim that quietly disagrees with the rules is exactly the
+    /// kind of thing this product exists not to publish.
+    RenderCoverage {
+        #[arg(long, default_value = "rules/sites")]
+        rules_dir: PathBuf,
+        #[arg(long, default_value = "rules/canaries")]
+        manifests_dir: PathBuf,
+        #[arg(long, default_value = "web/public/coverage.html")]
+        output: PathBuf,
+        /// Fail instead of writing when the file on disk already matches
+        /// nothing else, used by CI to detect a stale committed page.
+        #[arg(long)]
+        check: bool,
+    },
     /// Print the domain-separated identity of a strict public trust-root file.
     TrustId {
         #[arg(long)]
@@ -1075,6 +1094,150 @@ fn load_rule_health_record(path: &Path) -> Result<RuleHealthRecord> {
         .with_context(|| format!("failed to decode health record {path:?}"))
 }
 
+/// The strongest answer a rule can produce, knowable before any search
+/// because it is a property of the check the rule performs.
+fn evidence_tier(
+    rule: &socialname_rule_compiler::CompiledSiteRule,
+) -> (&'static str, &'static str) {
+    let tags = &rule.source.metadata.tags;
+    if tags.iter().any(|tag| tag == "check-message") {
+        (
+            "Page content",
+            "A marker in the page text separates present from absent.",
+        )
+    } else if tags.iter().any(|tag| tag == "check-response-url") {
+        (
+            "Redirect target",
+            "Absence is inferred from where the site redirects.",
+        )
+    } else if tags.iter().any(|tag| tag == "check-status-code") {
+        (
+            "Status code only",
+            "Only the response status separates present from absent.",
+        )
+    } else {
+        (
+            "Structured identity",
+            "The site's own response names the exact account.",
+        )
+    }
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn render_coverage_page(
+    rules: &[socialname_rule_compiler::CompiledSiteRule],
+    canaried: &BTreeSet<String>,
+) -> String {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for rule in rules {
+        *counts.entry(evidence_tier(rule).0).or_default() += 1;
+    }
+    let promoted = rules
+        .iter()
+        .filter(|rule| rule.source.metadata.enabled)
+        .count();
+
+    let mut page = String::new();
+    page.push_str(
+        "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    \
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    \
+         <title>Coverage — SocialName</title>\n    \
+         <meta name=\"description\" content=\"Every site SocialName can check, and exactly what each one can prove.\" />\n    \
+         <link rel=\"icon\" href=\"/icon.svg\" type=\"image/svg+xml\" />\n    \
+         <link rel=\"stylesheet\" href=\"/styles.css\" />\n  </head>\n  <body>\n    <main>\n",
+    );
+    page.push_str(&format!(
+        "      <section class=\"wrap\">\n        <p class=\"eyebrow\">Coverage</p>\n        \
+         <h1>{} sites, and what each one can prove</h1>\n        \
+         <p class=\"section-lede\">A site count on its own says nothing about whether an answer \
+         can be trusted. Every rule below states the strongest evidence it is able to produce, \
+         because a check that only sees a status code cannot tell you what a check that reads the \
+         site's own structured response can.</p>\n",
+        rules.len()
+    ));
+    page.push_str(&format!(
+        "        <p class=\"note\"><strong>{promoted} of {} rules are enabled for managed \
+         measurement.</strong> The rest are discovery-only: usable from the local command line and \
+         desktop application with an explicit acknowledgement, but not yet proven by the live \
+         canary gate, so nothing reuses or shares their results. {} {} a reviewed canary manifest \
+         and {} accumulating regional evidence.</p>\n      </section>\n",
+        rules.len(),
+        canaried.len(),
+        if canaried.len() == 1 {
+            "site has"
+        } else {
+            "sites have"
+        },
+        if canaried.len() == 1 { "is" } else { "are" },
+    ));
+
+    page.push_str("      <section class=\"wrap band\">\n        <h2>Evidence classes</h2>\n        <div class=\"grid\">\n");
+    for (tier, hint) in [
+        (
+            "Structured identity",
+            "The site's own response names the exact account. The strongest answer available.",
+        ),
+        (
+            "Page content",
+            "A marker in the page text separates present from absent.",
+        ),
+        (
+            "Redirect target",
+            "Absence is inferred from where the site redirects.",
+        ),
+        (
+            "Status code only",
+            "Only the response status separates present from absent. The weakest answer, and the most common.",
+        ),
+    ] {
+        page.push_str(&format!(
+            "          <article class=\"card\">\n            <h3>{tier}</h3>\n            \
+             <p class=\"fine\">{hint}</p>\n            <p><strong>{}</strong> sites</p>\n          </article>\n",
+            counts.get(tier).copied().unwrap_or_default()
+        ));
+    }
+    page.push_str("        </div>\n      </section>\n");
+
+    page.push_str(
+        "      <section class=\"wrap\">\n        <h2>Every site</h2>\n        \
+         <div class=\"table-scroll\">\n        <table class=\"coverage\">\n          \
+         <thead><tr><th>Site</th><th>Best evidence</th><th>Managed</th><th>Canary</th></tr></thead>\n          <tbody>\n",
+    );
+    for rule in rules {
+        let (tier, _) = evidence_tier(rule);
+        page.push_str(&format!(
+            "            <tr><td><a href=\"{}\" rel=\"noopener nofollow\">{}</a></td>\
+             <td>{tier}</td><td>{}</td><td>{}</td></tr>\n",
+            escape_html(&rule.source.homepage),
+            escape_html(&rule.source.name),
+            if rule.source.metadata.enabled {
+                "Enabled"
+            } else {
+                "Discovery only"
+            },
+            if canaried.contains(&rule.source.id) {
+                "Manifest reviewed"
+            } else {
+                "—"
+            },
+        ));
+    }
+    page.push_str(
+        "          </tbody>\n        </table>\n        </div>\n        \
+         <p class=\"note\">This page is generated from the rule pack itself, so it cannot claim \
+         coverage the rules do not have. <a href=\"/\">Back to the product page</a>.</p>\n      \
+         </section>\n    </main>\n  </body>\n</html>\n",
+    );
+    page
+}
+
 fn load_hex_key<const N: usize>(path: &Path, description: &str) -> Result<[u8; N]> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("failed to read {description} {path:?}"))?;
@@ -1209,6 +1372,51 @@ fn run_rules(arguments: RulesArgs) -> Result<()> {
                     };
                     println!("{}\t{}\t{state}", rule.source.id, rule.source.name);
                 }
+            }
+        }
+        RulesCommand::RenderCoverage {
+            rules_dir,
+            manifests_dir,
+            output,
+            check,
+        } => {
+            let rules = compiler
+                .load_directory(&rules_dir)
+                .map_err(format_compile_errors)?;
+            let canaried: BTreeSet<String> = fs::read_dir(&manifests_dir)
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .filter(|entry| {
+                            entry
+                                .path()
+                                .extension()
+                                .is_some_and(|extension| extension == "yaml")
+                        })
+                        .filter_map(|entry| {
+                            entry
+                                .path()
+                                .file_stem()
+                                .and_then(|stem| stem.to_str())
+                                .map(str::to_owned)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let rendered = render_coverage_page(&rules, &canaried);
+            if check {
+                let current = fs::read_to_string(&output).unwrap_or_default();
+                if current.replace("\r\n", "\n") != rendered {
+                    bail!(
+                        "{} is stale; regenerate it with `rules render-coverage`",
+                        output.display()
+                    );
+                }
+                println!("coverage page matches the rule pack");
+            } else {
+                fs::write(&output, &rendered)
+                    .with_context(|| format!("failed to write {output:?}"))?;
+                println!("rendered {} sites to {}", rules.len(), output.display());
             }
         }
         RulesCommand::TrustId { trust_file } => {

@@ -15,10 +15,14 @@ on:
     branches: [main]
     paths:
       - web/**
+      - rules/**
+      - crates/socialname-cli/**
       - .github/workflows/site.yml
   pull_request:
     paths:
       - web/**
+      - rules/**
+      - crates/socialname-cli/**
       - .github/workflows/site.yml
   workflow_dispatch:
 
@@ -64,6 +68,14 @@ jobs:
             exit 1
           }
           echo "every referenced asset is committed under web/public"
+
+      - name: Verify the coverage page matches the rule pack
+        run: |
+          set -euo pipefail
+          # The page publishes a coverage claim, so it must be regenerable
+          # from the rules it describes. A committed page that has drifted
+          # would be a public statement the repository cannot support.
+          cargo run --locked -p socialname-cli -- rules render-coverage --check
 
       - name: Verify the Wrangler configuration
         run: |

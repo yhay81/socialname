@@ -299,3 +299,45 @@ footer p {
     scroll-behavior: auto;
   }
 }
+
+/* Coverage table. Wide content scrolls inside its own container so the page
+   body never scrolls sideways on a phone. */
+.table-scroll {
+  overflow-x: auto;
+  margin: 20px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+table.coverage {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+table.coverage th,
+table.coverage td {
+  padding: 9px 14px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+table.coverage th {
+  position: sticky;
+  top: 0;
+  color: var(--text-secondary);
+  background: var(--bg);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+table.coverage tr:last-child td {
+  border-bottom: 0;
+}
+
+table.coverage td a {
+  color: inherit;
+}
