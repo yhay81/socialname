@@ -2,6 +2,7 @@ use serde_yaml_ng::{Mapping, Value};
 
 const MANUAL: &str = include_str!("../../../.github/workflows/canary-manual.yml");
 const SCHEDULED: &str = include_str!("../../../.github/workflows/canary-scheduled.yml");
+const FLEET: &str = include_str!("../../../.github/workflows/canary-fleet.yml");
 
 #[test]
 fn canary_workflows_are_parseable_bounded_and_non_promoting() {
@@ -44,6 +45,58 @@ fn canary_workflows_are_parseable_bounded_and_non_promoting() {
     assert!(SCHEDULED.contains("17 */12 * * *"));
     assert!(SCHEDULED.contains("length <= 64"));
     assert!(SCHEDULED.contains("SOCIALNAME_CANARY_SCHEDULE"));
+}
+
+#[test]
+fn managed_fleet_workflow_verifies_and_deploys_all_regions_without_promotion() {
+    let fleet = parse(FLEET);
+    let root = mapping(&fleet);
+    assert_eq!(
+        keys(mapping(field(root, "on"))),
+        vec!["push", "pull_request", "workflow_dispatch"]
+    );
+    assert_eq!(
+        string(
+            field(mapping(field(root, "permissions")), "contents"),
+            "contents permission",
+        ),
+        "read"
+    );
+    assert_eq!(
+        field(mapping(field(root, "concurrency")), "cancel-in-progress").as_bool(),
+        Some(false)
+    );
+
+    let jobs = mapping(field(root, "jobs"));
+    let verify = mapping(field(jobs, "verify"));
+    let verify_steps = field(verify, "steps")
+        .as_sequence()
+        .expect("fleet verification steps are a sequence");
+    let verify_run = string(
+        field(
+            named_step(verify_steps, "Verify all three regional deployments"),
+            "run",
+        ),
+        "fleet verification command",
+    );
+    assert_eq!(verify_run.matches("npx wrangler deploy").count(), 3);
+    assert!(verify_run.contains("--env=wnam"));
+    assert!(verify_run.contains("--env=weur"));
+
+    let deploy = mapping(field(jobs, "deploy"));
+    let deploy_steps = field(deploy, "steps")
+        .as_sequence()
+        .expect("fleet deployment steps are a sequence");
+    let deploy_run = string(
+        field(named_step(deploy_steps, "Deploy the regional fleet"), "run"),
+        "fleet deployment command",
+    );
+    assert_eq!(deploy_run.matches("npx wrangler deploy").count(), 3);
+    assert!(deploy_run.contains("--containers-rollout=immediate"));
+    assert!(deploy_run.contains("--env=wnam"));
+    assert!(deploy_run.contains("--env=weur"));
+    assert!(!deploy_run.contains("promote"));
+    assert!(!deploy_run.contains("sign"));
 }
 
 fn assert_common_run_contract(workflow: &Value) {

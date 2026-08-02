@@ -259,7 +259,8 @@ Software acceptance gate:
 External evidence gate:
 
 - Five reviewed positive and five valid generated-negative canaries per site.
-- Three managed regions, three runs each over at least 24 hours.
+- Three managed regions with at least three runs each inside one exact 24-hour
+  window, with each region's first and last completions at least 18 hours apart.
 - All precision, coverage, safety, latency, and shadow requirements in the
   representative validation document.
 - A signed publication and last-known-good rollback exercise.
@@ -1013,14 +1014,27 @@ Both rules met every acceptance threshold — 100% conclusive precision, 100%
 conclusive coverage, zero conflicts — against the real sites. That is one
 vantage and one run each, so it is evidence that the rules measure
 correctly, not evidence of acceptance: the gate still requires three managed
-regions with three runs each over at least 24 hours.
+regions with at least three runs each inside one exact 24-hour window, with
+each region's first and last completions at least 18 hours apart.
 
 `deploy/canary` supplies that fleet as three region-constrained Cloudflare
-Container deployments on an eight-hour cron. The runner image carries the
+Container deployments on a two-hour cron. The runner image carries the
 CLI, the exact rule pack, and the reviewed manifests, stays inert by default,
 and runs a canary only as an explicit `exec` carrying `--allow-live`. Each
 Worker has no route at all, so nothing but its own cron can reach it, and
 reports land in R2 keyed by site, region, and start time.
+
+On 2026-08-02 the current runner image and two-hour schedules were deployed to
+ENAM, WNAM, and WEUR. `wrangler containers info` reported the new application
+version healthy in each region. An exact-window audit of the GitHub report
+slice from 2026-08-01 06:00 UTC through 2026-08-02 06:00 UTC found four
+successful ENAM reports, two WNAM reports, and one WEUR report. Every successful
+report was complete with 10/10 conclusive precision, 10/10 conclusive coverage,
+and zero conflicts, but WNAM and WEUR still lack enough time-spanning reports;
+this records healthy partial evidence and does not satisfy the external gate.
+`.github/workflows/canary-fleet.yml` now type-checks and dry-runs all three
+regional configurations before deploying them from `main`; it has no
+aggregation, signing, promotion, or rule-activation authority.
 
 The deployment item nevertheless remains unchecked. What exists is one
 region's API surface plus canary vantages, not the managed measurement

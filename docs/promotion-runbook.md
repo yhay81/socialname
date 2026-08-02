@@ -16,8 +16,8 @@ evidence it cannot verify.
 | Piece | State |
 | --- | --- |
 | Site rules | 460, all `enabled: false` |
-| Canary manifests | `github`, `gitlab`, controls verified by real probes |
-| Canary fleet | ENAM, WNAM, WEUR Cloudflare Containers, cron every 8 hours |
+| Canary manifests | `github`, `gitlab`, `mastodon-social`; controls verified by real probes |
+| Canary fleet | ENAM, WNAM, WEUR Cloudflare Containers, cron every 2 hours |
 | Report store | R2 `socialname-canary-reports`, keyed by scheduled slot |
 | Trust root | generation 1, threshold 1, expires 2028-01-01 |
 | Signing key | generated locally, held by the operator, never in the repository |
@@ -32,9 +32,12 @@ the scratchpad directory it was generated into.
 
 Each step consumes the previous step's output, so they cannot be reordered.
 
-1. **Accumulate reports.** The gate needs three managed regions, three runs
-   each, inside one exact 24-hour window. The fleet produces exactly that in
-   a day. Reports are addressable without listing the bucket:
+1. **Accumulate reports.** The gate needs three managed regions and at least
+   three runs each inside one exact 24-hour window. Each region's first and
+   last completions must be at least 18 hours apart. An aligned window offers
+   up to 13 boundary-inclusive slots per region so best-effort cron misses do
+   not immediately make the window impossible.
+   Reports are addressable without listing the bucket:
    `canary/<site>/<region>/<YYYY-MM-DD>/<HH>.json`.
 
 2. **Aggregate.** `socialname canaries aggregate` consumes only

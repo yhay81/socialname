@@ -1,8 +1,10 @@
 {
   // Regional canary runner. One deployment per managed region, because the
   // vantage a report declares is only meaningful if the process actually ran
-  // there. Acceptance needs three regions with three runs each over at least
-  // 24 hours, so the cron fires every eight hours.
+  // there. Acceptance needs three regions with three runs each spanning at
+  // least 18 hours inside one exact 24-hour window. The cron fires every two
+  // hours so several best-effort trigger misses can occur without making the
+  // evidence window impossible.
   //
   // There is no route: this Worker is reached only by its own cron trigger,
   // so no request can ask it to probe anything.

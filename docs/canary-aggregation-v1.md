@@ -43,7 +43,8 @@ Reports are sorted deterministically by completion time and report ID. Each
 required region is evaluated independently:
 
 - at least three runs;
-- first-to-last completion span of at least 24 hours;
+- first-to-last completion span of at least 18 hours inside the exact 24-hour
+  policy window;
 - 100 percent conclusive precision;
 - at least 95 percent conclusive coverage;
 - zero conflicting-evidence cases;
@@ -72,7 +73,8 @@ signed-promotion, and rollback gates remain mandatory.
 
 Deterministic tests cover:
 
-- three regions with three precise runs spanning the full 24 hours;
+- three regions with three precise runs spanning at least 18 hours inside the
+  exact 24-hour window;
 - missing regions, insufficient runs, and short intervals;
 - low precision, low coverage, conflicts, and excessive latency in one region;
 - duplicate report input.

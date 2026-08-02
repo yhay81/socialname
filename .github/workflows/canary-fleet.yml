@@ -1,0 +1,106 @@
+name: Managed canary fleet
+
+# Keeps the three Cloudflare Container vantages on the exact checked-in
+# Worker, CLI, rule pack, manifests, and cron configuration. This workflow
+# deploys measurement only: it cannot aggregate, promote, sign, or activate a
+# rule, and every rule remains discovery-only until the separate evidence gate
+# passes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/canary/**
+      - rules/canaries/**
+      - rules/sites/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/canary-fleet.yml
+  pull_request:
+    paths:
+      - deploy/canary/**
+      - rules/canaries/**
+      - rules/sites/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/canary-fleet.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: managed-canary-fleet
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify fleet configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: deploy/canary
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: deploy/canary/package-lock.json
+
+      - name: Install Worker dependencies
+        run: npm ci
+
+      - name: Type-check the Worker
+        run: npm run check
+
+      - name: Verify all three regional deployments
+        run: |
+          set -euo pipefail
+          npx wrangler deploy --dry-run --containers-rollout=none --env=""
+          npx wrangler deploy --dry-run --containers-rollout=none --env=wnam
+          npx wrangler deploy --dry-run --containers-rollout=none --env=weur
+
+  deploy:
+    name: Deploy ENAM, WNAM, and WEUR
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Report missing credentials
+        if: env.HAS_CLOUDFLARE != 'true'
+        run: |
+          echo "::notice::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are not set; skipping deployment."
+
+      - uses: actions/setup-node@v6
+        if: env.HAS_CLOUDFLARE == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: deploy/canary/package-lock.json
+
+      - name: Install Worker dependencies
+        if: env.HAS_CLOUDFLARE == 'true'
+        working-directory: deploy/canary
+        run: npm ci
+
+      - name: Deploy the regional fleet
+        if: env.HAS_CLOUDFLARE == 'true'
+        working-directory: deploy/canary
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler deploy --containers-rollout=immediate --env=""
+          npx wrangler deploy --containers-rollout=immediate --env=wnam
+          npx wrangler deploy --containers-rollout=immediate --env=weur

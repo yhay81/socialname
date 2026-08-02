@@ -7,9 +7,10 @@ interface Env {
   CANARY_SITES: string;
 }
 
-// Each acceptance window needs three runs per region over at least 24 hours,
-// so the cron fires every eight hours and a run is deliberately small: ten
-// bounded requests per site against reviewed controls.
+// Each exact 24-hour acceptance window needs three runs per region whose first
+// and last completions are at least 18 hours apart. The two-hour cadence
+// tolerates several best-effort trigger misses, and every run remains
+// deliberately small: ten bounded requests per site against reviewed controls.
 const MAX_REQUESTS = "32";
 const MAX_CONCURRENCY = "4";
 const MAX_ELAPSED_MS = "120000";
