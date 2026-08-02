@@ -20,3 +20,9 @@ This record extends [Decisions: 2026-07-29](decisions-2026-07-29.md). The
 - This changes no precision, conclusive-coverage, conflict, latency, shadow,
   signing, regional-health, or rollback threshold. Global volume still cannot
   compensate for a missing or failing region.
+- `api.socialname.net` remains an operator-provisioned Cloudflare custom
+  domain. The checked-in Worker configuration uses `workers_dev: false` and
+  omits `routes`, Cloudflare's documented dashboard-managed mode, so routine
+  CI deployment needs Worker and Container permissions but not continuing Zone
+  Workers Routes authority. The existing domain is checked after deployment;
+  changing or recreating it remains an explicit operator action.

@@ -14,11 +14,21 @@ on:
   push:
     branches: [main]
     paths:
-      - deploy/**
+      - deploy/api/**
+      - deploy/server/**
+      - apps/console/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
       - .github/workflows/api.yml
   pull_request:
     paths:
-      - deploy/**
+      - deploy/api/**
+      - deploy/server/**
+      - apps/console/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
       - .github/workflows/api.yml
   workflow_dispatch:
 
@@ -198,9 +208,9 @@ jobs:
           echo "::error::runtime database readiness did not pass within 30 seconds"
           exit 1
 
-      # Secrets are synchronized before deployment so a route-permission or
-      # container-rollout failure cannot leave production on stale runtime
-      # credentials after database roles have already been rotated.
+      # Secrets are synchronized before deployment so a container-rollout
+      # failure cannot leave production on stale runtime credentials after
+      # database roles have already been rotated.
       - name: Deploy the Worker and container image
         if: env.HAS_CLOUDFLARE == 'true'
         working-directory: deploy/api
@@ -208,3 +218,18 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --containers-rollout=immediate
+
+      - name: Verify the public API
+        if: env.HAS_CLOUDFLARE == 'true' && env.HAS_HMAC_KEY == 'true' && (env.HAS_SERVER_URL == 'true' || (env.HAS_MIGRATE_URL == 'true' && env.HAS_ROLE_PASSWORDS == 'true'))
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            if curl --fail --silent --max-time 15 https://api.socialname.net/health/live >/dev/null \
+              && curl --fail --silent --max-time 15 https://api.socialname.net/health/ready >/dev/null; then
+              echo "public API liveness and readiness passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::public API did not become ready within the deployment window"
+          exit 1

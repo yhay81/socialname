@@ -38,12 +38,11 @@
       "new_sqlite_classes": ["ApiServerContainer"]
     }
   ],
-  "routes": [
-    {
-      "pattern": "api.socialname.net",
-      "custom_domain": true
-    }
-  ],
+  // api.socialname.net is an already-provisioned custom domain. Cloudflare's
+  // documented dashboard-managed mode omits routes and disables workers.dev;
+  // this lets the least-privilege deployment token update Worker and Container
+  // code without requiring ongoing Zone Workers Routes permission.
+  "workers_dev": false,
   "observability": {
     "enabled": true
   }
