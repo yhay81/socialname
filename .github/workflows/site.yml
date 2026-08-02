@@ -57,6 +57,11 @@ jobs:
               # "/" is the site root, which the deployment serves from
               # index.html rather than from a file of that name.
               [ "$reference" = "/" ] && continue
+              # Cloudflare serves page.html at the extensionless /page and
+              # redirects the .html form there, so an extensionless link is
+              # backed by a committed file even though no such file name
+              # exists.
+              [ -f "web/public/${reference#/}.html" ] && continue
               test -f "web/public/${reference#/}" || {
                 echo "${page} references missing local asset ${reference}" >&2
                 exit 1

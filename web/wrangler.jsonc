@@ -12,19 +12,14 @@
     // serving the landing page with a 200.
     "not_found_handling": "404-page"
   },
-  "routes": [
-    // socialname.net is the product domain (decision 2026-07-29); the
-    // original yhay81.com subdomain stays attached so existing links keep
-    // resolving.
-    {
-      "pattern": "socialname.net",
-      "custom_domain": true
-    },
-    {
-      "pattern": "socialname.yhay81.com",
-      "custom_domain": true
-    }
-  ],
+  // socialname.net is the product domain (decision 2026-07-29) and
+  // socialname.yhay81.com stays attached so existing links keep resolving.
+  // Both are already-provisioned custom domains, managed in the dashboard
+  // rather than declared here, matching deploy/api. Declaring them made every
+  // deployment call the zone routes API, which a least-privilege deployment
+  // token cannot do; omitting them lets the token publish page content
+  // without also being able to repoint the zone.
+  "workers_dev": false,
   "observability": {
     "enabled": true
   }
