@@ -38,6 +38,15 @@ pub async fn connect_runtime_database_from_env() -> Result<PgPool, DatabaseError
     connect_database(&database_url, RUNTIME_MAXIMUM_CONNECTIONS).await
 }
 
+/// Builds the runtime pool without requiring PostgreSQL to be reachable during
+/// process startup. The public liveness endpoint can therefore come up while a
+/// scale-to-zero database resumes; readiness and every product operation still
+/// fail closed until a real connection succeeds.
+pub fn connect_runtime_database_lazy_from_env() -> Result<PgPool, DatabaseError> {
+    let database_url = database_url_from_env(RUNTIME_DATABASE_URL_ENV)?;
+    connect_database_lazy(&database_url, RUNTIME_MAXIMUM_CONNECTIONS)
+}
+
 pub async fn migrate_database(database_url: &str) -> Result<(), DatabaseError> {
     if database_url.is_empty() {
         return Err(DatabaseError::MissingUrl(DATABASE_URL_ENV));
@@ -72,6 +81,20 @@ pub(crate) async fn connect_database(
     .map_err(|_| DatabaseError::ConnectionFailed)
 }
 
+fn connect_database_lazy(
+    database_url: &str,
+    maximum_connections: u32,
+) -> Result<PgPool, DatabaseError> {
+    if database_url.is_empty() {
+        return Err(DatabaseError::MissingUrl(RUNTIME_DATABASE_URL_ENV));
+    }
+    PgPoolOptions::new()
+        .max_connections(maximum_connections)
+        .acquire_timeout(ACQUIRE_TIMEOUT)
+        .connect_lazy(database_url)
+        .map_err(|_| DatabaseError::ConnectionFailed)
+}
+
 pub(crate) fn database_url_from_env(variable: &'static str) -> Result<String, DatabaseError> {
     let value = env::var(variable).map_err(|error| match error {
         env::VarError::NotPresent => DatabaseError::MissingUrl(variable),
@@ -103,5 +126,27 @@ mod tests {
         assert_eq!(error, DatabaseError::ConnectionFailed);
         assert!(!error.to_string().contains(secret));
         assert!(!format!("{error:?}").contains(secret));
+    }
+
+    #[tokio::test]
+    async fn lazy_runtime_pool_does_not_require_database_availability() {
+        let pool = connect_database_lazy(
+            "postgres://unused:unused@127.0.0.1:1/unused",
+            RUNTIME_MAXIMUM_CONNECTIONS,
+        )
+        .expect("a valid runtime URL builds a lazy pool without network I/O");
+        pool.close().await;
+    }
+
+    #[test]
+    fn lazy_runtime_pool_rejects_empty_and_malformed_urls() {
+        assert_eq!(
+            connect_database_lazy("", RUNTIME_MAXIMUM_CONNECTIONS).unwrap_err(),
+            DatabaseError::MissingUrl(RUNTIME_DATABASE_URL_ENV)
+        );
+        assert_eq!(
+            connect_database_lazy("not a postgres URL", RUNTIME_MAXIMUM_CONNECTIONS).unwrap_err(),
+            DatabaseError::ConnectionFailed
+        );
     }
 }

@@ -65,7 +65,8 @@ pub use config::{
 };
 pub use database::{
     DATABASE_URL_ENV, DatabaseError, MIGRATOR, RUNTIME_DATABASE_URL_ENV,
-    connect_runtime_database_from_env, migrate_database, migrate_database_from_env,
+    connect_runtime_database_from_env, connect_runtime_database_lazy_from_env, migrate_database,
+    migrate_database_from_env,
 };
 pub use deletion_operator::{
     BackupExpiryVerificationInput, BackupExpiryVerificationOutput, DeletionOperatorError,

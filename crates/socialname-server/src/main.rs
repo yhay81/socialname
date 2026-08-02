@@ -2,7 +2,7 @@ use std::{env, error::Error, ffi::OsString, future};
 
 use socialname_server::{
     ServerConfig, apply_rule_pack_metadata_from_env, bootstrap_workspace_from_env,
-    connect_runtime_database_from_env, export_restore_ledger_from_env, issue_api_key_from_env,
+    connect_runtime_database_lazy_from_env, export_restore_ledger_from_env, issue_api_key_from_env,
     migrate_database_from_env, provision_runtime_roles_from_env,
     reconcile_plan_entitlement_from_env, replay_restore_ledger_from_env,
     request_target_deletion_from_env, revoke_api_key_from_env, set_developer_quota_from_env,
@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 async fn run_server() -> Result<(), Box<dyn Error>> {
     let config = ServerConfig::from_env()?;
-    let database = connect_runtime_database_from_env().await?;
+    let database = connect_runtime_database_lazy_from_env()?;
     let listener = tokio::net::TcpListener::bind(config.bind_address()).await?;
     let local_address = listener.local_addr()?;
     tracing::info!(bind_address = %local_address, "socialname server listening");
