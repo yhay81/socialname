@@ -5,7 +5,7 @@ homepage: https://lobste.rs/
 profile_url: https://lobste.rs/u/{username:path}
 namespace: person
 username:
-  pattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,24}'
+  pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,24}$'
   case_sensitive: false
   normalization: preserve
 probes:

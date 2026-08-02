@@ -5,7 +5,7 @@ homepage: https://www.researchgate.net/
 profile_url: https://www.researchgate.net/profile/{username:path}
 namespace: person
 username:
-  pattern: \w+_\w+
+  pattern: '^\w+_\w+$'
   case_sensitive: false
   normalization: preserve
 probes:

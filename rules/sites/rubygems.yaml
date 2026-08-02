@@ -5,7 +5,7 @@ homepage: https://rubygems.org/
 profile_url: https://rubygems.org/profiles/{username:path}
 namespace: person
 username:
-  pattern: ^[a-zA-Z][a-zA-Z0-9_-]{1,40}
+  pattern: '^[a-zA-Z][a-zA-Z0-9_-]{1,40}$'
   case_sensitive: false
   normalization: preserve
 probes:

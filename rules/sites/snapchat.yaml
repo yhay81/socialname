@@ -5,7 +5,7 @@ homepage: https://www.snapchat.com
 profile_url: https://www.snapchat.com/add/{username:path}
 namespace: person
 username:
-  pattern: ^[a-z][a-z-_.]{3,15}
+  pattern: '^[a-z][a-z-_.]{3,15}$'
   case_sensitive: false
   normalization: preserve
 probes:

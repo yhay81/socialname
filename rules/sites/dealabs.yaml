@@ -5,7 +5,7 @@ homepage: https://www.dealabs.com/
 profile_url: https://www.dealabs.com/profile/{username:path}
 namespace: person
 username:
-  pattern: '[a-z0-9]{4,16}'
+  pattern: '^[a-z0-9]{4,16}$'
   case_sensitive: false
   normalization: preserve
 probes:

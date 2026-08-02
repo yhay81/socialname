@@ -5,7 +5,7 @@ homepage: https://www.buymeacoffee.com/
 profile_url: https://buymeacoff.ee/{username:path}
 namespace: person
 username:
-  pattern: '[a-zA-Z0-9]{3,15}'
+  pattern: '^[a-zA-Z0-9]{3,15}$'
   case_sensitive: false
   normalization: preserve
 probes:
