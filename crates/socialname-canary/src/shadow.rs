@@ -229,7 +229,7 @@ impl<P: CanaryProbe> CanaryRunner<P> {
                 &mut rng,
             )?
         };
-        self.run_shadow_cases(pair, vantage, budget, cancellation, cases)
+        self.run_shadow_cases(pair, vantage, budget, cancellation, cases, None)
             .await
     }
 
@@ -240,6 +240,7 @@ impl<P: CanaryProbe> CanaryRunner<P> {
         vantage: DeclaredVantage,
         budget: CanaryRunBudget,
         cancellation: &CancellationToken,
+        run_time: DateTime<Utc>,
         rng: &mut R,
     ) -> Result<CanaryShadowRun, CanaryShadowError> {
         validate_shadow_inputs(pair, &vantage, budget)?;
@@ -249,7 +250,7 @@ impl<P: CanaryProbe> CanaryRunner<P> {
             pair.candidate_manifest,
             rng,
         )?;
-        self.run_shadow_cases(pair, vantage, budget, cancellation, cases)
+        self.run_shadow_cases(pair, vantage, budget, cancellation, cases, Some(run_time))
             .await
     }
 
@@ -260,6 +261,7 @@ impl<P: CanaryProbe> CanaryRunner<P> {
         budget: CanaryRunBudget,
         cancellation: &CancellationToken,
         cases: Vec<CanaryCase>,
+        fixed_run_time: Option<DateTime<Utc>>,
     ) -> Result<CanaryShadowRun, CanaryShadowError> {
         let candidate_planned_requests = checked_plan(
             cases.len(),
@@ -317,7 +319,7 @@ impl<P: CanaryProbe> CanaryRunner<P> {
                 ]
             })
             .collect();
-        let started_at = Utc::now();
+        let started_at = fixed_run_time.unwrap_or_else(Utc::now);
         let start = Instant::now();
         let searches = stream::iter(tasks).map(|task| async move {
             let rule = match task.role {
@@ -396,7 +398,7 @@ impl<P: CanaryProbe> CanaryRunner<P> {
 
         candidate_outcomes.sort_by_key(|(index, _)| *index);
         last_known_good_outcomes.sort_by_key(|(index, _)| *index);
-        let finished_at = Utc::now();
+        let finished_at = fixed_run_time.unwrap_or_else(Utc::now);
         let elapsed_ms = duration_ms(start.elapsed());
         let candidate = CanaryRun {
             site_id: pair.candidate_rule.source.id.clone(),
@@ -1148,6 +1150,7 @@ negative:
                 },
                 CanaryRunBudget::default(),
                 &CancellationToken::new(),
+                validation_time(),
                 &mut rng,
             )
             .await
@@ -1194,7 +1197,12 @@ negative:
             assert!(!serialized.contains(username));
         }
         CanaryShadowValidator::new()
-            .validate_at(&envelope, &policy(&envelope), &BTreeSet::new(), Utc::now())
+            .validate_at(
+                &envelope,
+                &policy(&envelope),
+                &BTreeSet::new(),
+                validation_time(),
+            )
             .expect("shadow validates");
     }
 
@@ -1281,6 +1289,7 @@ negative:
                     ..CanaryRunBudget::default()
                 },
                 &CancellationToken::new(),
+                validation_time(),
                 &mut rng,
             )
             .await
@@ -1324,6 +1333,7 @@ negative:
                 },
                 CanaryRunBudget::default(),
                 &cancellation,
+                validation_time(),
                 &mut rng,
             )
             .await
@@ -1347,7 +1357,12 @@ negative:
         let validator = CanaryShadowValidator::new();
         assert_eq!(
             validator
-                .validate_at(&envelope, &policy(&envelope), &BTreeSet::new(), Utc::now())
+                .validate_at(
+                    &envelope,
+                    &policy(&envelope),
+                    &BTreeSet::new(),
+                    validation_time(),
+                )
                 .unwrap_err(),
             CanaryShadowError::SummaryMismatch
         );
@@ -1359,7 +1374,7 @@ negative:
                     &original,
                     &policy(&original),
                     &BTreeSet::from([original.comparison_id.clone()]),
-                    Utc::now(),
+                    validation_time(),
                 )
                 .unwrap_err(),
             CanaryShadowError::DuplicateComparison
