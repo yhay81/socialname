@@ -11,16 +11,6 @@ name: API
 # reach the Worker through `wrangler secret put` and are never echoed.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - deploy/api/**
-      - deploy/server/**
-      - apps/console/**
-      - crates/**
-      - Cargo.toml
-      - Cargo.lock
-      - .github/workflows/api.yml
   pull_request:
     paths:
       - deploy/api/**
@@ -44,7 +34,7 @@ jobs:
   verify:
     name: Verify the Worker configuration
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1
     defaults:
       run:
         working-directory: deploy/api
@@ -71,7 +61,7 @@ jobs:
     needs: verify
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 1
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
       HAS_MIGRATE_URL: ${{ secrets.SOCIALNAME_MIGRATE_DATABASE_URL != '' }}

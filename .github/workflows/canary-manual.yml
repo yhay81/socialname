@@ -33,7 +33,7 @@ jobs:
     name: Validate dispatch policy
     if: ${{ vars.SOCIALNAME_CANARY_ENABLED == 'true' && inputs.acknowledge_live }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 1
     outputs:
       ready: ${{ steps.validate.outputs.ready }}
 

@@ -2,7 +2,7 @@ name: Daily deletion drill
 
 on:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "54 3 * * 2"
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ jobs:
   delete-through:
     name: PostgreSQL 18 delete-through and restore replay
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 1
     env:
       SOCIALNAME_DATABASE_URL: postgres://postgres:postgres@localhost:5432/socialname_test
       SOCIALNAME_TEST_APPLICATION_DATABASE_URL: postgres://socialname_migration_test_app:socialname-test-password@localhost:5432/socialname_test

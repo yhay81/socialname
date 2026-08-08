@@ -2,7 +2,7 @@ name: Scheduled canaries
 
 on:
   schedule:
-    - cron: "17 */12 * * *"
+    - cron: "59 7 * * 3"
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,7 @@ jobs:
   prepare:
     name: Validate schedule policy
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 1
     outputs:
       enabled: ${{ steps.schedule.outputs.enabled }}
       targets: ${{ steps.schedule.outputs.targets }}

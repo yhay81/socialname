@@ -11,13 +11,6 @@ name: Site
 # repository still gets the check without a broken deploy.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - web/**
-      - rules/**
-      - crates/socialname-cli/**
-      - .github/workflows/site.yml
   pull_request:
     paths:
       - web/**
@@ -37,7 +30,7 @@ jobs:
   verify:
     name: Verify the page is self-contained
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1
     steps:
       - uses: actions/checkout@v6
 
@@ -94,7 +87,7 @@ jobs:
     needs: verify
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
     steps:

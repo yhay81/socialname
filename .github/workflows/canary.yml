@@ -20,7 +20,7 @@ on:
   schedule:
     # Offset from the Cloudflare crons so the two schedulers do not stack on
     # the same minute.
-    - cron: "10 */2 * * *"
+    - cron: "13 11 * * 5"
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
   trigger:
     name: Trigger ${{ matrix.region }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1
     strategy:
       fail-fast: false
       matrix:

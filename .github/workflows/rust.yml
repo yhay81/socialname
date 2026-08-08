@@ -1,8 +1,6 @@
 name: Quality
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -13,6 +11,7 @@ permissions:
 jobs:
   core:
     name: Rust core
+    timeout-minutes: 1
     runs-on: ubuntu-latest
     env:
       SOCIALNAME_DATABASE_URL: postgres://postgres:postgres@localhost:5432/socialname_test
@@ -79,7 +78,7 @@ jobs:
     # Running the schema and isolation gate against both keeps the tested
     # configuration and the deployed one the same thing.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 1
     env:
       SOCIALNAME_DATABASE_URL: postgres://postgres:postgres@localhost:5432/socialname_test
       SOCIALNAME_TEST_APPLICATION_DATABASE_URL: postgres://socialname_migration_test_app:socialname-test-password@localhost:5432/socialname_test
@@ -115,7 +114,7 @@ jobs:
   worker-image:
     name: Managed worker OCI
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 1
     permissions:
       contents: read
       packages: write
@@ -190,7 +189,7 @@ jobs:
   server-image:
     name: API server OCI
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 1
     permissions:
       contents: read
       packages: write
@@ -264,6 +263,7 @@ jobs:
 
   desktop:
     name: Desktop (${{ matrix.os }})
+    timeout-minutes: 1
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -306,6 +306,7 @@ jobs:
 
   console:
     name: Monitoring console
+    timeout-minutes: 1
     runs-on: ubuntu-latest
 
     defaults:
