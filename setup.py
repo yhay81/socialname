@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 import codecs
-import sys
 from typing import Dict
 
 import setuptools
@@ -11,15 +10,19 @@ with codecs.open("socialname/__version__.py", "r") as version_file:
 
 
 install_requires = [
-    "Cerberus>=1.3.2",
-    "colorama>=0.4.4",
-    "requests>=2.25.1",
+    "Cerberus>=1.3.5; python_version < '3.7'",
+    "Cerberus>=1.3.8; python_version >= '3.7'",
+    "colorama>=0.4.5; python_version < '3.7'",
+    "colorama>=0.4.6; python_version >= '3.7'",
+    "requests>=2.27.1; python_version < '3.7'",
+    "requests>=2.31.0; python_version == '3.7'",
+    "requests>=2.32.4; python_version == '3.8'",
+    "requests>=2.32.5; python_version == '3.9'",
+    "requests>=2.34.2; python_version >= '3.10'",
     "torrequest>=0.1.0",
-    "psutil>=5.8.0",
+    "psutil>=7.2.2",
+    "dataclasses>=0.8; python_version == '3.6'",
 ]
-
-if sys.version_info[:2] == (3, 6):
-    install_requires.append("dataclasses")
 
 setuptools.setup(
     name=__version__["__title__"],

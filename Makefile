@@ -1,8 +1,7 @@
 .PHONY: docs
 
 init:
-	pip install -e .
-	pip install -r requirements-dev.txt
+	pip install --upgrade --upgrade-strategy eager -e . -r requirements-dev.txt
 
 
 lint:
