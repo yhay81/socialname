@@ -286,6 +286,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_runtime_includes_the_wal_page_size_fix() {
+        let cache = LocalCache::open_in_memory().await.unwrap();
+        let version: String = sqlx::query_scalar("SELECT sqlite_version()")
+            .fetch_one(&cache.pool)
+            .await
+            .unwrap();
+        let components: Vec<u32> = version
+            .split('.')
+            .map(|part| part.parse().expect("numeric SQLite version component"))
+            .collect();
+        assert!(
+            components.as_slice() >= [3, 54, 0].as_slice(),
+            "RUSTSEC-2026-0459 requires SQLite 3.54.0 or newer, found {version}"
+        );
+    }
+
+    #[tokio::test]
     async fn embedded_migration_creates_versioned_immutable_schema() {
         let cache = LocalCache::open_in_memory().await.unwrap();
         assert_eq!(

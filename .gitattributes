@@ -1,3 +1,5 @@
 *.sql text eol=lf
 contracts/api/v1/** text eol=lf
 vendor/glib-0.18.5/** text eol=lf whitespace=-blank-at-eof
+vendor/sqlx-sqlite-0.9.0/** text eol=lf
+vendor/sqlx-sqlite-0.9.0/src/connection/deserialize.rs whitespace=-blank-at-eol
