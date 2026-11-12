@@ -3091,13 +3091,6 @@
     "usernameClaimed": "adam",
     "usernameUnclaimed": "noonewouldeverusethis"
   },
-  "linktree": {
-    "logic": "status_code",
-    "url": "https://linktr.ee/{}",
-    "urlMain": "https://linktr.ee/",
-    "username_claimed": "hey",
-    "username_unclaimed": "noonewouldusethis420"
-  },
   "livelib": {
     "logic": "status_code",
     "urlMain": "https://www.livelib.ru/",

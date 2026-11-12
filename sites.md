@@ -1,4 +1,4 @@
-## List Of Supported Sites (393 Sites In Total!)
+## List Of Supported Sites (392 Sites In Total!)
 
 1. [161 Social](https://lemmy.161.social/)
 1. [2Dimensions](https://2Dimensions.com/)
@@ -365,7 +365,6 @@
 1. [labpentestit](https://lab.pentestit.ru/)
 1. [last.fm](https://last.fm/)
 1. [leasehackr](https://forum.leasehackr.com/)
-1. [linktree](https://linktr.ee/)
 1. [livelib](https://www.livelib.ru/)
 1. [lnks.to](https://lnks.to/)
 1. [mastodon.cloud](https://mastodon.cloud/)

@@ -8,8 +8,7 @@ revisited later.
 
 ### Repository state
 
-The current repository is version 0.1.3. Its last commit is dated 2021-01-23.
-The package targets Python 3.6 through 3.9 and contains:
+The v0.1.3 snapshot from 2021-01-23 targeted Python 3.6 through 3.9 and contained:
 
 - 393 site entries.
 - 234 `status_code` rules.
@@ -17,9 +16,9 @@ The package targets Python 3.6 through 3.9 and contains:
 - 43 `response_url` rules.
 - A single placeholder test rather than behavioral coverage.
 
-One `linktree` record still uses the older `url`, `username_claimed`, and
-`username_unclaimed` field names, while the v0.1.3 loader requires
-`urlUser`, `usernameClaimed`, and `usernameUnclaimed`. This is evidence that
+One duplicate `linktree` record used the older `url`, `username_claimed`, and
+`username_unclaimed` field names, while the v0.1.3 loader required
+`urlUser`, `usernameClaimed`, and `usernameUnclaimed`. This was evidence that
 schema validation existed but was not continuously enforced against the
 shipped artifact.
 
