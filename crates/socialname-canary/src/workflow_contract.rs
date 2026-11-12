@@ -42,7 +42,7 @@ fn canary_workflows_are_parseable_bounded_and_non_promoting() {
         field(mapping(field(scheduled_canary, "strategy")), "max-parallel").as_u64(),
         Some(3)
     );
-    assert!(SCHEDULED.contains("17 */12 * * *"));
+    assert!(SCHEDULED.contains("59 7 * * 3"));
     assert!(SCHEDULED.contains("length <= 64"));
     assert!(SCHEDULED.contains("SOCIALNAME_CANARY_SCHEDULE"));
 }
@@ -53,7 +53,7 @@ fn managed_fleet_workflow_verifies_and_deploys_all_regions_without_promotion() {
     let root = mapping(&fleet);
     assert_eq!(
         keys(mapping(field(root, "on"))),
-        vec!["push", "pull_request", "workflow_dispatch"]
+        vec!["pull_request", "workflow_dispatch"]
     );
     assert_eq!(
         string(

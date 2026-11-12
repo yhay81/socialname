@@ -117,7 +117,7 @@ fn quality_workflow_publishes_verified_images_only_from_main() {
         let job = mapping(field(jobs, job_key));
         assert_eq!(
             field(job, "timeout-minutes").as_u64(),
-            Some(30),
+            Some(1),
             "{job_key} has a bounded runtime"
         );
         let permissions = mapping(field(job, "permissions"));
