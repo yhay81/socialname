@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderValue, StatusCode, header::LOCATION},
     response::{IntoResponse, Response},
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use socialname_protocol::{

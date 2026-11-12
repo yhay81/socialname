@@ -101,7 +101,7 @@ impl ServerConfig {
         maximum_body_bytes: usize,
         maximum_in_flight: usize,
     ) -> Result<Self, ConfigError> {
-        if request_timeout.as_nanos() % 1_000_000 != 0 {
+        if !request_timeout.as_nanos().is_multiple_of(1_000_000) {
             return Err(ConfigError::new(
                 REQUEST_TIMEOUT_ENV,
                 "must be representable as whole milliseconds",

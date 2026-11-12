@@ -168,7 +168,8 @@ workflow; collaboration and shared-evidence work remain ordered next.
 
 ## Build and verify
 
-Rust stable is pinned through `rust-toolchain.toml`.
+Building from source requires Rust 1.94 or newer. The repository selects the
+stable toolchain through `rust-toolchain.toml`.
 
 ```console
 cargo build --workspace --exclude socialname-desktop

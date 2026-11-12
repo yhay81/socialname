@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderValue, StatusCode, header::LOCATION},
     response::{IntoResponse, Response},
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use socialname_protocol::{
     ApiErrorCode, ApiKeyScope, ContributorDeletionCreateRequest, DeletionReceiptResource,

@@ -8,7 +8,7 @@
 
 use std::{env, fmt, time::Duration};
 
-use sqlx::Executor;
+use sqlx::{AssertSqlSafe, Executor};
 use thiserror::Error;
 
 use crate::database::{DATABASE_URL_ENV, DatabaseError, connect_database, database_url_from_env};
@@ -93,9 +93,9 @@ impl RoleName {
 }
 
 /// A role password that the provisioning SQL can embed as a quoted literal.
-/// Dollar signs are rejected so the surrounding dollar-quoted `DO` block can
-/// never be terminated by password content; quotes are doubled at render
-/// time. `Debug` never prints the value.
+/// Dollar signs are rejected so the password cannot terminate either its
+/// own dollar-quoted literal or the surrounding `DO` block.
+/// `Debug` never prints the value.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RolePassword(String);
 
@@ -119,7 +119,7 @@ impl RolePassword {
     }
 
     fn quoted_literal(&self) -> String {
-        self.0.replace('\'', "''")
+        format!("$password${}$password$", self.0)
     }
 }
 
@@ -156,13 +156,13 @@ fn render_role_sql(role: &RoleName, password: &RolePassword, grants_template: &s
          BEGIN\n\
              IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN\n\
                  CREATE ROLE {role}\n\
-                     LOGIN PASSWORD '{password}'\n\
+                     LOGIN PASSWORD {password}\n\
                      NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;\n\
              END IF;\n\
          END\n\
          $$;\n\
          ALTER ROLE {role}\n\
-             LOGIN PASSWORD '{password}'\n\
+             LOGIN PASSWORD {password}\n\
              NOCREATEDB NOCREATEROLE NOINHERIT;\n\
          DO $$\n\
          BEGIN\n\
@@ -232,7 +232,8 @@ pub async fn provision_runtime_roles(
             .await
             .map_err(|_| RoleProvisionError::ProvisionFailed)?;
         transaction
-            .execute(sqlx::raw_sql(&sql))
+            // Each template interpolates only validated identifiers and dollar-quoted passwords.
+            .execute(sqlx::raw_sql(AssertSqlSafe(sql)))
             .await
             .map_err(|_| RoleProvisionError::ProvisionFailed)?;
         transaction
@@ -325,22 +326,22 @@ mod tests {
     }
 
     #[test]
-    fn rendered_role_sql_substitutes_every_placeholder_and_escapes_quotes() {
+    fn rendered_role_sql_substitutes_every_placeholder_and_quotes_passwords() {
         let role = RoleName::new("socialname_app").unwrap();
-        let password = RolePassword::new("pa'ss").unwrap();
+        let password = RolePassword::new(r"pa\'ss").unwrap();
         for sql in [
             render_application_role_sql(&role, &password),
             render_worker_role_sql(&role, &password),
         ] {
             assert!(!sql.contains(ROLE_PLACEHOLDER));
             assert!(sql.contains("CREATE ROLE socialname_app"));
-            assert!(sql.contains("LOGIN PASSWORD 'pa''ss'"));
+            assert!(sql.contains(r"LOGIN PASSWORD $password$pa\'ss$password$"));
             assert!(sql.contains("NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"));
             assert!(sql.contains("GRANT USAGE ON SCHEMA public TO socialname_app;"));
             // Reprovisioning must stay inside what a non-superuser owner of a
             // managed database is allowed to do.
             assert!(!sql.contains(
-                "ALTER ROLE socialname_app\n    LOGIN PASSWORD 'pa''ss'\n    NOSUPERUSER"
+                "ALTER ROLE socialname_app\n    LOGIN PASSWORD $password$pa\\'ss$password$\n    NOSUPERUSER"
             ));
             assert!(sql.contains("rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole"));
             assert!(sql.contains("holds an elevated attribute"));

@@ -17,13 +17,13 @@ name = "socialname-desktop"
 path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2.6.3", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 serde.workspace = true
 socialname-app-core = { path = "../../../crates/socialname-app-core" }
 socialname-cache = { path = "../../../crates/socialname-cache" }
-tauri = { version = "2.11.5", features = [] }
+tauri = { version = "2.12.5", features = [] }
 tokio-util.workspace = true
 
 [lints]

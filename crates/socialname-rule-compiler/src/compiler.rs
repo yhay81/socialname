@@ -112,13 +112,13 @@ impl RuleCompiler {
         if !valid_site_id(&source.id) {
             errors.push(CompileError::InvalidSiteId(source.id.clone()));
         }
-        if let Some(expected) = expected_file_stem {
-            if expected != source.id {
-                errors.push(CompileError::FilenameMismatch {
-                    expected: expected.to_owned(),
-                    actual: source.id.clone(),
-                });
-            }
+        if let Some(expected) = expected_file_stem
+            && expected != source.id
+        {
+            errors.push(CompileError::FilenameMismatch {
+                expected: expected.to_owned(),
+                actual: source.id.clone(),
+            });
         }
 
         let username_regex =

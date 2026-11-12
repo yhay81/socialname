@@ -76,7 +76,7 @@ use socialname_worker::{
     WebhookRequest, WebhookSendError, WebhookTransport, process_one_delivery,
     process_one_email_delivery,
 };
-use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
+use sqlx::{AssertSqlSafe, Executor, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -741,12 +741,10 @@ async fn assert_api_key_scope_constraints(pool: &PgPool) {
 async fn assert_tenant_isolation(pool: &PgPool) {
     let application_role = RoleName::new("socialname_migration_test_app").unwrap();
     let application_password = RolePassword::new("socialname-test-password").unwrap();
-    pool.execute(sqlx::raw_sql(&render_application_role_sql(
-        &application_role,
-        &application_password,
-    )))
-    .await
-    .unwrap();
+    let grants = render_application_role_sql(&application_role, &application_password);
+    pool.execute(sqlx::raw_sql(AssertSqlSafe(grants)))
+        .await
+        .unwrap();
 
     let mut transaction = pool.begin().await.unwrap();
     transaction
@@ -10909,12 +10907,10 @@ async fn install_managed_rule_fixtures(pool: &PgPool, rule_version_id: Uuid) {
 async fn install_worker_role(pool: &PgPool) {
     let worker_role = RoleName::new("socialname_migration_test_worker").unwrap();
     let worker_password = RolePassword::new("socialname-worker-test-password").unwrap();
-    pool.execute(sqlx::raw_sql(&render_worker_role_sql(
-        &worker_role,
-        &worker_password,
-    )))
-    .await
-    .unwrap();
+    let grants = render_worker_role_sql(&worker_role, &worker_password);
+    pool.execute(sqlx::raw_sql(AssertSqlSafe(grants)))
+        .await
+        .unwrap();
 }
 
 async fn create_managed_search(

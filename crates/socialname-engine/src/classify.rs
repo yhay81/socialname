@@ -457,13 +457,13 @@ fn evidence_digest(responses: &BTreeMap<String, ProbeResponse>) -> String {
             status: response.status,
             final_url: response.final_url.as_deref(),
             headers: &response.headers,
-            body_sha256: format!("{:x}", Sha256::digest(response.body.as_bytes())),
+            body_sha256: hex::encode(Sha256::digest(response.body.as_bytes())),
             body_bytes: response.body_bytes,
             body_truncated: response.body_truncated,
         })
         .collect();
     let bytes = serde_json::to_vec(&entries).unwrap_or_default();
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 #[cfg(test)]

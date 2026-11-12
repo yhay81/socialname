@@ -102,10 +102,10 @@ impl SearchEngine {
                         }
                     };
                     responses.insert(primary.clone(), response);
-                    if should_fallback {
-                        if let Some(response) = self.execute_named(rule, fallback, username).await {
-                            responses.insert(fallback.clone(), response);
-                        }
+                    if should_fallback
+                        && let Some(response) = self.execute_named(rule, fallback, username).await
+                    {
+                        responses.insert(fallback.clone(), response);
                     }
                 }
                 responses

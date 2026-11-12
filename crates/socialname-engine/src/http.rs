@@ -969,10 +969,10 @@ fn validate_destination(url: &Url, allowed_hosts: &[String]) -> Result<(), Trans
     if host == "localhost" || host.ends_with(".localhost") {
         return Err(TransportOutcome::RedirectRejected);
     }
-    if let Ok(address) = host.parse::<IpAddr>() {
-        if !is_public_ip(address) {
-            return Err(TransportOutcome::RedirectRejected);
-        }
+    if let Ok(address) = host.parse::<IpAddr>()
+        && !is_public_ip(address)
+    {
+        return Err(TransportOutcome::RedirectRejected);
     }
     Ok(())
 }

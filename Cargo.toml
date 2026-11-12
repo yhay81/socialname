@@ -19,28 +19,28 @@ resolver = "3"
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.94"
 authors = ["SocialName contributors"]
 license = "MIT"
 repository = "https://github.com/yhay81/socialname"
 
 [workspace.dependencies]
-anyhow = "1.0.100"
+anyhow = "1.0.104"
 async-stream = "0.3.6"
 axum = "0.8.9"
-brotli = "8.0.4"
+brotli = "9.1.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
-clap = { version = "4.6.4", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["fast", "zeroize"] }
-flate2 = "1.1.9"
-futures-util = "0.3.31"
+flate2 = "1.1.11"
+futures-util = "0.3.34"
 hex = "0.4.3"
-hmac = "0.12.1"
+hmac = "0.13.0"
 percent-encoding = "2.3.2"
-rand = "0.10.2"
+rand = "0.10.3"
 regex = "1.13.1"
-reqwest = { version = "0.13.4", default-features = false, features = [
+reqwest = { version = "0.13.5", default-features = false, features = [
     "brotli",
     "deflate",
     "form",
@@ -51,12 +51,12 @@ reqwest = { version = "0.13.4", default-features = false, features = [
     "stream",
     "zstd",
 ] }
-schemars = { version = "1.2.1", features = ["chrono04"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+schemars = { version = "1.2.3", features = ["chrono04"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 serde_yaml_ng = "0.10.0"
-sha2 = "0.10.9"
-sqlx = { version = "0.8.6", default-features = false, features = [
+sha2 = "0.11.1"
+sqlx = { version = "0.9.0", default-features = false, features = [
     "macros",
     "migrate",
     "postgres",
@@ -67,8 +67,8 @@ sqlx = { version = "0.8.6", default-features = false, features = [
     "tls-rustls-ring",
     "uuid",
 ] }
-thiserror = "2.0.19"
-tokio = { version = "1.53.1", features = [
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = [
     "macros",
     "net",
     "rt-multi-thread",
@@ -76,14 +76,14 @@ tokio = { version = "1.53.1", features = [
     "sync",
     "time",
 ] }
-tokio-util = { version = "0.7.19", features = ["rt"] }
+tokio-util = { version = "0.7.20", features = ["rt"] }
 tower = { version = "0.5.3", features = ["limit", "util"] }
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.24.0", features = ["serde", "v4"] }
-zeroize = "1.9.0"
-zstd = "0.13.3"
+uuid = { version = "1.29.2", features = ["serde", "v4"] }
+zeroize = "1.9.1"
+zstd = "0.14.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

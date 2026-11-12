@@ -1,6 +1,6 @@
 use std::{env, fmt, time::Duration};
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use socialname_domain::{EvidenceClass as DomainEvidenceClass, InconclusiveReason, Verdict};
 use socialname_engine::SearchResult;
